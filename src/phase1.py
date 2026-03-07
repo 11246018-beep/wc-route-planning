@@ -38,6 +38,8 @@ import folium  # 互動地圖繪製
 from folium import IFrame  # 客製化彈出視窗
 from folium.plugins import MarkerCluster  # 地圖標記聚合
 import os  # 檔案系統操作
+import sys
+sys.stdout.reconfigure(encoding='utf-8')
 import html  # HTML特殊字元轉義
 import re  # 正則表達式處理
 from dataclasses import dataclass  # 資料類別定義
@@ -297,7 +299,7 @@ def load_and_process_data(file_path):
         # 清理資料：
         # - replace('.0', '') 處理 Excel 常見的浮點數格式 (例如：1.0 -> 1)
         # - strip() 移除前後空白
-        f2_clean = f2_series.apply(lambda x: x.replace('.0', '').strip())
+        f2_clean = f2_series.apply(lambda x: str(x).replace('.0', '').strip())
 
         # 定義無效值清單 (這些值代表「非 2x」)
         invalid_values = ['0', '', 'nan', 'NaN', 'None']
@@ -337,23 +339,20 @@ def load_and_process_data(file_path):
         # 數值類欄位：加總
         'S_Time_Raw': 'sum',  # 同地點服務時間累加 (例如：3台設備各10分鐘 -> 30分鐘)
 
-        # 邏輯類欄位：
-        'Freq': lambda x: '2x' if '2x' in x.values else '1x',  # 邏輯OR：有一筆2x就是2x
-
         # 保留第一筆資料
         'Address': 'first',  # 地址相同取第一筆即可
         'Depot_Raw': 'first',  # 原始倉庫歸屬
     }
 
     # 執行 GroupBy 聚合
-    # 關鍵：以 (Lat, Lon) 為 key 進行分組
-    df_agg = df.groupby(['Lat', 'Lon'], as_index=False).agg(agg_rules)
+    # 關鍵：以 (Lat, Lon, Freq) 為 key 進行分組
+    df_agg = df.groupby(['Lat', 'Lon', 'Freq'], as_index=False).agg(agg_rules)
 
     # 產生唯一節點 ID (格式：N_0001, N_0002, ...)
     df_agg['Node_ID'] = [f'N_{i:04d}' for i in range(len(df_agg))]
 
     # 統計每個節點包含的原始工單數量
-    df_agg['Order_Count'] = df.groupby(['Lat', 'Lon']).size().values
+    df_agg['Order_Count'] = df.groupby(['Lat', 'Lon', 'Freq']).size().values
 
     # 重新命名服務時間欄位
     df_agg.rename(columns={'S_Time_Raw': 'Service_Time'}, inplace=True)
