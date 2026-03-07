@@ -52,9 +52,9 @@ from scipy.spatial import distance  # 空間距離計算
 
 # --- 檔案路徑設定 ---
 # 提示：配合 Canvas 環境中的實際檔名進行調整
-INPUT_FILENAME = '../data/maintenance_data_v2.xlsx'
-OUTPUT_MAP_NAME = '../output/maintenance_map_phase1.html'  # 輸出地圖檔名
-OUTPUT_CSV_NAME = '../output/processed_nodes_phase1.csv'  # 輸出節點資料
+INPUT_FILENAME = 'maintenance_data_v2.xlsx'
+OUTPUT_MAP_NAME = 'maintenance_map_phase1.html'  # 輸出地圖檔名
+OUTPUT_CSV_NAME = 'processed_nodes_phase1.csv'  # 輸出節點資料
 
 # --- CSV 欄位對照表 ---
 # 用途：將 Excel 原始欄位名稱對應到標準化程式內部欄位
@@ -356,17 +356,6 @@ def load_and_process_data(file_path):
 
     # 重新命名服務時間欄位
     df_agg.rename(columns={'S_Time_Raw': 'Service_Time'}, inplace=True)
-
-    # ═══════════════════════════════════════════════════════
-    # 【新增機制】：消除舊系統中因週清二產生的 1:1 複製行
-    # 目的：原始資料中週清二的機台已經被明確展開為兩行，導致 aggregation 時雙重計算
-    # 解決：因為聚合時把它們完美加總了，所以我們直接在這裡將 2x 節點的時間與數量除以 2！
-    # ═══════════════════════════════════════════════════════
-    mask_2x = df_agg['Freq'] == '2x'
-    df_agg['Order_Count'] = df_agg['Order_Count'].astype(float)
-    df_agg.loc[mask_2x, 'Service_Time'] /= 2
-    df_agg.loc[mask_2x, 'Order_Count'] /= 2
-    df_agg['Order_Count'] = np.ceil(df_agg['Order_Count']).astype(int)
 
     # 輸出統計資訊
     print(f"    ✓ 濃縮完成:")
@@ -710,9 +699,16 @@ if __name__ == "__main__":
     print(" Phase 1: 數位地基建置 (Digital Foundation)")
     print("=" * 80 + "\n")
 
-    # 取得當前目錄
+    # 取得當前目錄 (src) 與專案根目錄
     current_dir = os.path.dirname(os.path.abspath(__file__))
-    input_path = os.path.join(current_dir, INPUT_FILENAME)
+    project_dir = os.path.dirname(current_dir)
+    
+    # 輸入路徑 (data資料夾)
+    input_path = os.path.join(project_dir, 'data', INPUT_FILENAME)
+    
+    # 輸出路徑 (output資料夾)
+    output_dir = os.path.join(project_dir, 'output')
+    os.makedirs(output_dir, exist_ok=True)
 
     # 檢查檔案是否存在
     if not os.path.exists(input_path):
@@ -760,14 +756,14 @@ if __name__ == "__main__":
     # ═══════════════════════════════════════
     # 步驟 3：匯出 CSV (供 Phase 2 使用)
     # ═══════════════════════════════════════
-    output_csv_path = os.path.join(current_dir, OUTPUT_CSV_NAME)
+    output_csv_path = os.path.join(output_dir, OUTPUT_CSV_NAME)
     df_nodes.to_csv(output_csv_path, index=False, encoding='utf-8-sig')
     print(f"✓ CSV 已匯出: {output_csv_path}")
 
     # ═══════════════════════════════════════
     # 步驟 4：生成互動地圖
     # ═══════════════════════════════════════
-    output_map_path = os.path.join(current_dir, OUTPUT_MAP_NAME)
+    output_map_path = os.path.join(output_dir, OUTPUT_MAP_NAME)
     generate_html_map(df_nodes, output_map_path)
 
     # ═══════════════════════════════════════
