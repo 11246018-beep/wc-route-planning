@@ -79,7 +79,10 @@ def haversine(lat1, lon1, lat2, lon2):
 
 def main():
     print("Loading data...")
-    df = pd.read_csv('processed_nodes_phase1.csv')
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    project_dir = os.path.dirname(current_dir)
+    input_path = os.path.join(project_dir, 'output', 'processed_nodes_phase1.csv')
+    df = pd.read_csv(input_path)
     df['County'] = df['Address'].apply(parse_county)
     
     def get_depot(depot_str):
@@ -99,13 +102,17 @@ def main():
     task_id_counter = 1
     for _, row in df.iterrows():
         count = 1 if str(row['Freq']) != '2x' else 2
+        
+        # [NEW LOGIC] Split the service time for 2x tasks so it doesn't double count
+        svc_time = row['Service_Time'] / 2.0 if str(row['Freq']) == '2x' else row['Service_Time']
+        
         for i in range(count):
             tasks.append({
                 'task_id': f"T{task_id_counter:05d}",
                 'node_id': row['Node_ID'],
                 'lat': row['Lat'],
                 'lon': row['Lon'],
-                'service_time': row['Service_Time'],
+                'service_time': svc_time,
                 'county': row['County'],
                 'depot': row['Depot'],
                 'address': row['Address'],
@@ -550,7 +557,7 @@ def main():
             
     # 【舊】原始路線繪製區塊
     try:
-        old_file_path = '202512221227週維護排程.xlsx'
+        old_file_path = os.path.join(project_dir, 'data', '202512221227週維護排程.xlsx')
         if os.path.exists(old_file_path):
             print("Loading old route data...")
             df_old = pd.read_excel(old_file_path)
@@ -674,8 +681,9 @@ def main():
         collapsed=True,
     ).add_to(m)
     
-    m.save('Weekly_Routing_Map.html')
-    print("Map Map Generated (In-Memory geometry preserved)!")
+    out_map = os.path.join(project_dir, 'output', 'Weekly_Routing_Map.html')
+    m.save(out_map)
+    print("Map Generated (In-Memory geometry preserved)!")
 
     # Now we save the summary to Excel for the user
     sched_df = pd.DataFrame(schedule)
@@ -685,7 +693,8 @@ def main():
     sched_df_excel['travel_time_min'] = sched_df_excel['travel_time_min'].replace(0, '')
     sched_df_excel['travel_dist_km'] = sched_df_excel['travel_dist_km'].replace(0, '')
     
-    sched_df_excel.to_excel('Weekly_Schedule_Summary.xlsx', index=False)
+    out_sched = os.path.join(project_dir, 'output', 'Weekly_Schedule_Summary.xlsx')
+    sched_df_excel.to_excel(out_sched, index=False)
     
     # Generate Daily Route Summary
     daily_summary = sched_df.groupby(['driver', 'day']).agg(
@@ -697,9 +706,11 @@ def main():
     
     daily_summary['總工時_分'] = daily_summary['總服務時間_分'] + daily_summary['總車程_分']
     daily_summary = daily_summary.rename(columns={'driver': '司機', 'day': '天數'})
-    daily_summary.to_excel('Daily_Route_Summary.xlsx', index=False)
     
-    print("Done! Saved Weekly_Schedule_Summary.xlsx, Daily_Route_Summary.xlsx and Weekly_Routing_Map.html")
+    out_daily = os.path.join(project_dir, 'output', 'Daily_Route_Summary.xlsx')
+    daily_summary.to_excel(out_daily, index=False)
+    
+    print("Done! Saved Weekly_Schedule_Summary.xlsx, Daily_Route_Summary.xlsx and Weekly_Routing_Map.html to output folder")
 
 if __name__ == "__main__":
     main()
