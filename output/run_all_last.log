@@ -1,0 +1,98 @@
+Return code: 0
+
+=== STDOUT ===
+
+================================================================================
+  STEP 1: Running Phase1
+================================================================================
+
+ServicePoint 欄位： ['id', 'created_at', 'depot', 'client_name', 'service_time', 'address', 'floor', 'order_id', 'weekly_1', 'weekly_2', 'lat', 'lon']
+Lat 非空筆數： 3310
+Lon 非空筆數： 3310
+        Lat        Lon
+0  25.05851  121.13646
+1  25.06796  121.12636
+2  25.06796  121.12636
+3  25.06796  121.12636
+4  25.05926  121.12228
+[OK] CSV exported: C:\Users\bccet\Downloads\4.0\route_work\projects\projects\route_system\output\processed_nodes_phase1.csv
+已輸出地圖: C:\Users\bccet\Downloads\4.0\route_work\projects\projects\route_system\output\maintenance_map_phase1.html
+[OK] Phase1 map exported: C:\Users\bccet\Downloads\4.0\route_work\projects\projects\route_system\output\maintenance_map_phase1.html
+[OK] Phase1 statistics:
+  - Original orders: 3310
+  - Aggregated nodes: 2227
+  - Total service time: 27954.5 minutes
+
+================================================================================
+  STEP 2-NORMAL: Running phase2_scheduler.py
+================================================================================
+
+[OK] phase2_scheduler.py completed successfully
+  Total tasks generated: 2227
+  Normal overflow same-county assignments: 0
+  Strict unassigned tasks: 901
+  Variant: normal
+  Routes: 84
+  Stops: 1326
+  Service minutes: 16154.0
+  Drive minutes: 10583.5
+  Cross-county routes: 0
+  Overtime routes: 0
+  Unassigned tasks: 901
+  phase2_scheduler.py completed successfully
+
+================================================================================
+  STEP 2-CROSS: Running phase2_scheduler_cross_county.py
+================================================================================
+
+[OK] phase2_scheduler_cross_county.py completed successfully
+  Total tasks generated: 2227
+  Cross strict unassigned tasks: 461
+  Variant: cross
+  Routes: 84
+  Stops: 1766
+  Service minutes: 21886.5
+  Drive minutes: 21510.2
+  Cross-county routes: 84
+  Overtime routes: 0
+  Unassigned tasks: 461
+  phase2_scheduler_cross_county.py completed successfully
+
+================================================================================
+  STEP 2-COMPACT: Running phase2_scheduler_cross_county_compact.py
+================================================================================
+
+[OK] phase2_scheduler_cross_county_compact.py completed successfully
+  Total tasks generated: 2227
+  Compact strict unassigned tasks: 440
+  Variant: compact
+  Routes: 84
+  Stops: 1787
+  Service minutes: 22147.5
+  Drive minutes: 21346.6
+  Cross-county routes: 84
+  Overtime routes: 0
+  Unassigned tasks: 440
+  phase2_scheduler_cross_county_compact.py completed successfully
+
+================================================================================
+  STEP 3: Export Dashboard JSON / Old Routes / Dispatch Report
+================================================================================
+
+[OK] Dashboard assets completed
+  - normal routes: 84
+  - cross routes: 84
+  - compact routes: 84
+  - old routes: 70
+  - latest report: C:\Users\bccet\Downloads\4.0\route_work\projects\projects\route_system\output\Dispatch_Report_Latest.xlsx
+  - stamped report: C:\Users\bccet\Downloads\4.0\route_work\projects\projects\route_system\output\Dispatch_Report_20260311_221937.xlsx
+
+================================================================================
+  ALL DONE
+================================================================================
+
+Total elapsed time: 41.2 seconds
+[OK] 你現在可以回首頁重新整理 Dashboard。
+
+
+=== STDERR ===
