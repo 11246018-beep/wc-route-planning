@@ -196,8 +196,8 @@ def make_route_slots():
                         "driver": driver,
                         "day": day,
                         "depot_code": depot_code,
-                        "locked_county": None,
                         "tasks": [],
+                        "seed_county": None,
                     }
                 )
     return slots
@@ -237,13 +237,8 @@ def build_grouped_tasks(tasks):
     return grouped_items, rejected_tasks
 
 
-def candidate_score(route, task, allow_overflow=False):
-    # 只能同 depot
+def candidate_score_compact(route, task):
     if route["depot_code"] != task["depot_code"]:
-        return None
-
-    # 不可跨縣市：一旦鎖定就只能同縣市
-    if route["locked_county"] is not None and route["locked_county"] != task["county"]:
         return None
 
     depot = DEPOTS[route["depot_code"]]
@@ -251,61 +246,46 @@ def candidate_score(route, task, allow_overflow=False):
     ordered = nearest_neighbor_order(depot, new_tasks)
     metrics = route_metrics(depot, ordered)
 
-    # normal 版理論上不能跨縣市
-    if metrics["cross_county"]:
+    if metrics["total_min"] > MAX_MINUTES:
         return None
 
-    if (not allow_overflow) and metrics["total_min"] > MAX_MINUTES:
-        return None
+    # compact 版本：更重視集中與精簡
+    new_slot_penalty = 28.0 if not route["tasks"] else 0.0
 
-    new_slot_penalty = 15.0 if not route["tasks"] else 0.0
-    overflow_penalty = max(0.0, metrics["total_min"] - MAX_MINUTES) * 1000.0 if allow_overflow else 0.0
+    seed_penalty = 0.0
+    if route["seed_county"] is not None and route["seed_county"] != task["county"]:
+        seed_penalty = 12.0
 
-    return metrics["total_min"] + new_slot_penalty + overflow_penalty
+    mixed_county_penalty = max(0, len(metrics["counties"]) - 1) * 8.0
+    stop_penalty = len(new_tasks) * 0.25
+
+    return metrics["total_min"] + new_slot_penalty + seed_penalty + mixed_county_penalty + stop_penalty
 
 
-def assign_normal(tasks):
+def assign_cross_compact_normal_core(tasks):
     route_slots = make_route_slots()
     grouped_tasks, rejected_tasks = build_grouped_tasks(tasks)
-    overflow_same_county_assignments = 0
 
     for (depot_code, county), group_tasks in grouped_tasks:
         for task in group_tasks:
-            strict_candidates = []
-            for route in route_slots:
-                score = candidate_score(route, task, allow_overflow=False)
-                if score is not None:
-                    strict_candidates.append((score, route))
+            candidates = []
 
-            if strict_candidates:
-                strict_candidates.sort(key=lambda x: x[0])
-                best_route = strict_candidates[0][1]
+            for route in route_slots:
+                score = candidate_score_compact(route, task)
+                if score is not None:
+                    candidates.append((score, route))
+
+            if candidates:
+                candidates.sort(key=lambda x: x[0])
+                best_route = candidates[0][1]
                 best_route["tasks"].append(task)
-                if best_route["locked_county"] is None:
-                    best_route["locked_county"] = county
+                if best_route["seed_county"] is None:
+                    best_route["seed_county"] = county
                 continue
 
-            # 同縣市優先，若真的塞不進去才允許超時，但仍不允許跨縣市
-            overflow_candidates = []
-            for route in route_slots:
-                score = candidate_score(route, task, allow_overflow=True)
-                if score is not None:
-                    overflow_candidates.append((score, route))
+            rejected_tasks.append({**task, "reason": "no_540_slot_compact"})
 
-            if overflow_candidates:
-                overflow_candidates.sort(key=lambda x: x[0])
-                best_route = overflow_candidates[0][1]
-                best_route["tasks"].append(task)
-                if best_route["locked_county"] is None:
-                    best_route["locked_county"] = county
-                overflow_same_county_assignments += 1
-                continue
-
-            # 故意不做 county-break fallback：守住不可跨縣市
-            rejected_tasks.append({**task, "reason": "no_same_county_slot"})
-
-    print(f"Normal overflow same-county assignments: {overflow_same_county_assignments}")
-    print(f"Strict unassigned tasks: {len(rejected_tasks)}")
+    print(f"Compact strict unassigned tasks: {len(rejected_tasks)}")
     return route_slots, rejected_tasks
 
 
@@ -388,32 +368,19 @@ def save_outputs(routes, flat_rows, rejected_tasks):
 
     payload = {
         "meta": {
-            "variant": "normal",
-            "label": "不可跨縣市",
-            "note": "不可跨縣市版本；固定84條、守540、允許 unassigned。",
+            "variant": "compact",
+            "label": "可跨縣市精簡版",
+            "note": "沿用 normal 版核心分配邏輯，可跨縣市、固定84條、守540、允許 unassigned，並更偏向路線精簡與集中。",
         },
         "routes": routes,
     }
 
-    # 網站新格式
-    (OUTPUT_DIR / "routes_normal.json").write_text(
+    (OUTPUT_DIR / "routes_compact.json").write_text(
         json.dumps(payload, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
 
-    # 舊相容格式：保留 routes_new.json
-    (OUTPUT_DIR / "routes_new.json").write_text(
-        json.dumps(payload, ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
-
-    (OUTPUT_DIR / "routes_normal_unassigned.json").write_text(
-        json.dumps(rejected_tasks, ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
-
-    # 舊相容檔名：保留 routes_unassigned_strict.json
-    (OUTPUT_DIR / "routes_unassigned_strict.json").write_text(
+    (OUTPUT_DIR / "routes_compact_unassigned.json").write_text(
         json.dumps(rejected_tasks, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
@@ -511,7 +478,7 @@ def save_outputs(routes, flat_rows, rejected_tasks):
     stop_df = pd.DataFrame(stop_rows, columns=stop_columns)
     rejected_df = pd.DataFrame(rejected_tasks, columns=rejected_columns)
 
-    with pd.ExcelWriter(OUTPUT_DIR / "Weekly_Schedule_Summary_normal.xlsx", engine="openpyxl") as writer:
+    with pd.ExcelWriter(OUTPUT_DIR / "Weekly_Schedule_Summary_compact.xlsx", engine="openpyxl") as writer:
         summary_df.to_excel(writer, sheet_name="route_summary", index=False)
         stop_df.to_excel(writer, sheet_name="route_stops", index=False)
         rejected_df.to_excel(writer, sheet_name="unassigned", index=False)
@@ -519,18 +486,18 @@ def save_outputs(routes, flat_rows, rejected_tasks):
     daily_summary = summary_df[
         ["driver", "driver_label", "day", "stop_count", "service_min", "drive_min", "dist_km", "total_min", "overtime_min"]
     ].copy()
-    daily_summary.to_excel(OUTPUT_DIR / "Daily_Route_Summary_normal.xlsx", index=False)
+    daily_summary.to_excel(OUTPUT_DIR / "Daily_Route_Summary_compact.xlsx", index=False)
 
 
 def main():
     if not INPUT_CSV.exists():
-        raise FileNotFoundError(f"找不到輸入檔案: {INPUT_CSV}")
+        raise FileNotFoundError(f"找不到 {INPUT_CSV}")
 
     df = pd.read_csv(INPUT_CSV)
     tasks = build_tasks(df)
     print(f"Total tasks generated: {len(tasks)}")
 
-    route_slots, rejected_tasks = assign_normal(tasks)
+    route_slots, rejected_tasks = assign_cross_compact_normal_core(tasks)
     routes, flat_rows = finalize_routes(route_slots)
     save_outputs(routes, flat_rows, rejected_tasks)
 
@@ -541,7 +508,7 @@ def main():
     cross_routes = sum(1 for r in routes if r["cross_county"])
     overtime_routes = sum(1 for r in routes if r["metrics"]["overtime_min"] > 0)
 
-    print("Variant: normal")
+    print("Variant: compact")
     print(f"Routes: {used_routes}")
     print(f"Stops: {total_stops}")
     print(f"Service minutes: {round(total_service, 1)}")
@@ -549,7 +516,7 @@ def main():
     print(f"Cross-county routes: {cross_routes}")
     print(f"Overtime routes: {overtime_routes}")
     print(f"Unassigned tasks: {len(rejected_tasks)}")
-    print("phase2_scheduler.py completed successfully")
+    print("phase2_scheduler_cross_county_compact.py completed successfully")
 
 
 if __name__ == "__main__":
