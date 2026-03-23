@@ -61,7 +61,7 @@ def clean_text(value):
 
 def parse_county(addr):
     addr = str(addr).strip()
-    pattern = r"(基隆市|台北市|臺北市|新北市|桃園市|桃園縣|新竹市|新竹縣|苗栗縣|台中市|臺中市|彰化縣|南投縣|雲林縣|嘉義市|嘉義縣|台南市|臺南市|高雄市|屏東縣|宜蘭縣|花蓮縣|台東縣|臺東縣|澎湖縣|金門縣|連江縣)"
+    pattern = r'(基隆市|台北市|臺北市|新北市|桃園市|桃園縣|新竹市|新竹縣|苗栗縣|台中市|臺中市|彰化縣|南投縣|雲林縣|嘉義市|嘉義縣|台南市|臺南市|高雄市|屏東縣|宜蘭縣|花蓮縣|台東縣|臺東縣|澎湖縣|金門縣|連江縣)'
     match = re.search(pattern, addr)
     if match:
         return match.group(1).replace("臺", "台")
@@ -197,7 +197,6 @@ def make_route_slots():
                         "day": day,
                         "depot_code": depot_code,
                         "tasks": [],
-                        "seed_county": None,
                     }
                 )
     return slots
@@ -206,87 +205,43 @@ def make_route_slots():
 def task_order_key(task):
     depot = DEPOTS[task["depot_code"]]
     dist = haversine(depot["lat"], depot["lon"], task["lat"], task["lon"])
-    return (task["depot_code"], task["county"], -task["service_time"], -dist, task["task_id"])
+    return (task["depot_code"], -task["service_time"], -dist, task["task_id"])
 
 
-def build_grouped_tasks(tasks):
-    rejected_tasks = []
-    grouped = {}
-
-    for task in tasks:
-        if task["county"] == "Unknown":
-            rejected_tasks.append({**task, "reason": "county_unknown"})
-            continue
-        if task["depot_code"] not in DEPOTS:
-            rejected_tasks.append({**task, "reason": "depot_unknown"})
-            continue
-        grouped.setdefault((task["depot_code"], task["county"]), []).append(task)
-
-    grouped_items = []
-    for key, group_tasks in grouped.items():
-        group_tasks.sort(key=task_order_key)
-        grouped_items.append((key, group_tasks))
-
-    grouped_items.sort(
-        key=lambda item: (
-            0 if item[0][0] == "Wugu" else 1,
-            -sum(t["service_time"] for t in item[1]),
-            item[0][1],
-        )
-    )
-    return grouped_items, rejected_tasks
-
-
-def candidate_score_compact(route, task):
+def candidate_score(route, task):
     if route["depot_code"] != task["depot_code"]:
         return None
 
     depot = DEPOTS[route["depot_code"]]
     new_tasks = route["tasks"] + [task]
-    ordered = nearest_neighbor_order(depot, new_tasks)
-    metrics = route_metrics(depot, ordered)
+    metrics = route_metrics(depot, new_tasks)
 
-    if metrics["total_min"] > MAX_MINUTES:
-        return None
+    overflow_penalty = max(0.0, metrics["total_min"] - MAX_MINUTES) * 10000
+    open_new_route_penalty = 220.0 if not route["tasks"] else 0.0
+    county_penalty = max(0, len(metrics["counties"]) - 1) * 4.0
 
-    # compact 版本：更重視集中與精簡
-    new_slot_penalty = 28.0 if not route["tasks"] else 0.0
-
-    seed_penalty = 0.0
-    if route["seed_county"] is not None and route["seed_county"] != task["county"]:
-        seed_penalty = 12.0
-
-    mixed_county_penalty = max(0, len(metrics["counties"]) - 1) * 8.0
-    stop_penalty = len(new_tasks) * 0.25
-
-    return metrics["total_min"] + new_slot_penalty + seed_penalty + mixed_county_penalty + stop_penalty
+    return overflow_penalty + metrics["total_min"] + open_new_route_penalty + county_penalty
 
 
-def assign_cross_compact_normal_core(tasks):
+def assign_compact(tasks):
     route_slots = make_route_slots()
-    grouped_tasks, rejected_tasks = build_grouped_tasks(tasks)
+    ordered_tasks = sorted(tasks, key=task_order_key)
 
-    for (depot_code, county), group_tasks in grouped_tasks:
-        for task in group_tasks:
-            candidates = []
+    for task in ordered_tasks:
+        candidates = []
+        for route in route_slots:
+            score = candidate_score(route, task)
+            if score is not None:
+                candidates.append((score, route))
 
-            for route in route_slots:
-                score = candidate_score_compact(route, task)
-                if score is not None:
-                    candidates.append((score, route))
+        if not candidates:
+            raise RuntimeError(f"無法安排任務 {task['task_id']} 到 compact 版本")
 
-            if candidates:
-                candidates.sort(key=lambda x: x[0])
-                best_route = candidates[0][1]
-                best_route["tasks"].append(task)
-                if best_route["seed_county"] is None:
-                    best_route["seed_county"] = county
-                continue
+        candidates.sort(key=lambda x: x[0])
+        best_route = candidates[0][1]
+        best_route["tasks"].append(task)
 
-            rejected_tasks.append({**task, "reason": "no_540_slot_compact"})
-
-    print(f"Compact strict unassigned tasks: {len(rejected_tasks)}")
-    return route_slots, rejected_tasks
+    return route_slots
 
 
 def finalize_routes(route_slots):
@@ -326,9 +281,7 @@ def finalize_routes(route_slots):
 
             flat_rows.append(
                 {
-                    "route_id": f"{route['driver']}-D{route['day']}",
                     "driver": route["driver"],
-                    "driver_label": driver_label(route["driver"]),
                     "day": route["day"],
                     **stop,
                 }
@@ -363,25 +316,20 @@ def finalize_routes(route_slots):
     return routes, flat_rows
 
 
-def save_outputs(routes, flat_rows, rejected_tasks):
+def save_outputs(routes, flat_rows):
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
     payload = {
         "meta": {
             "variant": "compact",
-            "label": "可跨縣市精簡版",
-            "note": "沿用 normal 版核心分配邏輯，可跨縣市、固定84條、守540、允許 unassigned，並更偏向路線精簡與集中。",
+            "label": "跨縣市精簡版",
+            "note": "跨縣市精簡版，由 phase2_scheduler_cross_county_compact.py 直接輸出。",
         },
         "routes": routes,
     }
 
     (OUTPUT_DIR / "routes_compact.json").write_text(
         json.dumps(payload, ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
-
-    (OUTPUT_DIR / "routes_compact_unassigned.json").write_text(
-        json.dumps(rejected_tasks, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
 
@@ -412,11 +360,9 @@ def save_outputs(routes, flat_rows, rejected_tasks):
                 {
                     "route_id": route["route_id"],
                     "driver": route["driver"],
-                    "driver_label": route["driver_label"],
                     "day": route["day"],
                     "seq": stop["seq"],
                     "task_id": stop["task_id"],
-                    "node_id": stop["node_id"],
                     "county": stop["county"],
                     "address": stop["address"],
                     "service_min": stop["service_min"],
@@ -424,67 +370,18 @@ def save_outputs(routes, flat_rows, rejected_tasks):
                     "travel_dist_km": stop["travel_dist_km"],
                     "lat": stop["lat"],
                     "lon": stop["lon"],
-                    "freq": stop["freq"],
                 }
             )
 
-    summary_columns = [
-        "route_id",
-        "driver",
-        "driver_label",
-        "day",
-        "depot_name",
-        "stop_count",
-        "counties",
-        "cross_county",
-        "service_min",
-        "drive_min",
-        "dist_km",
-        "total_min",
-        "overtime_min",
-    ]
-    stop_columns = [
-        "route_id",
-        "driver",
-        "driver_label",
-        "day",
-        "seq",
-        "task_id",
-        "node_id",
-        "county",
-        "address",
-        "service_min",
-        "travel_time_min",
-        "travel_dist_km",
-        "lat",
-        "lon",
-        "freq",
-    ]
-    rejected_columns = [
-        "task_id",
-        "node_id",
-        "county",
-        "depot_code",
-        "address",
-        "service_time",
-        "freq",
-        "visit_idx",
-        "reason",
-        "lat",
-        "lon",
-    ]
-
-    summary_df = pd.DataFrame(summary_rows, columns=summary_columns)
-    stop_df = pd.DataFrame(stop_rows, columns=stop_columns)
-    rejected_df = pd.DataFrame(rejected_tasks, columns=rejected_columns)
+    summary_df = pd.DataFrame(summary_rows)
+    stops_df = pd.DataFrame(stop_rows)
 
     with pd.ExcelWriter(OUTPUT_DIR / "Weekly_Schedule_Summary_compact.xlsx", engine="openpyxl") as writer:
         summary_df.to_excel(writer, sheet_name="route_summary", index=False)
-        stop_df.to_excel(writer, sheet_name="route_stops", index=False)
-        rejected_df.to_excel(writer, sheet_name="unassigned", index=False)
+        stops_df.to_excel(writer, sheet_name="route_stops", index=False)
 
     daily_summary = summary_df[
-        ["driver", "driver_label", "day", "stop_count", "service_min", "drive_min", "dist_km", "total_min", "overtime_min"]
+        ["driver", "day", "stop_count", "service_min", "drive_min", "dist_km", "total_min", "overtime_min"]
     ].copy()
     daily_summary.to_excel(OUTPUT_DIR / "Daily_Route_Summary_compact.xlsx", index=False)
 
@@ -497,16 +394,15 @@ def main():
     tasks = build_tasks(df)
     print(f"Total tasks generated: {len(tasks)}")
 
-    route_slots, rejected_tasks = assign_cross_compact_normal_core(tasks)
+    route_slots = assign_compact(tasks)
     routes, flat_rows = finalize_routes(route_slots)
-    save_outputs(routes, flat_rows, rejected_tasks)
+    save_outputs(routes, flat_rows)
 
     used_routes = len(routes)
     total_stops = sum(r["stop_count"] for r in routes)
     total_service = sum(r["metrics"]["service_min"] for r in routes)
     total_drive = sum(r["metrics"]["drive_min"] for r in routes)
     cross_routes = sum(1 for r in routes if r["cross_county"])
-    overtime_routes = sum(1 for r in routes if r["metrics"]["overtime_min"] > 0)
 
     print("Variant: compact")
     print(f"Routes: {used_routes}")
@@ -514,8 +410,6 @@ def main():
     print(f"Service minutes: {round(total_service, 1)}")
     print(f"Drive minutes: {round(total_drive, 1)}")
     print(f"Cross-county routes: {cross_routes}")
-    print(f"Overtime routes: {overtime_routes}")
-    print(f"Unassigned tasks: {len(rejected_tasks)}")
     print("phase2_scheduler_cross_county_compact.py completed successfully")
 
 
