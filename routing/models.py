@@ -1,20 +1,28 @@
 from django.db import models
+from django.utils import timezone
+
 
 class ServicePoint(models.Model):
-    depot = models.TextField()
-    client_name = models.TextField()
-    service_time = models.FloatField()
-    address = models.TextField()
+    id = models.BigAutoField(primary_key=True)
+    created_at = models.DateTimeField(default=timezone.now)
 
-    lat = models.FloatField()
-    lon = models.FloatField()
+    depot = models.TextField(null=True, blank=True)
+    client_name = models.TextField(null=True, blank=True)
+    service_time = models.FloatField(null=True, blank=True)
+    address = models.TextField(null=True, blank=True)
 
-    weekly_1 = models.IntegerField(null=True, blank=True)
-    weekly_2 = models.IntegerField(null=True, blank=True)
-
+    floor = models.FloatField(null=True, blank=True)
     order_id = models.TextField(null=True, blank=True)
-    floor = models.TextField(null=True, blank=True)
-    
+
+    weekly_1 = models.BooleanField(null=True, blank=True)
+    weekly_2 = models.BooleanField(null=True, blank=True)
+
+    lat = models.FloatField(null=True, blank=True)
+    lon = models.FloatField(null=True, blank=True)
 
     class Meta:
         db_table = "service_points"
+        managed = False
+
+    def __str__(self):
+        return f"{self.id} - {self.client_name}"

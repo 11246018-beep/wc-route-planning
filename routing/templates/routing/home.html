@@ -1,0 +1,1256 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>排程地圖 Dashboard</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <style>
+    html, body { height: 100%; margin: 0; font-family: "Microsoft JhengHei", system-ui, sans-serif; background: #edf2f7; }
+    #wrap { display: flex; height: 100vh; }
+    #panel {
+      width: 440px;
+      max-width: 52vw;
+      background: #ffffff;
+      border-right: 1px solid #dbe2ea;
+      box-sizing: border-box;
+      overflow-y: auto;
+      padding: 16px 14px 22px;
+    }
+    #map { flex: 1; }
+    h1 {
+      margin: 0 0 8px;
+      font-size: 22px;
+      color: #0f172a;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .lead {
+      color: #64748b;
+      line-height: 1.7;
+      margin-bottom: 12px;
+      font-size: 14px;
+    }
+    .sec {
+      background: #f8fafc;
+      border: 1px solid #e5e7eb;
+      border-radius: 16px;
+      padding: 14px;
+      margin: 10px 0;
+    }
+    .sec-title {
+      font-size: 17px;
+      font-weight: 800;
+      color: #0f172a;
+      margin-bottom: 10px;
+    }
+    .control-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+    .control-item label {
+      display: block;
+      font-size: 13px;
+      color: #475569;
+      margin-bottom: 6px;
+      font-weight: 700;
+    }
+    select, button, input[type="checkbox"] {
+      font-size: 14px;
+    }
+    select, button {
+      width: 100%;
+      padding: 10px 12px;
+      border: 1px solid #cbd5e1;
+      border-radius: 10px;
+      box-sizing: border-box;
+      background: #fff;
+    }
+    .variant-group {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 8px;
+    }
+    .variant-btn {
+      padding: 11px 12px;
+      border: 1px solid #cbd5e1;
+      border-radius: 12px;
+      background: #ffffff;
+      cursor: pointer;
+      font-weight: 800;
+      color: #0f172a;
+    }
+    .variant-btn.active {
+      background: #2563eb;
+      color: white;
+      border-color: #2563eb;
+    }
+    .btn-row {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    .action {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      text-decoration: none;
+      padding: 10px 14px;
+      border-radius: 10px;
+      color: #fff;
+      font-size: 14px;
+      font-weight: 700;
+    }
+    .action.primary { background: #2563eb; }
+    .action.success { background: #16a34a; }
+    .action.orange { background: #ea580c; }
+    .action.gray { background: #64748b; }
+    .stats {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+    .stat {
+      background: #fff;
+      border: 1px solid #e5e7eb;
+      border-radius: 14px;
+      padding: 12px;
+    }
+    .stat .k {
+      color: #64748b;
+      font-size: 12px;
+      margin-bottom: 6px;
+    }
+    .stat .v {
+      font-size: 22px;
+      font-weight: 800;
+      color: #0f172a;
+    }
+    .route-head {
+      font-size: 18px;
+      font-weight: 800;
+      color: #0f172a;
+      margin-bottom: 8px;
+    }
+    #metaBadges {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-bottom: 10px;
+    }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      border-radius: 999px;
+      padding: 5px 10px;
+      font-size: 12px;
+      font-weight: 800;
+      border: 1px solid transparent;
+    }
+    .badge.blue {
+      background: #eff6ff;
+      color: #1d4ed8;
+      border-color: #bfdbfe;
+    }
+    .badge.red {
+      background: #fef2f2;
+      color: #b91c1c;
+      border-color: #fecaca;
+    }
+    .badge.gray {
+      background: #f8fafc;
+      color: #334155;
+      border-color: #e2e8f0;
+    }
+    .mini {
+      color: #64748b;
+      font-size: 13px;
+      line-height: 1.8;
+    }
+    .msg {
+      padding: 12px 14px;
+      border-radius: 12px;
+      margin: 10px 0;
+      font-size: 14px;
+      line-height: 1.7;
+    }
+    .msg.ok { background: #ecfdf5; color: #166534; }
+    .msg.err { background: #fef2f2; color: #991b1b; }
+    .msg.warn { background: #fff7ed; color: #9a3412; }
+    .kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 10px;
+    }
+    .kpi-card {
+      background: #fff;
+      border: 1px solid #e5e7eb;
+      border-radius: 14px;
+      padding: 12px;
+    }
+    .kpi-card .name {
+      color: #64748b;
+      font-size: 12px;
+      margin-bottom: 6px;
+    }
+    .kpi-card .num {
+      font-size: 22px;
+      font-weight: 800;
+      color: #0f172a;
+    }
+    .legend {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      font-size: 12px;
+      color: #475569;
+      margin-top: 8px;
+    }
+    .legend-item {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: #fff;
+      border: 1px solid #e5e7eb;
+      border-radius: 999px;
+      padding: 5px 10px;
+    }
+    .dot {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      display: inline-block;
+    }
+    .stop-wrap, .all-points-wrap {
+      max-height: 340px;
+      overflow: auto;
+      border: 1px solid #e5e7eb;
+      border-radius: 14px;
+      background: #fff;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+    th, td {
+      padding: 10px 8px;
+      border-bottom: 1px solid #eef2f7;
+      text-align: left;
+      vertical-align: top;
+    }
+    th {
+      position: sticky;
+      top: 0;
+      background: #f8fafc;
+      z-index: 1;
+    }
+    .nowrap { white-space: nowrap; }
+    .stop-row, .all-point-row {
+      cursor: pointer;
+      transition: background .15s ease;
+    }
+    .stop-row:hover, .all-point-row:hover {
+      background: #f8fbff;
+    }
+    .stop-row.active, .all-point-row.active {
+      background: #eff6ff;
+      outline: 2px solid #93c5fd;
+    }
+    .route-stop-icon div {
+      color: white;
+      font-weight: 800;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 999px;
+      border: 2px solid #fff;
+      box-shadow: 0 4px 14px rgba(0,0,0,0.28);
+    }
+    .depot-icon div {
+      width: 40px;
+      height: 40px;
+      border-radius: 999px;
+      background: #111827;
+      color: white;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 18px;
+      border: 2px solid #fff;
+      box-shadow: 0 4px 14px rgba(0,0,0,0.32);
+    }
+    .old-stop-icon div {
+      width: 26px;
+      height: 26px;
+      border-radius: 999px;
+      background: #f59e0b;
+      color: white;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 11px;
+      font-weight: 800;
+      border: 2px solid #fff;
+      box-shadow: 0 3px 10px rgba(0,0,0,0.25);
+    }
+    .leaflet-popup-content {
+      font-size: 13px;
+      line-height: 1.75;
+    }
+  </style>
+</head>
+<body>
+<div id="wrap">
+  <aside id="panel">
+    <h1>🗺️ 排程地圖 Dashboard</h1>
+    <div class="lead">
+      這一版已經改成真正分開計算：不跨縣市 / 可跨縣市 / 跨縣市精簡版。<br>
+      舊路線虛線也會跟著現在的路線模式，能用 OSRM 道路路徑顯示。
+    </div>
+
+    {% if run_status == "success" %}
+      <div class="msg ok">{{ run_message }}</div>
+    {% elif run_status == "failed" %}
+      <div class="msg err">{{ run_message }}</div>
+    {% endif %}
+
+    <div id="jsNotice" class="msg warn" style="display:none"></div>
+
+    <div class="sec">
+      <div class="sec-title">總覽</div>
+      <div class="stats">
+        <div class="stat">
+          <div class="k">資料總點位</div>
+          <div class="v">{{ total_points }}</div>
+        </div>
+        <div class="stat">
+          <div class="k">場站數</div>
+          <div class="v">{{ depots_count }}</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="sec">
+      <div class="sec-title">操作控制</div>
+      <div class="control-grid">
+        <div class="control-item">
+          <label>路線模式</label>
+          <select id="routeMode">
+            <option value="straight">直線連點</option>
+            <option value="osrm" selected>OSRM 道路路線</option>
+          </select>
+        </div>
+        <div class="control-item">
+          <label>回程線</label>
+          <select id="returnMode">
+            <option value="none" selected>不顯示回程</option>
+            <option value="show">顯示回程</option>
+          </select>
+        </div>
+        <div class="control-item">
+          <label>司機</label>
+          <select id="driverSel"></select>
+        </div>
+        <div class="control-item">
+          <label>天數</label>
+          <select id="daySel"></select>
+        </div>
+      </div>
+      <div class="btn-row" style="margin-top:10px;">
+        <button id="btnRefresh" type="button">更新目前路線</button>
+      </div>
+      <div class="mini" style="margin-top:8px;">
+        OSRM 需要網路。若抓不到道路資料，系統會自動退回直線模式。
+      </div>
+    </div>
+
+    <div class="sec">
+      <div class="sec-title">類型切換</div>
+      <div class="variant-group">
+        <button type="button" class="variant-btn" data-variant="normal">不跨縣市</button>
+        <button type="button" class="variant-btn" data-variant="cross">可跨縣市</button>
+        <button type="button" class="variant-btn" data-variant="compact">跨縣市精簡版</button>
+      </div>
+    </div>
+
+    <div class="sec">
+      <div class="sec-title">舊路線疊圖</div>
+      <div class="control-grid">
+        <div class="control-item">
+          <label>顯示舊路線</label>
+          <div style="padding-top:8px;">
+            <input type="checkbox" id="showOldOverlay">
+          </div>
+        </div>
+        <div class="control-item">
+          <label>舊路線選擇</label>
+          <select id="oldRouteSel"></select>
+        </div>
+      </div>
+      <div class="mini">舊路線的司機代碼已轉成跟新路線一樣的格式，例如 P01、W01。</div>
+    </div>
+
+    <div class="sec">
+      <div class="sec-title">系統操作</div>
+      <div class="btn-row">
+        <a id="btnRunScheduler" class="action success" href="/run/?variant={{ initial_variant }}">重新計算最佳路徑</a>
+        <a class="action primary" href="/data/">資料管理</a>
+        <a class="action orange" href="/data/import/">匯入 Excel / CSV</a>
+      </div>
+      <div class="mini" style="margin-top:8px;">最新報表會儲存在 output\Dispatch_Report_Latest.xlsx</div>
+    </div>
+
+    <div class="sec">
+      <div id="routeSummaryTitle" class="route-head">尚未載入路線</div>
+      <div id="metaBadges"></div>
+      <div id="routeMeta" class="mini">請先選擇類型、司機與天數。</div>
+      <div class="legend">
+        <span class="legend-item"><span class="dot" style="background:#2563eb"></span> 不跨縣市</span>
+        <span class="legend-item"><span class="dot" style="background:#ef4444"></span> 可跨縣市</span>
+        <span class="legend-item"><span class="dot" style="background:#8b5cf6"></span> 跨縣市精簡版</span>
+        <span class="legend-item"><span class="dot" style="background:#f59e0b"></span> 舊路線</span>
+        <span class="legend-item"><span class="dot" style="background:#111827"></span> 總部</span>
+      </div>
+    </div>
+
+    <div class="sec">
+      <div class="sec-title">KPI</div>
+      <div class="kpi-grid">
+        <div class="kpi-card"><div class="name">站數</div><div id="kpiStops" class="num">-</div></div>
+        <div class="kpi-card"><div class="name">服務時間(分)</div><div id="kpiService" class="num">-</div></div>
+        <div class="kpi-card"><div class="name">車程時間(分)</div><div id="kpiDrive" class="num">-</div></div>
+        <div class="kpi-card"><div class="name">總工時(分)</div><div id="kpiTotal" class="num">-</div></div>
+        <div class="kpi-card"><div class="name">距離(km)</div><div id="kpiDist" class="num">-</div></div>
+        <div class="kpi-card"><div class="name">目前類型</div><div id="kpiVariant" class="num" style="font-size:16px;">-</div></div>
+      </div>
+    </div>
+
+    <div class="sec">
+      <div class="sec-title">點位明細</div>
+      <div class="stop-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th class="nowrap">序</th>
+              <th>任務ID</th>
+              <th>地址</th>
+              <th class="nowrap">服務</th>
+            </tr>
+          </thead>
+          <tbody id="stopTableBody">
+            <tr><td colspan="4">尚未載入資料</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="sec">
+      <div class="sec-title">顯示所有點位</div>
+      <div class="control-grid">
+        <div class="control-item">
+          <label>每頁筆數</label>
+          <select id="allPointsPageSize">
+            <option value="20" selected>20</option>
+            <option value="50">50</option>
+            <option value="100">100</option>
+            <option value="200">200</option>
+          </select>
+        </div>
+        <div class="control-item">
+          <label>本頁點位顯示到地圖</label>
+          <div style="padding-top:8px;">
+            <input type="checkbox" id="showPagePoints" checked>
+          </div>
+        </div>
+      </div>
+      <div class="btn-row" style="margin-top:10px;">
+        <button id="allPointsPrev" type="button">上一頁</button>
+        <button id="allPointsNext" type="button">下一頁</button>
+      </div>
+      <div id="allPointsMeta" class="mini" style="margin-top:8px;">尚未載入全部點位資料。</div>
+      <div class="all-points-wrap" style="margin-top:10px;">
+        <table>
+          <thead>
+            <tr>
+              <th class="nowrap">ID</th>
+              <th>客戶名稱</th>
+              <th>地址</th>
+            </tr>
+          </thead>
+          <tbody id="allPointsBody">
+            <tr><td colspan="3">尚未載入全部點位資料</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </aside>
+
+  <div id="map"></div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+const INITIAL_VARIANT = "{{ initial_variant|escapejs }}";
+const VARIANT_LABELS = {
+  normal: "不跨縣市",
+  cross: "可跨縣市",
+  compact: "跨縣市精簡版"
+};
+const VARIANT_COLORS = {
+  normal: "#2563eb",
+  cross: "#ef4444",
+  compact: "#8b5cf6"
+};
+
+const routeModeEl = document.getElementById("routeMode");
+const returnModeEl = document.getElementById("returnMode");
+const driverSelEl = document.getElementById("driverSel");
+const daySelEl = document.getElementById("daySel");
+const oldRouteSelEl = document.getElementById("oldRouteSel");
+const showOldOverlayEl = document.getElementById("showOldOverlay");
+const stopTableBody = document.getElementById("stopTableBody");
+const routeSummaryTitle = document.getElementById("routeSummaryTitle");
+const routeMeta = document.getElementById("routeMeta");
+const metaBadges = document.getElementById("metaBadges");
+const btnRunScheduler = document.getElementById("btnRunScheduler");
+const noticeEl = document.getElementById("jsNotice");
+
+const allPointsBody = document.getElementById("allPointsBody");
+const allPointsMeta = document.getElementById("allPointsMeta");
+const allPointsPageSizeEl = document.getElementById("allPointsPageSize");
+const showPagePointsEl = document.getElementById("showPagePoints");
+const allPointsPrevEl = document.getElementById("allPointsPrev");
+const allPointsNextEl = document.getElementById("allPointsNext");
+
+let map;
+let routeLayer;
+let stopLayer;
+let depotLayer;
+let oldRouteLayer;
+let oldStopLayer;
+let pagePointsLayer;
+
+let state = {
+  variant: INITIAL_VARIANT,
+  options: null,
+  route: null,
+  markerMap: new Map(),
+  selectedSeq: null,
+  allPointsPage: 1,
+  allPointsTotalPages: 1,
+};
+
+function fmt(num, digits=0) {
+  const n = Number(num);
+  if (!Number.isFinite(n)) return "-";
+  return n.toLocaleString("zh-TW", {
+    maximumFractionDigits: digits,
+    minimumFractionDigits: digits
+  });
+}
+
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
+function setNotice(text="", kind="warn") {
+  if (!text) {
+    noticeEl.style.display = "none";
+    noticeEl.textContent = "";
+    noticeEl.className = "msg warn";
+    return;
+  }
+  noticeEl.style.display = "block";
+  noticeEl.textContent = text;
+  noticeEl.className = `msg ${kind}`;
+}
+
+function validPoint(p) {
+  return p && Number.isFinite(Number(p.lat)) && Number.isFinite(Number(p.lon));
+}
+
+function initMap() {
+  map = L.map("map", { preferCanvas: true }).setView([25.02, 121.2], 9);
+  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+    maxZoom: 19,
+    attribution: "&copy; OpenStreetMap contributors"
+  }).addTo(map);
+
+  routeLayer = L.layerGroup().addTo(map);
+  stopLayer = L.layerGroup().addTo(map);
+  depotLayer = L.layerGroup().addTo(map);
+  oldRouteLayer = L.layerGroup().addTo(map);
+  oldStopLayer = L.layerGroup().addTo(map);
+  pagePointsLayer = L.layerGroup().addTo(map);
+}
+
+function clearMainLayers() {
+  routeLayer.clearLayers();
+  stopLayer.clearLayers();
+  depotLayer.clearLayers();
+  state.markerMap = new Map();
+}
+
+function clearOldLayers() {
+  oldRouteLayer.clearLayers();
+  oldStopLayer.clearLayers();
+}
+
+function clearPagePointLayers() {
+  pagePointsLayer.clearLayers();
+}
+
+function setVariantButtons() {
+  document.querySelectorAll(".variant-btn").forEach(btn => {
+    btn.classList.toggle("active", btn.dataset.variant === state.variant);
+  });
+  btnRunScheduler.href = `/run/?variant=${state.variant}`;
+}
+
+function populateSelect(selectEl, items, selectedValue="") {
+  selectEl.innerHTML = "";
+  items.forEach(item => {
+    const opt = document.createElement("option");
+    opt.value = String(item.value);
+    opt.textContent = item.label;
+    if (String(item.value) === String(selectedValue)) {
+      opt.selected = true;
+    }
+    selectEl.appendChild(opt);
+  });
+}
+
+async function fetchJSON(url) {
+  const res = await fetch(url);
+  const data = await res.json();
+  if (!res.ok || data.ok === false) {
+    throw data;
+  }
+  return data;
+}
+
+function makeStopIcon(seq, color, selected=false) {
+  const size = selected ? 46 : 40;
+  const ring = selected ? "#f59e0b" : "#ffffff";
+  const shadow = selected
+    ? "0 0 0 6px rgba(245,158,11,.22), 0 6px 18px rgba(0,0,0,.32)"
+    : "0 4px 14px rgba(0,0,0,.28)";
+
+  return L.divIcon({
+    className: "route-stop-icon",
+    html: `
+      <div style="
+        width:${size}px;
+        height:${size}px;
+        background:${color};
+        border:3px solid ${ring};
+        box-shadow:${shadow};
+        font-size:${selected ? 15 : 14}px;
+      ">${escapeHtml(seq)}</div>
+    `,
+    iconSize: [size, size],
+    iconAnchor: [size / 2, size / 2]
+  });
+}
+
+function makeDepotIcon() {
+  return L.divIcon({
+    className: "depot-icon",
+    html: `<div>🏠</div>`,
+    iconSize: [40, 40],
+    iconAnchor: [20, 20]
+  });
+}
+
+function makeOldStopIcon(seq) {
+  return L.divIcon({
+    className: "old-stop-icon",
+    html: `<div>${escapeHtml(seq)}</div>`,
+    iconSize: [26, 26],
+    iconAnchor: [13, 13]
+  });
+}
+
+function haversineKm(a, b) {
+  const R = 6371;
+  const dLat = (b[0] - a[0]) * Math.PI / 180;
+  const dLon = (b[1] - a[1]) * Math.PI / 180;
+  const lat1 = a[0] * Math.PI / 180;
+  const lat2 = b[0] * Math.PI / 180;
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLon / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(h));
+}
+
+function approxDistanceKm(coords) {
+  let total = 0;
+  for (let i = 1; i < coords.length; i += 1) {
+    total += haversineKm(coords[i - 1], coords[i]);
+  }
+  return total;
+}
+
+function getDisplayCoords(route) {
+  const coords = [];
+  if (validPoint(route.depot)) {
+    coords.push([Number(route.depot.lat), Number(route.depot.lon)]);
+  }
+  (route.stops || []).forEach(stop => {
+    if (validPoint(stop)) {
+      coords.push([Number(stop.lat), Number(stop.lon)]);
+    }
+  });
+  if (returnModeEl.value === "show" && validPoint(route.depot)) {
+    coords.push([Number(route.depot.lat), Number(route.depot.lon)]);
+  }
+  return coords;
+}
+
+async function drawRouteLine(route, color) {
+  const coords = getDisplayCoords(route);
+
+  if (coords.length < 2) {
+    return {
+      driveMin: route.metrics?.drive_min ?? null,
+      distKm: route.metrics?.dist_km ?? null,
+      source: "metrics"
+    };
+  }
+
+  if (routeModeEl.value === "osrm") {
+    try {
+      const coordStr = coords.map(([lat, lon]) => `${lon},${lat}`).join(";");
+      const url = `https://router.project-osrm.org/route/v1/driving/${coordStr}?overview=full&geometries=geojson`;
+      const res = await fetch(url);
+      const json = await res.json();
+      if (json.routes && json.routes[0]) {
+        const routeGeo = json.routes[0];
+        const latlngs = routeGeo.geometry.coordinates.map(([lon, lat]) => [lat, lon]);
+
+        L.polyline(latlngs, { color: "#ffffff", weight: 10, opacity: 0.95 }).addTo(routeLayer);
+        L.polyline(latlngs, { color, weight: 5, opacity: 0.96 }).addTo(routeLayer);
+
+        return {
+          driveMin: routeGeo.duration / 60,
+          distKm: routeGeo.distance / 1000,
+          source: "osrm"
+        };
+      }
+    } catch (err) {
+      console.warn("OSRM fallback to straight line:", err);
+    }
+  }
+
+  L.polyline(coords, { color: "#ffffff", weight: 10, opacity: 0.95 }).addTo(routeLayer);
+  L.polyline(coords, { color, weight: 5, opacity: 0.96 }).addTo(routeLayer);
+
+  return {
+    driveMin: route.metrics?.drive_min ?? null,
+    distKm: route.metrics?.dist_km ?? approxDistanceKm(coords),
+    source: "straight"
+  };
+}
+
+async function drawOldOverlay(route) {
+  clearOldLayers();
+  if (!route) return;
+
+  const coords = getDisplayCoords(route);
+
+  if (coords.length >= 2) {
+    if (routeModeEl.value === "osrm") {
+      try {
+        const coordStr = coords.map(([lat, lon]) => `${lon},${lat}`).join(";");
+        const url = `https://router.project-osrm.org/route/v1/driving/${coordStr}?overview=full&geometries=geojson`;
+        const res = await fetch(url);
+        const json = await res.json();
+        if (json.routes && json.routes[0]) {
+          const latlngs = json.routes[0].geometry.coordinates.map(([lon, lat]) => [lat, lon]);
+
+          L.polyline(latlngs, {
+            color: "#ffffff",
+            weight: 8,
+            opacity: 0.92,
+            dashArray: "10,10"
+          }).addTo(oldRouteLayer);
+
+          L.polyline(latlngs, {
+            color: "#f59e0b",
+            weight: 3,
+            opacity: 0.92,
+            dashArray: "10,10"
+          }).addTo(oldRouteLayer);
+        }
+      } catch (err) {
+        console.warn("Old overlay OSRM fallback:", err);
+        L.polyline(coords, {
+          color: "#ffffff",
+          weight: 8,
+          opacity: 0.92,
+          dashArray: "10,10"
+        }).addTo(oldRouteLayer);
+
+        L.polyline(coords, {
+          color: "#f59e0b",
+          weight: 3,
+          opacity: 0.92,
+          dashArray: "10,10"
+        }).addTo(oldRouteLayer);
+      }
+    } else {
+      L.polyline(coords, {
+        color: "#ffffff",
+        weight: 8,
+        opacity: 0.92,
+        dashArray: "10,10"
+      }).addTo(oldRouteLayer);
+
+      L.polyline(coords, {
+        color: "#f59e0b",
+        weight: 3,
+        opacity: 0.92,
+        dashArray: "10,10"
+      }).addTo(oldRouteLayer);
+    }
+  }
+
+  (route.stops || []).forEach(stop => {
+    if (!validPoint(stop)) return;
+    const marker = L.marker([Number(stop.lat), Number(stop.lon)], {
+      icon: makeOldStopIcon(stop.seq)
+    }).addTo(oldStopLayer);
+
+    marker.bindPopup(`
+      <div>
+        <div><strong>舊路線 #${escapeHtml(stop.seq)}</strong></div>
+        <div>地址：${escapeHtml(stop.address || "-")}</div>
+        <div>服務時間：${escapeHtml(fmt(stop.service_min || 0, 0))} 分</div>
+      </div>
+    `);
+  });
+}
+
+function setMarkerSelected(seq, selected) {
+  const key = String(seq);
+  const entry = state.markerMap.get(key);
+  if (!entry) return;
+  entry.marker.setIcon(makeStopIcon(entry.stop.seq, entry.color, selected));
+}
+
+function updateSelectedRowUI() {
+  document.querySelectorAll(".stop-row").forEach(row => {
+    row.classList.toggle("active", row.dataset.seq === String(state.selectedSeq));
+  });
+}
+
+function focusStop(seq, openPopup=true, pan=true) {
+  state.selectedSeq = String(seq);
+
+  state.markerMap.forEach((entry, key) => {
+    setMarkerSelected(key, key === state.selectedSeq);
+  });
+
+  updateSelectedRowUI();
+
+  const entry = state.markerMap.get(String(seq));
+  if (entry) {
+    if (pan) {
+      map.flyTo(entry.marker.getLatLng(), Math.max(map.getZoom(), 13), { duration: 0.5 });
+    }
+    if (openPopup) {
+      entry.marker.openPopup();
+    }
+  }
+
+  const row = document.querySelector(`.stop-row[data-seq="${CSS.escape(String(seq))}"]`);
+  if (row) {
+    row.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }
+}
+
+function drawMarkers(route, color) {
+  if (validPoint(route.depot)) {
+    L.marker([Number(route.depot.lat), Number(route.depot.lon)], {
+      icon: makeDepotIcon()
+    }).addTo(depotLayer).bindPopup(`
+      <div>
+        <div><strong>${escapeHtml(route.depot.name || "總部")}</strong></div>
+        <div>類型：${escapeHtml(VARIANT_LABELS[state.variant] || state.variant)}</div>
+      </div>
+    `);
+  }
+
+  (route.stops || []).forEach(stop => {
+    if (!validPoint(stop)) return;
+
+    const color = VARIANT_COLORS[state.variant] || "#2563eb";
+    const marker = L.marker([Number(stop.lat), Number(stop.lon)], {
+      icon: makeStopIcon(stop.seq, color, false)
+    }).addTo(stopLayer);
+
+    marker.bindPopup(`
+      <div>
+        <div><strong>#${escapeHtml(stop.seq)} ${escapeHtml(stop.task_id || "")}</strong></div>
+        <div>地址：${escapeHtml(stop.address || "-")}</div>
+        <div>服務時間：${escapeHtml(fmt(stop.service_min || 0, 0))} 分</div>
+        <div>縣市：${escapeHtml(stop.county || "-")}</div>
+      </div>
+    `);
+
+    marker.on("click", () => {
+      focusStop(stop.seq, true, false);
+    });
+
+    state.markerMap.set(String(stop.seq), {
+      marker,
+      stop,
+      color
+    });
+  });
+}
+
+function clearSummary() {
+  document.getElementById("kpiStops").textContent = "-";
+  document.getElementById("kpiService").textContent = "-";
+  document.getElementById("kpiDrive").textContent = "-";
+  document.getElementById("kpiTotal").textContent = "-";
+  document.getElementById("kpiDist").textContent = "-";
+  document.getElementById("kpiVariant").textContent = "-";
+  routeSummaryTitle.textContent = "尚未載入路線";
+  routeMeta.textContent = "請先選擇類型、司機與天數。";
+  metaBadges.innerHTML = "";
+  stopTableBody.innerHTML = '<tr><td colspan="4">尚未載入資料</td></tr>';
+}
+
+function updateSummary(route, visual) {
+  const service = Number(route.metrics?.service_min ?? 0);
+  const drive = Number(visual.driveMin ?? route.metrics?.drive_min ?? NaN);
+  const dist = Number(visual.distKm ?? route.metrics?.dist_km ?? NaN);
+  const total = Number.isFinite(drive) ? (service + drive) : Number(route.metrics?.total_min ?? service);
+
+  document.getElementById("kpiStops").textContent = fmt(route.stop_count ?? route.stops.length, 0);
+  document.getElementById("kpiService").textContent = fmt(service, 0);
+  document.getElementById("kpiDrive").textContent = Number.isFinite(drive) ? fmt(drive, 0) : "-";
+  document.getElementById("kpiTotal").textContent = Number.isFinite(total) ? fmt(total, 0) : "-";
+  document.getElementById("kpiDist").textContent = Number.isFinite(dist) ? fmt(dist, 1) : "-";
+  document.getElementById("kpiVariant").textContent = VARIANT_LABELS[state.variant] || state.variant;
+
+  routeSummaryTitle.textContent = `${route.driver_label || route.driver}｜第 ${route.day} 天`;
+
+  const counties = route.counties || [];
+  const badgeHtml = [];
+  badgeHtml.push(`<span class="badge gray">${escapeHtml(route.depot?.name || "總部未設定")}</span>`);
+  badgeHtml.push(`<span class="badge gray">資料檔：${escapeHtml(state.options?.file_used || "-")}</span>`);
+
+  if (counties.length > 1) {
+    badgeHtml.push(`<span class="badge red">⚠ 跨縣市：${escapeHtml(counties.join(" / "))}</span>`);
+  } else if (counties.length === 1) {
+    badgeHtml.push(`<span class="badge blue">縣市：${escapeHtml(counties[0])}</span>`);
+  }
+
+  metaBadges.innerHTML = badgeHtml.join("");
+
+  routeMeta.innerHTML = `
+    <div>司機代碼：<strong>${escapeHtml(route.driver)}</strong></div>
+    <div>點位數：<strong>${escapeHtml(route.stop_count)}</strong>，道路模式：<strong>${escapeHtml(visual.source)}</strong></div>
+    <div>總工時約 <strong>${escapeHtml(fmt(total, 0))}</strong> 分（服務 + 車程）</div>
+  `;
+}
+
+function updateStopTable(route) {
+  const rows = (route.stops || []).map(stop => `
+    <tr class="stop-row" data-seq="${escapeHtml(stop.seq)}">
+      <td class="nowrap">${escapeHtml(stop.seq)}</td>
+      <td class="nowrap">${escapeHtml(stop.task_id || "-")}</td>
+      <td>${escapeHtml(stop.address || "-")}</td>
+      <td class="nowrap">${escapeHtml(fmt(stop.service_min || 0, 0))}</td>
+    </tr>
+  `).join("");
+
+  stopTableBody.innerHTML = rows || '<tr><td colspan="4">這條路線沒有點位資料</td></tr>';
+
+  document.querySelectorAll(".stop-row").forEach(row => {
+    row.addEventListener("click", () => {
+      focusStop(row.dataset.seq, true, true);
+    });
+  });
+}
+
+function fitMapToLayers() {
+  const layers = [
+    ...routeLayer.getLayers(),
+    ...stopLayer.getLayers(),
+    ...depotLayer.getLayers(),
+    ...oldRouteLayer.getLayers(),
+    ...oldStopLayer.getLayers()
+  ];
+  const group = L.featureGroup(layers);
+  try {
+    if (group.getLayers().length > 0) {
+      map.fitBounds(group.getBounds().pad(0.14));
+    }
+  } catch (err) {
+      console.warn("fitBounds failed:", err);
+  }
+}
+
+function refreshDaySelect() {
+  if (!state.options || !state.options.drivers || state.options.drivers.length === 0) {
+    populateSelect(driverSelEl, []);
+    populateSelect(daySelEl, []);
+    return;
+  }
+
+  const currentDriver = driverSelEl.value || state.options.drivers[0].value;
+  const days = (state.options.days_by_driver && state.options.days_by_driver[currentDriver])
+    ? state.options.days_by_driver[currentDriver]
+    : [];
+
+  populateSelect(
+    daySelEl,
+    days.map(day => ({ value: String(day), label: `第 ${day} 天` })),
+    String(days[0] || "")
+  );
+}
+
+async function loadOldOptions() {
+  try {
+    const data = await fetchJSON("/api/routes/old-options/");
+    const items = (data.routes || []).map(r => ({
+      value: r.route_id,
+      label: r.label
+    }));
+    populateSelect(oldRouteSelEl, items, items[0]?.value || "");
+  } catch (err) {
+    populateSelect(oldRouteSelEl, []);
+    setNotice(err.warning || "舊路線資料載入失敗。", "warn");
+  }
+}
+
+async function loadVariant(variant) {
+  state.variant = variant;
+  setVariantButtons();
+
+  try {
+    const data = await fetchJSON(`/api/routes/options/?variant=${variant}`);
+    state.options = data;
+
+    populateSelect(driverSelEl, data.drivers || [], data.drivers?.[0]?.value || "");
+    refreshDaySelect();
+
+    if (data.warning) {
+      setNotice(data.warning, "warn");
+    } else {
+      setNotice("", "warn");
+    }
+
+    await renderRoute();
+  } catch (err) {
+    clearMainLayers();
+    clearSummary();
+    setNotice(err.warning || err.message || "載入路線清單失敗。", "err");
+  }
+}
+
+async function renderOldRouteIfNeeded() {
+  clearOldLayers();
+
+  if (!showOldOverlayEl.checked) return;
+  if (!oldRouteSelEl.value) return;
+
+  try {
+    const data = await fetchJSON(`/api/routes/old-detail/?route_id=${encodeURIComponent(oldRouteSelEl.value)}`);
+    await drawOldOverlay(data.route);
+  } catch (err) {
+    setNotice(err.warning || err.message || "舊路線疊圖載入失敗。", "warn");
+  }
+}
+
+async function renderRoute() {
+  if (!state.options || !driverSelEl.value || !daySelEl.value) {
+    clearMainLayers();
+    clearSummary();
+    return;
+  }
+
+  try {
+    const data = await fetchJSON(
+      `/api/routes/detail/?variant=${state.variant}&driver=${encodeURIComponent(driverSelEl.value)}&day=${encodeURIComponent(daySelEl.value)}`
+    );
+
+    state.route = data.route;
+    state.selectedSeq = null;
+
+    clearMainLayers();
+
+    const color = VARIANT_COLORS[state.variant] || "#2563eb";
+    drawMarkers(state.route, color);
+
+    const visual = await drawRouteLine(state.route, color);
+    updateSummary(state.route, visual);
+    updateStopTable(state.route);
+
+    await renderOldRouteIfNeeded();
+    fitMapToLayers();
+
+    if (data.warning) {
+      setNotice(data.warning, "warn");
+    } else {
+      setNotice("", "warn");
+    }
+  } catch (err) {
+    clearMainLayers();
+    clearSummary();
+    setNotice(err.warning || err.message || "載入路線明細失敗。", "err");
+  }
+}
+
+function clearPagePointActive() {
+  document.querySelectorAll(".all-point-row").forEach(row => row.classList.remove("active"));
+}
+
+function focusAllPoint(id, lat, lon) {
+  clearPagePointActive();
+  const row = document.querySelector(`.all-point-row[data-id="${CSS.escape(String(id))}"]`);
+  if (row) {
+    row.classList.add("active");
+    row.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }
+  if (Number.isFinite(Number(lat)) && Number.isFinite(Number(lon))) {
+    map.flyTo([Number(lat), Number(lon)], Math.max(map.getZoom(), 14), { duration: 0.5 });
+  }
+}
+
+async function loadAllPointsPage(page=1) {
+  try {
+    const pageSize = allPointsPageSizeEl.value || "20";
+    const data = await fetchJSON(`/api/points/page/?page=${page}&page_size=${pageSize}`);
+
+    state.allPointsPage = data.page;
+    state.allPointsTotalPages = data.total_pages;
+
+    allPointsMeta.textContent = `第 ${data.page} / ${data.total_pages} 頁，共 ${data.total_count} 筆。`;
+
+    const rows = (data.items || []).map(item => `
+      <tr class="all-point-row" data-id="${escapeHtml(item.id)}" data-lat="${escapeHtml(item.lat)}" data-lon="${escapeHtml(item.lon)}">
+        <td class="nowrap">${escapeHtml(item.id)}</td>
+        <td>${escapeHtml(item.client_name || "-")}</td>
+        <td>${escapeHtml(item.address || "-")}</td>
+      </tr>
+    `).join("");
+
+    allPointsBody.innerHTML = rows || '<tr><td colspan="3">沒有資料</td></tr>';
+
+    document.querySelectorAll(".all-point-row").forEach(row => {
+      row.addEventListener("click", () => {
+        focusAllPoint(row.dataset.id, row.dataset.lat, row.dataset.lon);
+      });
+    });
+
+    clearPagePointLayers();
+    if (showPagePointsEl.checked) {
+      (data.items || []).forEach(item => {
+        if (!Number.isFinite(Number(item.lat)) || !Number.isFinite(Number(item.lon))) return;
+
+        const marker = L.circleMarker([Number(item.lat), Number(item.lon)], {
+          radius: 6,
+          color: "#64748b",
+          weight: 2,
+          fillColor: "#cbd5e1",
+          fillOpacity: 0.75
+        }).addTo(pagePointsLayer);
+
+        marker.bindPopup(`
+          <div>
+            <div><strong>${escapeHtml(item.client_name || "-")}</strong></div>
+            <div>ID：${escapeHtml(item.id)}</div>
+            <div>地址：${escapeHtml(item.address || "-")}</div>
+            <div>服務時間：${escapeHtml(item.service_time || "-")}</div>
+          </div>
+        `);
+
+        marker.on("click", () => {
+          focusAllPoint(item.id, item.lat, item.lon);
+        });
+      });
+    }
+  } catch (err) {
+    allPointsMeta.textContent = "全部點位分頁載入失敗。";
+    allPointsBody.innerHTML = '<tr><td colspan="3">全部點位分頁載入失敗</td></tr>';
+  }
+}
+
+function bindEvents() {
+  document.querySelectorAll(".variant-btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      loadVariant(btn.dataset.variant);
+    });
+  });
+
+  driverSelEl.addEventListener("change", () => {
+    refreshDaySelect();
+    renderRoute();
+  });
+
+  daySelEl.addEventListener("change", () => {
+    renderRoute();
+  });
+
+  routeModeEl.addEventListener("change", () => {
+    if (state.route) renderRoute();
+  });
+
+  returnModeEl.addEventListener("change", () => {
+    if (state.route) renderRoute();
+  });
+
+  oldRouteSelEl.addEventListener("change", () => {
+    renderOldRouteIfNeeded();
+  });
+
+  showOldOverlayEl.addEventListener("change", () => {
+    renderOldRouteIfNeeded();
+  });
+
+  document.getElementById("btnRefresh").addEventListener("click", () => {
+    renderRoute();
+  });
+
+  allPointsPageSizeEl.addEventListener("change", () => {
+    loadAllPointsPage(1);
+  });
+
+  showPagePointsEl.addEventListener("change", () => {
+    loadAllPointsPage(state.allPointsPage || 1);
+  });
+
+  allPointsPrevEl.addEventListener("click", () => {
+    if (state.allPointsPage > 1) {
+      loadAllPointsPage(state.allPointsPage - 1);
+    }
+  });
+
+  allPointsNextEl.addEventListener("click", () => {
+    if (state.allPointsPage < state.allPointsTotalPages) {
+      loadAllPointsPage(state.allPointsPage + 1);
+    }
+  });
+}
+
+initMap();
+bindEvents();
+clearSummary();
+loadOldOptions();
+loadVariant(INITIAL_VARIANT);
+loadAllPointsPage(1);
+</script>
+</body>
+</html>

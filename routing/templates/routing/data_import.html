@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <title>匯入 Excel / CSV</title>
+    <style>
+        body {
+            font-family: "Microsoft JhengHei", Arial, sans-serif;
+            margin: 0;
+            background: #f4f7fb;
+            color: #1f2937;
+        }
+        .page {
+            padding: 24px;
+        }
+        .card {
+            background: white;
+            padding: 24px;
+            border-radius: 18px;
+            box-shadow: 0 10px 28px rgba(15, 23, 42, 0.08);
+            max-width: 900px;
+        }
+        h1 {
+            margin-top: 0;
+        }
+        .btn {
+            display: inline-block;
+            padding: 10px 16px;
+            border-radius: 10px;
+            text-decoration: none;
+            color: white;
+            background: #2563eb;
+            border: none;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        .btn.gray {
+            background: #64748b;
+        }
+        .box {
+            background: #f8fafc;
+            padding: 16px;
+            border-radius: 14px;
+            margin-bottom: 18px;
+        }
+        .error {
+            background: #fef2f2;
+            color: #991b1b;
+            padding: 12px 14px;
+            border-radius: 12px;
+            margin-bottom: 16px;
+        }
+        .success {
+            background: #ecfdf5;
+            color: #166534;
+            padding: 12px 14px;
+            border-radius: 12px;
+            margin-bottom: 16px;
+        }
+        ul {
+            line-height: 1.8;
+        }
+    </style>
+</head>
+<body>
+    <div class="page">
+        <div class="card">
+            <h1>匯入 Excel / CSV</h1>
+
+            <div class="box">
+                <p><strong>支援檔案格式：</strong>CSV、XLSX、XLS</p>
+                <p><strong>支援欄位名稱：</strong></p>
+                <ul>
+                    <li>ID / id</li>
+                    <li>場站 / depot</li>
+                    <li>客戶名稱 / client_name</li>
+                    <li>服務時間 / service_time</li>
+                    <li>地址 / address</li>
+                    <li>樓層 / floor</li>
+                    <li>排序 / order_id</li>
+                    <li>週1 / weekly_1</li>
+                    <li>週2 / weekly_2</li>
+                    <li>緯度 / lat</li>
+                    <li>經度 / lon</li>
+                </ul>
+                <p>如果有 ID，系統會優先更新原資料。沒有 ID，系統會新增新資料。</p>
+            </div>
+
+            {% if error_message %}
+                <div class="error">{{ error_message }}</div>
+            {% endif %}
+
+            {% if summary %}
+                <div class="success">
+                    匯入完成。新增 {{ summary.created_count }} 筆，更新 {{ summary.updated_count }} 筆，略過 {{ summary.skipped_count }} 筆。
+                </div>
+            {% endif %}
+
+            <form method="post" enctype="multipart/form-data">
+                {% csrf_token %}
+                <p>
+                    <input type="file" name="file" accept=".csv,.xlsx,.xls">
+                </p>
+                <button class="btn" type="submit">開始匯入</button>
+                <a class="btn gray" href="/data/">返回資料列表</a>
+            </form>
+        </div>
+    </div>
+</body>
+</html>
