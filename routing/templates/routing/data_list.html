@@ -22,7 +22,7 @@
         .title-row {
             display: flex;
             justify-content: space-between;
-            align-items: center;
+            align-items: flex-start;
             flex-wrap: wrap;
             gap: 12px;
             margin-bottom: 18px;
@@ -30,6 +30,18 @@
         .title-row h1 {
             margin: 0;
             font-size: 28px;
+        }
+        .top-actions {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            align-items: flex-end;
+        }
+        .btn-group {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            justify-content: flex-end;
         }
         .summary {
             display: flex;
@@ -67,6 +79,7 @@
         .btn.green { background: #16a34a; }
         .btn.orange { background: #ea580c; }
         .btn.red { background: #dc2626; }
+        .btn.purple { background: #7c3aed; }
 
         .toolbar {
             display: flex;
@@ -143,10 +156,14 @@
         <div class="card">
             <div class="title-row">
                 <h1>資料管理中心</h1>
-                <div>
-                    <a class="btn gray" href="/">回首頁</a>
-                    <a class="btn green" href="/data/add/">新增資料</a>
-                    <a class="btn orange" href="/data/import/">匯入 Excel / CSV</a>
+
+                <div class="top-actions">
+                    <div class="btn-group">
+                        <a class="btn gray" href="/">回首頁</a>
+                        <a class="btn green" href="/data/add/">新增資料</a>
+                        <a class="btn orange" href="/data/import/">匯入 Excel / CSV</a>
+                        <a class="btn purple" href="/api/export/excel/?key=dispatch_latest">下載總排程 Excel</a>
+                    </div>
                 </div>
             </div>
 

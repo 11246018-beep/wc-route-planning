@@ -1,0 +1,638 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Dispatch Nav | 帳號管理</title>
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <link href="https://fonts.googleapis.com/css?family=Open+Sans:300,400,600,700" rel="stylesheet" />
+  <style>
+    :root {
+      --primary: #4A90E2;
+      --success: #16a34a;
+      --warning: #f59e0b;
+      --danger: #ef4444;
+      --glass: rgba(255, 255, 255, 0.95);
+      --soft-shadow: 0 10px 30px rgba(0, 0, 0, 0.08);
+      --text-main: #344767;
+      --sidebar-width: 80px;
+      --sidebar-expanded: 260px;
+      --bg: #f8f9fa;
+    }
+
+    * { box-sizing: border-box; }
+    body, html {
+      height: 100%;
+      margin: 0;
+      font-family: "Open Sans", sans-serif;
+      background: var(--bg);
+      color: var(--text-main);
+    }
+
+    #soft-sidebar {
+      position: fixed; top: 15px; left: 15px; bottom: 15px;
+      width: var(--sidebar-width); z-index: 1200;
+      background: var(--glass); backdrop-filter: blur(10px);
+      border-radius: 15px; box-shadow: var(--soft-shadow);
+      transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+      overflow: hidden; display: flex; flex-direction: column;
+      border: 1px solid rgba(255, 255, 255, 0.3);
+    }
+    #soft-sidebar:hover { width: var(--sidebar-expanded); }
+
+    .sidebar-header { padding: 25px 20px; display: flex; align-items: center; gap: 15px; min-width: 260px; }
+    .sidebar-header .logo-box { background: var(--primary); color: white; padding: 8px; border-radius: 8px; display: flex; }
+    .sidebar-header span { font-weight: 700; color: var(--text-main); white-space: nowrap; opacity: 0; transition: 0.3s; }
+    #soft-sidebar:hover .sidebar-header span { opacity: 1; }
+
+    .menu-list { flex: 1; padding: 10px 15px; display: flex; flex-direction: column; gap: 5px; }
+    .menu-item { display: flex; align-items: center; gap: 15px; padding: 12px; border-radius: 10px; cursor: pointer; transition: background 0.2s; min-width: 230px; text-decoration: none; }
+    .menu-item:hover { background: #f8f9fa; }
+    .menu-item .icon-box { width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; border-radius: 8px; background: white; box-shadow: 0 4px 6px rgba(0,0,0,0.05); color: #8392ab; }
+    .menu-item.active .icon-box { background: var(--primary); color: white; }
+    .menu-item span { font-size: 14px; font-weight: 600; color: #67748e; white-space: nowrap; opacity: 0; transition: 0.2s; }
+    #soft-sidebar:hover .menu-item span { opacity: 1; }
+
+    #top-nav {
+      position: fixed; top: 15px;
+      left: 110px; right: 15px; height: 60px;
+      z-index: 1000; background: var(--glass); backdrop-filter: blur(10px);
+      border-radius: 12px; box-shadow: var(--soft-shadow);
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 0 20px;
+      border: 1px solid rgba(255, 255, 255, 0.3);
+      transition: left 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    body:has(#soft-sidebar:hover) #top-nav {
+      left: 290px;
+    }
+
+    .nav-brand {
+      font-weight: 700;
+      font-size: 18px;
+      color: var(--text-main);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .nav-right {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      font-size: 13px;
+      color: #67748e;
+      font-weight: 600;
+    }
+
+    .page-wrap {
+      margin-left: 110px;
+      padding: 95px 20px 20px;
+      transition: margin-left 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    body:has(#soft-sidebar:hover) .page-wrap {
+      margin-left: 290px;
+    }
+
+    .summary-grid, .toolbar, .panel, .table-wrap {
+      max-width: 1450px;
+      margin: 0 auto 16px;
+    }
+
+    .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 14px;
+    }
+
+    .summary-card, .panel, .table-wrap {
+      background: var(--glass);
+      border-radius: 16px;
+      box-shadow: var(--soft-shadow);
+      border: 1px solid rgba(255,255,255,0.4);
+    }
+
+    .summary-card { padding: 18px; }
+    .summary-label {
+      font-size: 12px;
+      font-weight: 700;
+      color: #8392ab;
+      text-transform: uppercase;
+      margin-bottom: 10px;
+    }
+    .summary-value {
+      font-size: 28px;
+      font-weight: 700;
+      color: var(--text-main);
+    }
+
+    .toolbar {
+      display: grid;
+      grid-template-columns: 1.2fr auto auto;
+      gap: 12px;
+    }
+
+    .field-block {
+      background: var(--glass);
+      border-radius: 16px;
+      box-shadow: var(--soft-shadow);
+      border: 1px solid rgba(255,255,255,0.4);
+      padding: 14px 16px;
+    }
+
+    .field-block label {
+      display: block;
+      font-size: 12px;
+      font-weight: 700;
+      color: #8392ab;
+      margin-bottom: 8px;
+      text-transform: uppercase;
+    }
+
+    .field-block input, .panel input, .panel textarea, .panel select {
+      width: 100%;
+      border: 1px solid #d2d6da;
+      border-radius: 10px;
+      padding: 10px 12px;
+      font-size: 14px;
+      outline: none;
+      background: white;
+      font-family: inherit;
+    }
+
+    .panel {
+      padding: 18px;
+    }
+
+    .panel h3 {
+      margin: 0 0 14px;
+    }
+
+    .form-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 14px;
+      margin-bottom: 14px;
+    }
+
+    .full-row {
+      grid-column: 1 / -1;
+    }
+
+    .panel textarea {
+      min-height: 100px;
+      resize: vertical;
+    }
+
+    .panel-actions, .row-actions {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .btn {
+      border: none;
+      border-radius: 12px;
+      color: white;
+      font-weight: 700;
+      cursor: pointer;
+      padding: 10px 16px;
+      font-size: 14px;
+      text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .btn.primary { background: var(--primary); }
+    .btn.success { background: var(--success); }
+    .btn.warning { background: var(--warning); }
+    .btn.danger { background: var(--danger); }
+    .btn.gray { background: #6b7280; }
+
+    .table-wrap {
+      overflow: hidden;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 14px;
+      background: white;
+    }
+
+    th, td {
+      border-bottom: 1px solid #e5e7eb;
+      padding: 12px 10px;
+      text-align: left;
+      vertical-align: top;
+    }
+
+    th {
+      background: #eef3ff;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    .status-pill {
+      display: inline-block;
+      padding: 5px 10px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .status-active {
+      background: #dcfce7;
+      color: #166534;
+    }
+
+    .status-inactive {
+      background: #fee2e2;
+      color: #991b1b;
+    }
+
+    .empty-box {
+      padding: 30px;
+      text-align: center;
+      color: #8392ab;
+    }
+
+    @media (max-width: 1100px) {
+      .summary-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+      .toolbar {
+        grid-template-columns: 1fr;
+      }
+      .form-grid {
+        grid-template-columns: 1fr;
+      }
+      .page-wrap {
+        padding-right: 12px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <aside id="soft-sidebar">
+    <div class="sidebar-header">
+      <div class="logo-box"><i data-lucide="layout-grid" size="18"></i></div>
+      <span>Dispatch Nav</span>
+    </div>
+    <div class="menu-list">
+      <a href="{% url 'home' %}" class="menu-item">
+        <div class="icon-box"><i data-lucide="home" size="18"></i></div>
+        <span>Dashboard</span>
+      </a>
+
+      <a href="{% url 'report_page' %}" class="menu-item">
+        <div class="icon-box"><i data-lucide="triangle-alert" size="18"></i></div>
+        <span>問題回報</span>
+      </a>
+
+      <a href="{% url 'driver_admin_page' %}" class="menu-item active">
+        <div class="icon-box"><i data-lucide="users-round" size="18"></i></div>
+        <span>帳號管理</span>
+      </a>
+
+      <a href="{% url 'data_list' %}" class="menu-item">
+        <div class="icon-box"><i data-lucide="table" size="18"></i></div>
+        <span>資料管理</span>
+      </a>
+
+      <a href="{% url 'login' %}" class="menu-item">
+        <div class="icon-box"><i data-lucide="log-out" size="14"></i></div>
+        <span>登出</span>
+      </a>
+    </div>
+  </aside>
+
+  <nav id="top-nav">
+    <div class="nav-brand"><i data-lucide="users-round"></i> 司機帳號管理</div>
+    <div class="nav-right">
+      <span id="lastUpdateText">最後更新：--</span>
+    </div>
+  </nav>
+
+  <main class="page-wrap">
+    <section class="summary-grid">
+      <div class="summary-card">
+        <div class="summary-label">帳號總數</div>
+        <div class="summary-value" id="summaryTotal">0</div>
+      </div>
+      <div class="summary-card">
+        <div class="summary-label">啟用中</div>
+        <div class="summary-value" id="summaryActive">0</div>
+      </div>
+      <div class="summary-card">
+        <div class="summary-label">停用中</div>
+        <div class="summary-value" id="summaryInactive">0</div>
+      </div>
+      <div class="summary-card">
+        <div class="summary-label">目前查詢結果</div>
+        <div class="summary-value" id="summaryFiltered">0</div>
+      </div>
+    </section>
+
+    <section class="toolbar">
+      <div class="field-block">
+        <label for="keywordInput">搜尋司機</label>
+        <input id="keywordInput" type="text" placeholder="搜尋司機編號、姓名、電話" />
+      </div>
+      <button class="btn primary" type="button" onclick="loadDrivers()">重新整理</button>
+      <button class="btn success" type="button" onclick="openCreate()">新增司機帳號</button>
+    </section>
+
+    <section class="panel">
+      <h3 id="formTitle">新增 / 編輯司機帳號</h3>
+      <input type="hidden" id="formId" />
+
+      <div class="form-grid">
+        <div>
+          <label>司機編號</label>
+          <input id="formDriverCode" type="text" placeholder="例如 P01 / W01" />
+        </div>
+
+        <div>
+          <label>顯示名稱</label>
+          <input id="formDisplayName" type="text" placeholder="例如 王小明" />
+        </div>
+
+        <div>
+          <label>場站 depot_id</label>
+          <input id="formDepotId" type="number" placeholder="例如 1 或 2" />
+        </div>
+
+        <div>
+          <label>工時上限 max_minutes</label>
+          <input id="formMaxMinutes" type="number" placeholder="例如 540" />
+        </div>
+
+        <div>
+          <label>App 密碼</label>
+          <input id="formPassword" type="text" placeholder="輸入新的 App 密碼" />
+        </div>
+
+        <div>
+          <label>電話</label>
+          <input id="formPhone" type="text" placeholder="例如 0912345678" />
+        </div>
+
+        <div class="full-row">
+          <label>備註</label>
+          <textarea id="formNote" placeholder="可填司機備註、聯絡事項、工作說明"></textarea>
+        </div>
+
+        <div>
+          <label>是否啟用</label>
+          <select id="formIsActive">
+            <option value="true">啟用</option>
+            <option value="false">停用</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="panel-actions">
+        <button class="btn success" type="button" onclick="saveDriver()">儲存資料</button>
+        <button class="btn gray" type="button" onclick="resetForm()">清空表單</button>
+      </div>
+    </section>
+
+    <section class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>司機編號</th>
+            <th>顯示名稱</th>
+            <th>電話</th>
+            <th>場站</th>
+            <th>工時</th>
+            <th>狀態</th>
+            <th>建立時間</th>
+            <th>操作</th>
+          </tr>
+        </thead>
+        <tbody id="driverTableBody">
+          <tr><td colspan="9" class="empty-box">載入中...</td></tr>
+        </tbody>
+      </table>
+    </section>
+  </main>
+
+  <script>
+    lucide.createIcons();
+
+    let allDrivers = [];
+
+    function updateLastUpdateTime() {
+      const now = new Date();
+      const text = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`;
+      document.getElementById('lastUpdateText').textContent = `最後更新：${text}`;
+    }
+
+    async function loadDrivers() {
+      const keyword = document.getElementById('keywordInput').value.trim();
+      const url = keyword
+        ? `/api/admin/drivers/?q=${encodeURIComponent(keyword)}`
+        : `/api/admin/drivers/`;
+
+      const tbody = document.getElementById('driverTableBody');
+      tbody.innerHTML = `<tr><td colspan="9" class="empty-box">載入中...</td></tr>`;
+
+      try {
+        const res = await fetch(url);
+        const data = await res.json();
+
+        if (!res.ok || !data.ok) {
+          tbody.innerHTML = `<tr><td colspan="9" class="empty-box">讀取失敗：${data.message || '未知錯誤'}</td></tr>`;
+          return;
+        }
+
+        allDrivers = Array.isArray(data.drivers) ? data.drivers : [];
+        renderSummary(allDrivers);
+        renderTable(allDrivers);
+        updateLastUpdateTime();
+      } catch (err) {
+        tbody.innerHTML = `<tr><td colspan="9" class="empty-box">連線失敗：${err}</td></tr>`;
+      }
+    }
+
+    function renderSummary(drivers) {
+      document.getElementById('summaryTotal').textContent = allDrivers.length;
+      document.getElementById('summaryFiltered').textContent = drivers.length;
+      document.getElementById('summaryActive').textContent = allDrivers.filter(d => d.is_active).length;
+      document.getElementById('summaryInactive').textContent = allDrivers.filter(d => !d.is_active).length;
+    }
+
+    function renderTable(drivers) {
+      const tbody = document.getElementById('driverTableBody');
+
+      if (!drivers.length) {
+        tbody.innerHTML = `<tr><td colspan="9" class="empty-box">目前沒有司機資料</td></tr>`;
+        return;
+      }
+
+      tbody.innerHTML = drivers.map(driver => `
+        <tr>
+          <td>${driver.id || '-'}</td>
+          <td>${escapeHtml(driver.driver_code || '-')}</td>
+          <td>${escapeHtml(driver.display_name || '-')}</td>
+          <td>${escapeHtml(driver.phone || '-')}</td>
+          <td>${driver.depot_id ?? '-'}</td>
+          <td>${driver.max_minutes ?? '-'}</td>
+          <td>
+            ${
+              driver.is_active
+                ? '<span class="status-pill status-active">啟用</span>'
+                : '<span class="status-pill status-inactive">停用</span>'
+            }
+          </td>
+          <td>${escapeHtml(driver.created_at || '-')}</td>
+          <td>
+            <div class="row-actions">
+              <button class="btn warning" type="button" onclick="openEdit('${driver.driver_code}')">編輯</button>
+              <button class="btn danger" type="button" onclick="resetPassword('${driver.driver_code}')">重設密碼</button>
+            </div>
+          </td>
+        </tr>
+      `).join('');
+    }
+
+    function openCreate() {
+      resetForm();
+      document.getElementById('formTitle').textContent = '新增司機帳號';
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+
+    function openEdit(driverCode) {
+      const driver = allDrivers.find(item => item.driver_code === driverCode);
+      if (!driver) {
+        alert('找不到該司機資料');
+        return;
+      }
+
+      document.getElementById('formTitle').textContent = `編輯司機帳號：${driver.driver_code}`;
+      document.getElementById('formId').value = driver.id || '';
+      document.getElementById('formDriverCode').value = driver.driver_code || '';
+      document.getElementById('formDisplayName').value = driver.display_name || '';
+      document.getElementById('formDepotId').value = driver.depot_id ?? '';
+      document.getElementById('formMaxMinutes').value = driver.max_minutes ?? 540;
+      document.getElementById('formPassword').value = driver.password || '';
+      document.getElementById('formPhone').value = driver.phone || '';
+      document.getElementById('formNote').value = driver.note || '';
+      document.getElementById('formIsActive').value = String(driver.is_active);
+
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+
+    function resetForm() {
+      document.getElementById('formTitle').textContent = '新增 / 編輯司機帳號';
+      document.getElementById('formId').value = '';
+      document.getElementById('formDriverCode').value = '';
+      document.getElementById('formDisplayName').value = '';
+      document.getElementById('formDepotId').value = '';
+      document.getElementById('formMaxMinutes').value = '540';
+      document.getElementById('formPassword').value = '';
+      document.getElementById('formPhone').value = '';
+      document.getElementById('formNote').value = '';
+      document.getElementById('formIsActive').value = 'true';
+    }
+
+    async function saveDriver() {
+      const payload = {
+        id: Number(document.getElementById('formId').value || 0),
+        driver_code: document.getElementById('formDriverCode').value.trim().toUpperCase(),
+        display_name: document.getElementById('formDisplayName').value.trim(),
+        depot_id: Number(document.getElementById('formDepotId').value || 0),
+        max_minutes: Number(document.getElementById('formMaxMinutes').value || 540),
+        password: document.getElementById('formPassword').value.trim(),
+        phone: document.getElementById('formPhone').value.trim(),
+        note: document.getElementById('formNote').value.trim(),
+        is_active: document.getElementById('formIsActive').value === 'true'
+      };
+
+      if (!payload.driver_code) {
+        alert('請填寫司機編號');
+        return;
+      }
+
+      if (!payload.password) {
+        alert('請填寫 App 密碼');
+        return;
+      }
+
+      try {
+        const res = await fetch('/api/admin/driver/save/', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+
+        const data = await res.json();
+
+        if (!res.ok || !data.ok) {
+          alert(data.message || '儲存失敗');
+          return;
+        }
+
+        alert(data.message || '儲存成功');
+        resetForm();
+        await loadDrivers();
+      } catch (err) {
+        alert('儲存失敗：' + err);
+      }
+    }
+
+    async function resetPassword(driverCode) {
+      const newPassword = prompt(`請輸入 ${driverCode} 的新密碼：`);
+      if (newPassword === null) return;
+
+      const password = newPassword.trim();
+      if (!password) {
+        alert('新密碼不能空白');
+        return;
+      }
+
+      try {
+        const res = await fetch('/api/admin/driver/password/', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            driver_code: driverCode,
+            new_password: password
+          })
+        });
+
+        const data = await res.json();
+
+        if (!res.ok || !data.ok) {
+          alert(data.message || '重設密碼失敗');
+          return;
+        }
+
+        alert(data.message || '密碼已更新');
+        await loadDrivers();
+      } catch (err) {
+        alert('重設密碼失敗：' + err);
+      }
+    }
+
+    function escapeHtml(text) {
+      return String(text)
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&#039;');
+    }
+
+    document.getElementById('keywordInput').addEventListener('input', loadDrivers);
+
+    loadDrivers();
+  </script>
+</body>
+</html>

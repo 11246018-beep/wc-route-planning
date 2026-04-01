@@ -18,10 +18,9 @@
     }
     body, html { height: 100%; margin: 0; font-family: "Open Sans", sans-serif; background: #f8f9fa; overflow: hidden; }
 
-    /* --- 1. 左側 Soft UI 側邊欄 (修正層級與動態) --- */
     #soft-sidebar {
       position: fixed; top: 15px; left: 15px; bottom: 15px;
-      width: var(--sidebar-width); z-index: 1200; /* 提高層級 */
+      width: var(--sidebar-width); z-index: 1200;
       background: var(--glass); backdrop-filter: blur(10px);
       border-radius: 15px; box-shadow: var(--soft-shadow);
       transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1);
@@ -29,7 +28,6 @@
       border: 1px solid rgba(255, 255, 255, 0.3);
     }
     #soft-sidebar:hover { width: var(--sidebar-expanded); }
-    #soft-sidebar.closed .sidebar-text { display: none !important;}
 
     .sidebar-header { padding: 25px 20px; display: flex; align-items: center; gap: 15px; min-width: 260px; }
     .sidebar-header .logo-box { background: var(--primary); color: white; padding: 8px; border-radius: 8px; display: flex; }
@@ -44,21 +42,19 @@
     .menu-item span { font-size: 14px; font-weight: 600; color: #67748e; white-space: nowrap; opacity: 0; transition: 0.2s; }
     #soft-sidebar:hover .menu-item span { opacity: 1; }
 
-    /* --- 2. 頂部導航列 (修正重疊問題) --- */
     #top-nav {
-      position: fixed; top: 15px; 
-      left: 110px; /* 預設位置：避開縮小後的側邊欄 */
+      position: fixed; top: 15px;
+      left: 110px;
       right: 15px; height: 60px;
-      z-index: 1000; background: var(--glass); backdrop-filter: blur(10px); 
-      border-radius: 12px; box-shadow: var(--soft-shadow); display: flex; 
+      z-index: 1000; background: var(--glass); backdrop-filter: blur(10px);
+      border-radius: 12px; box-shadow: var(--soft-shadow); display: flex;
       align-items: center; padding: 0 20px; border: 1px solid rgba(255, 255, 255, 0.3);
       justify-content: space-between;
-      transition: left 0.3s cubic-bezier(0.4, 0, 0.2, 1); /* 與側邊欄同步移動 */
+      transition: left 0.3s cubic-bezier(0.4, 0, 0.2, 1);
     }
 
-    /* 當側邊欄展開時，頂部導航自動向右移 */
     body:has(#soft-sidebar:hover) #top-nav {
-      left: 290px; 
+      left: 290px;
     }
 
     .nav-left { display: flex; align-items: center; gap: 15px; }
@@ -88,16 +84,34 @@
 <aside id="soft-sidebar">
   <div class="sidebar-header">
     <div class="logo-box"><i data-lucide="layout-grid" size="18"></i></div>
-    <span>Soft UI Dashboard</span>
+    <span>Dispatch Nav</span>
   </div>
   <div class="menu-list">
-    <a class="menu-item active"><div class="icon-box"><i data-lucide="home" size="18"></i></div><span>Dashboard</span></a>
-    <a class="menu-item"><div class="icon-box"><i data-lucide="table" size="18"></i></div><span>Tables</span></a>
-    <a class="menu-item"><div class="icon-box"><i data-lucide="credit-card" size="18"></i></div><span>Billing</span></a>
-    <a href="#" class="menu-item" id="btn-change-password"><div class="icon-box"><i data-lucide="user-key" size="14"></i></div><span>修改帳密</span></a>
-    <a href="{% url 'login' %}" class="menu-item"><div class="icon-box"><i data-lucide="log-out" size="14"></i></div><span>登出</span></a>
+    <a href="{% url 'home' %}" class="menu-item active">
+      <div class="icon-box"><i data-lucide="home" size="18"></i></div>
+      <span>Dashboard</span>
+    </a>
+
+    <a href="{% url 'report_page' %}" class="menu-item">
+      <div class="icon-box"><i data-lucide="triangle-alert" size="18"></i></div>
+      <span>問題回報</span>
+    </a>
+
+    <a href="{% url 'driver_admin_page' %}" class="menu-item">
+      <div class="icon-box"><i data-lucide="users-round" size="18"></i></div>
+      <span>帳號管理</span>
+    </a>
+
+    <a href="{% url 'data_list' %}" class="menu-item">
+      <div class="icon-box"><i data-lucide="table" size="18"></i></div>
+      <span>資料管理</span>
+    </a>
+
+    <a href="{% url 'login' %}" class="menu-item">
+      <div class="icon-box"><i data-lucide="log-out" size="14"></i></div>
+      <span>登出</span>
+    </a>
   </div>
- 
 </aside>
 
 <nav id="top-nav">
@@ -134,7 +148,6 @@
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
-// --- 原本的所有 JavaScript 邏輯 ---
 const INITIAL_VARIANT = "{{ initial_variant|escapejs }}";
 const VARIANT_COLORS = { normal: "#4A90E2", compact: "#ef4444" };
 let map, routeLayer, stopLayer, depotLayer;
@@ -148,14 +161,17 @@ function startLiveTime() {
     const ampm = now.getHours() >= 12 ? '下午' : '上午';
     timeEl.textContent = `${ampm}${now.getHours()%12 || 12}:${String(now.getMinutes()).padStart(2,'0')}:${String(now.getSeconds()).padStart(2,'0')}`;
   }
-  setInterval(update, 1000); update();
+  setInterval(update, 1000);
+  update();
 }
 
 function initMap() {
   map = L.map("map", { zoomControl: false, preferCanvas: true }).setView([25.02, 121.2], 10);
   L.tileLayer('https://{s}.google.com/vt/lyrs=m&x={x}&y={y}&z={z}', { maxZoom: 20, subdomains: ['mt0','mt1','mt2','mt3'] }).addTo(map);
   L.control.zoom({ position: 'bottomright' }).addTo(map);
-  routeLayer = L.layerGroup().addTo(map); stopLayer = L.layerGroup().addTo(map); depotLayer = L.layerGroup().addTo(map);
+  routeLayer = L.layerGroup().addTo(map);
+  stopLayer = L.layerGroup().addTo(map);
+  depotLayer = L.layerGroup().addTo(map);
 }
 
 async function fetchJSON(url) {
@@ -169,7 +185,8 @@ function populateSelect(selectEl, items, selectedValue="") {
   selectEl.innerHTML = "";
   items.forEach(item => {
     const opt = document.createElement("option");
-    opt.value = String(item.value); opt.textContent = item.label;
+    opt.value = String(item.value);
+    opt.textContent = item.label;
     if (String(item.value) === String(selectedValue)) opt.selected = true;
     selectEl.appendChild(opt);
   });
@@ -185,14 +202,17 @@ function updateDayUI() {
 }
 
 async function loadVariant(variant) {
-  state.variant = variant; currentDayIndex = 0;
+  state.variant = variant;
+  currentDayIndex = 0;
   document.querySelectorAll(".variant-btn").forEach(btn => btn.classList.toggle("active", btn.dataset.variant === variant));
   try {
     const data = await fetchJSON(`/api/routes/options/?variant=${variant}`);
     state.options = data;
     populateSelect(document.getElementById("driverSel"), data.drivers || []);
     updateDayUI();
-  } catch (err) { console.error(err); }
+  } catch (err) {
+    console.error(err);
+  }
 }
 
 async function renderRoute() {
@@ -200,23 +220,34 @@ async function renderRoute() {
   const days = state.options?.days_by_driver?.[driver] || [];
   const day = days[currentDayIndex];
   if (!driver || !day || !state.variant) return;
+
   try {
     const data = await fetchJSON(`/api/routes/detail/?variant=${state.variant}&driver=${encodeURIComponent(driver)}&day=${day}`);
     state.route = data.route;
-    routeLayer.clearLayers(); stopLayer.clearLayers(); depotLayer.clearLayers();
+    routeLayer.clearLayers();
+    stopLayer.clearLayers();
+    depotLayer.clearLayers();
     const color = VARIANT_COLORS[state.variant] || "#4A90E2";
     const coords = [];
+
     if (state.route.depot) {
       const d = [parseFloat(state.route.depot.lat), parseFloat(state.route.depot.lon)];
-      coords.push(d); L.circleMarker(d, { radius: 9, color: "#344767", weight: 3, fillColor: "#fff", fillOpacity: 1 }).addTo(depotLayer);
+      coords.push(d);
+      L.circleMarker(d, { radius: 9, color: "#344767", weight: 3, fillColor: "#fff", fillOpacity: 1 }).addTo(depotLayer);
     }
+
     state.route.stops.forEach(s => {
       const p = [parseFloat(s.lat), parseFloat(s.lon)];
-      coords.push(p); L.circleMarker(p, { radius: 6, color: "#fff", weight: 2, fillColor: color, fillOpacity: 1 }).addTo(stopLayer).bindPopup(`<b>${s.task_id}</b><br>${s.address}`);
+      coords.push(p);
+      L.circleMarker(p, { radius: 6, color: "#fff", weight: 2, fillColor: color, fillOpacity: 1 })
+        .addTo(stopLayer)
+        .bindPopup(`<b>${s.task_id}</b><br>${s.address}`);
     });
+
     const coordStr = coords.map(([lat, lon]) => `${lon},${lat}`).join(";");
     const osrmRes = await fetch(`https://router.project-osrm.org/route/v1/driving/${coordStr}?overview=full&geometries=geojson`);
     const osrmData = await osrmRes.json();
+
     if (osrmData.routes && osrmData.routes[0]) {
       const latlngs = osrmData.routes[0].geometry.coordinates.map(([lon, lat]) => [lat, lon]);
       L.polyline(latlngs, { color: "#ffffff", weight: 10, opacity: 0.9, lineCap: 'round' }).addTo(routeLayer);
@@ -226,17 +257,43 @@ async function renderRoute() {
       document.getElementById("kpiStops").textContent = state.route.stops.length;
       map.fitBounds(L.polyline(latlngs).getBounds().pad(0.2));
     }
-  } catch (err) { console.error(err); }
+  } catch (err) {
+    console.error(err);
+  }
 }
 
 function bindEvents() {
-  document.getElementById("driverSel").addEventListener("change", () => { currentDayIndex = 0; updateDayUI(); });
-  document.getElementById("prevDay").addEventListener("click", () => { if (currentDayIndex > 0) { currentDayIndex--; updateDayUI(); } });
-  document.getElementById("nextDay").addEventListener("click", () => { const driver = document.getElementById("driverSel").value; const days = state.options?.days_by_driver?.[driver] || []; if (currentDayIndex < days.length - 1) { currentDayIndex++; updateDayUI(); } });
-  document.querySelectorAll(".variant-btn").forEach(btn => btn.addEventListener("click", () => loadVariant(btn.dataset.variant)));
+  document.getElementById("driverSel").addEventListener("change", () => {
+    currentDayIndex = 0;
+    updateDayUI();
+  });
+
+  document.getElementById("prevDay").addEventListener("click", () => {
+    if (currentDayIndex > 0) {
+      currentDayIndex--;
+      updateDayUI();
+    }
+  });
+
+  document.getElementById("nextDay").addEventListener("click", () => {
+    const driver = document.getElementById("driverSel").value;
+    const days = state.options?.days_by_driver?.[driver] || [];
+    if (currentDayIndex < days.length - 1) {
+      currentDayIndex++;
+      updateDayUI();
+    }
+  });
+
+  document.querySelectorAll(".variant-btn").forEach(btn =>
+    btn.addEventListener("click", () => loadVariant(btn.dataset.variant))
+  );
 }
 
-initMap(); bindEvents(); startLiveTime(); lucide.createIcons(); loadVariant(INITIAL_VARIANT);
+initMap();
+bindEvents();
+startLiveTime();
+lucide.createIcons();
+loadVariant(INITIAL_VARIANT);
 </script>
 </body>
 </html>
