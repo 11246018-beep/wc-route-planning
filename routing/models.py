@@ -26,3 +26,18 @@ class ServicePoint(models.Model):
 
     def __str__(self):
         return f"{self.id} - {self.client_name}"
+    
+class Driver(models.Model):
+    id = models.BigAutoField(primary_key=True)
+    created_at = models.DateTimeField()
+    driver_code = models.TextField(unique=True)
+    depot_id = models.BigIntegerField()
+    max_minutes = models.IntegerField()
+    password = models.TextField()
+
+    class Meta:
+        db_table = "drivers"
+        managed = False
+
+    def __str__(self):
+        return self.driver_code
