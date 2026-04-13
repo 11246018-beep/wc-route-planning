@@ -1,7 +1,7 @@
 from django.contrib import admin
 from django.urls import path
 from django.views.generic import TemplateView
-from routing import account_api, mobile_api, views
+from routing import account_api, live_api, mobile_api, views
 
 urlpatterns = [
     path("admin/", admin.site.urls),
@@ -10,6 +10,7 @@ urlpatterns = [
     path("home/", views.home, name="home"),
     path("reports/", TemplateView.as_view(template_name="routing/report_page.html"), name="report_page"),
     path("driver-admin/", TemplateView.as_view(template_name="routing/driver_admin.html"), name="driver_admin_page"),
+    path("live-monitor/", TemplateView.as_view(template_name="routing/live_monitor.html"), name="live_monitor_page"),
     path("run/", views.run_scheduler, name="run_scheduler"),
     path("register/", views.register_view, name="register"),
 
@@ -26,10 +27,12 @@ urlpatterns = [
     path("api/driver/report/update/", mobile_api.driver_report_update_api, name="driver_report_update_api"),
     path("api/driver/report/delete/", mobile_api.driver_report_delete_api, name="driver_report_delete_api"),
     path("api/driver/profile/", account_api.driver_profile_api, name="driver_profile_api"),
+    path("api/driver/live/update/", live_api.driver_live_update_api, name="driver_live_update_api"),
 
     path("api/admin/drivers/", account_api.admin_drivers_api, name="admin_drivers_api"),
     path("api/admin/driver/save/", account_api.admin_driver_save_api, name="admin_driver_save_api"),
     path("api/admin/driver/password/", account_api.admin_driver_password_api, name="admin_driver_password_api"),
+    path("api/admin/live/overview/", live_api.admin_live_overview_api, name="admin_live_overview_api"),
 
     path("api/export/excel/", mobile_api.export_excel_api, name="export_excel_api"),
 
