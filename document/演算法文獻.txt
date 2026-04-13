@@ -1,0 +1,48 @@
+
+存在，有文獻(https://scholar.google.com/)
+
+1.貪婪演算法(Greedy Algorithm)
+  在每一步選擇當下最佳解的演算法，透過局部最優選擇來建構整體解，但不保證得到全域最優解。
+
+2.最近鄰法(Nearest Neighbor Algorithm)
+  基於貪婪策略的演算法，每一步選擇距離當前位置最近的未訪問節點，常用於旅行推銷員問題（TSP）與車輛路徑問題（VRP）。
+
+3.路徑優化(2-opt algorithm)
+  是一種局部搜尋方法，透過交換路徑中的兩條邊來減少總距離，以改善初始解的品質，常用於TSP與VRP的路徑優化。
+
+4.球面直線距離公式(Haversine formula)
+  用於計算地球表面兩點之間的球面距離，基於球體幾何與經緯度資訊，常應用於地理資訊系統與路徑規劃。
+
+5.啟發式演算法(Heuristic Algorithm)
+  是一類用於快速求解複雜問題的近似方法，透過經驗法則或策略，在合理時間內找到可接受但不一定最優的解。
+
+
+參考文獻 APA
+1.Applegate, D., Bixby, R., Chvátal, V., & Cook, W. (2006). The traveling salesman problem: A computational study. Princeton University Press.
+2.Johnson, D. S., & McGeoch, L. A. (1997). The traveling salesman problem: A case study in local optimization. In E. H. L. Aarts & J. K. Lenstra (Eds.), 3.Local search in combinatorial optimization (pp. 215–310). Princeton University Press.
+4.Laporte, G. (2009). A survey of the vehicle routing problem. European Journal of Operational Research, 194(2), 278–283.
+5.Sinnott, R. W. (1984). Virtues of the Haversine. Sky and Telescope, 68(2), 159.
+
+
+不算正式演算法{定位:啟發式演算法(Heuristic Algorithm)}
+
+6.邊際成本剃除（Marginal Cost Dropping） [這是策略，應叫啟發式刪除策略（Heuristic Removal Strategy）] 
+7.負載平衡評分演算法（Load Balancing Scoring Algorithm）
+
+不是演算法
+
+8.距離矩陣計算（Distance Matrix Calculation）
+9.群組聚合（GroupBy Aggregation）[只是數據處理時常見，不算演算法]
+
+工具
+
+Pandas 資料處理工具:用於資料清洗與節點聚合
+SciPy  科學計算工具:距離矩陣計算
+OSRM   路徑規劃引擎:真實路網路徑計算
+SQLite 資料庫 / 快取工具:距離快取與效能優化
+OSRM API:取得行車時間與路線資訊
+
+
+
+
+
