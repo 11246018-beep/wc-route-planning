@@ -1,0 +1,1246 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Dispatch Nav | 即時監控</title>
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <link href="https://fonts.googleapis.com/css?family=Open+Sans:300,400,600,700" rel="stylesheet" />
+  <style>
+    :root {
+      --primary: #4A90E2;
+      --success: #16a34a;
+      --warning: #f59e0b;
+      --danger: #ef4444;
+      --purple: #8b5cf6;
+      --glass: rgba(255,255,255,0.95);
+      --soft-shadow: 0 10px 30px rgba(0,0,0,0.08);
+      --text-main: #344767;
+      --sidebar-width: 80px;
+      --sidebar-expanded: 260px;
+      --bg: #f8f9fa;
+      --route-color: #2563eb;
+      --bottom-safe-gap: 78px;
+    }
+
+    * { box-sizing: border-box; }
+
+    body, html {
+      height: 100%;
+      margin: 0;
+      font-family: "Open Sans", sans-serif;
+      background: var(--bg);
+      color: #1f2937;
+      overflow: hidden;
+    }
+
+    #soft-sidebar {
+      position: fixed;
+      top: 15px;
+      left: 15px;
+      bottom: 15px;
+      width: var(--sidebar-width);
+      z-index: 1200;
+      background: var(--glass);
+      backdrop-filter: blur(10px);
+      border-radius: 15px;
+      box-shadow: var(--soft-shadow);
+      transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      border: 1px solid rgba(255,255,255,0.3);
+    }
+    #soft-sidebar:hover { width: var(--sidebar-expanded); }
+
+    .sidebar-header {
+      padding: 25px 20px;
+      display: flex;
+      align-items: center;
+      gap: 15px;
+      min-width: 260px;
+    }
+
+    .sidebar-header .logo-box {
+      background: var(--primary);
+      color: white;
+      padding: 8px;
+      border-radius: 8px;
+      display: flex;
+    }
+
+    .sidebar-header span {
+      font-weight: 700;
+      color: var(--text-main);
+      white-space: nowrap;
+      opacity: 0;
+      transition: 0.3s;
+    }
+    #soft-sidebar:hover .sidebar-header span { opacity: 1; }
+
+    .menu-list {
+      flex: 1;
+      padding: 10px 15px;
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+    }
+
+    .menu-item {
+      display: flex;
+      align-items: center;
+      gap: 15px;
+      padding: 12px;
+      border-radius: 10px;
+      cursor: pointer;
+      transition: background 0.2s;
+      min-width: 230px;
+      text-decoration: none;
+    }
+    .menu-item:hover { background: #f8f9fa; }
+
+    .menu-item .icon-box {
+      width: 32px;
+      height: 32px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 8px;
+      background: white;
+      box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+      color: #8392ab;
+    }
+
+    .menu-item.active .icon-box {
+      background: var(--primary);
+      color: white;
+    }
+
+    .menu-item span {
+      font-size: 14px;
+      font-weight: 600;
+      color: #67748e;
+      white-space: nowrap;
+      opacity: 0;
+      transition: 0.2s;
+    }
+    #soft-sidebar:hover .menu-item span { opacity: 1; }
+
+    #top-nav {
+      position: fixed;
+      top: 15px;
+      left: 110px;
+      right: 15px;
+      height: 60px;
+      z-index: 1000;
+      background: var(--glass);
+      backdrop-filter: blur(10px);
+      border-radius: 12px;
+      box-shadow: var(--soft-shadow);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 20px;
+      border: 1px solid rgba(255,255,255,0.3);
+      transition: left 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+    body:has(#soft-sidebar:hover) #top-nav { left: 290px; }
+
+    .nav-brand {
+      font-weight: 700;
+      font-size: 18px;
+      color: var(--text-main);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .nav-right {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      font-size: 13px;
+      font-weight: 700;
+      color: #64748b;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+
+    .small-btn {
+      border: none;
+      background: #eef4ff;
+      color: #4A90E2;
+      padding: 8px 12px;
+      border-radius: 10px;
+      cursor: pointer;
+      font-weight: 700;
+    }
+
+    .layout {
+      position: fixed;
+      top: 90px;
+      left: 110px;
+      right: 15px;
+      bottom: var(--bottom-safe-gap);
+      display: grid;
+      grid-template-rows: minmax(360px, 1.14fr) minmax(250px, 0.86fr);
+      gap: 14px;
+      min-height: 0;
+      transition: left 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+    body:has(#soft-sidebar:hover) .layout { left: 290px; }
+
+    .panel-card {
+      background: var(--glass);
+      border-radius: 18px;
+      box-shadow: var(--soft-shadow);
+      border: 1px solid rgba(255,255,255,0.35);
+    }
+
+    .map-panel {
+      position: relative;
+      min-height: 0;
+      overflow: hidden;
+      padding: 14px;
+    }
+
+    .map-shell {
+      position: relative;
+      width: 100%;
+      height: 100%;
+      min-height: 0;
+      border-radius: 16px;
+      overflow: hidden;
+      background: #edf3ff;
+    }
+
+    #map {
+      width: 100%;
+      height: 100%;
+    }
+
+    .map-toolbar {
+      position: absolute;
+      left: 16px;
+      top: 16px;
+      z-index: 500;
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 14px;
+      border-radius: 14px;
+      background: rgba(255,255,255,0.92);
+      backdrop-filter: blur(10px);
+      box-shadow: 0 8px 24px rgba(15,23,42,0.08);
+      border: 1px solid rgba(255,255,255,0.45);
+      color: #334155;
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .summary-drawer {
+      position: absolute;
+      right: 16px;
+      top: 16px;
+      bottom: 16px;
+      width: 272px;
+      z-index: 520;
+      border-radius: 18px;
+      background: rgba(255,255,255,0.94);
+      backdrop-filter: blur(14px);
+      box-shadow: 0 14px 32px rgba(15,23,42,0.12);
+      border: 1px solid rgba(255,255,255,0.42);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      transition: width 0.28s ease, height 0.28s ease, bottom 0.28s ease, border-radius 0.28s ease, box-shadow 0.28s ease;
+    }
+
+    .summary-drawer.collapsed {
+      width: 56px;
+      height: 56px;
+      bottom: auto;
+      border-radius: 16px;
+      overflow: visible;
+      box-shadow: 0 10px 24px rgba(15,23,42,0.14);
+    }
+
+    .summary-drawer-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 16px 16px 12px;
+      border-bottom: 1px solid rgba(226,232,240,0.85);
+    }
+
+    .summary-drawer.collapsed .summary-drawer-header {
+      padding: 10px;
+      border-bottom: none;
+      justify-content: center;
+    }
+
+    .summary-drawer-title {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 15px;
+      font-weight: 800;
+      color: var(--text-main);
+      min-width: 0;
+    }
+
+    .summary-drawer.collapsed .summary-drawer-title {
+      display: none;
+    }
+
+    .icon-toggle {
+      width: 36px;
+      height: 36px;
+      border: none;
+      border-radius: 12px;
+      background: #eef4ff;
+      color: #2563eb;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      flex: 0 0 auto;
+      box-shadow: inset 0 0 0 1px rgba(191,219,254,0.8);
+    }
+
+    .summary-content {
+      padding: 14px 16px 16px;
+      overflow-y: auto;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .summary-drawer.collapsed .summary-content {
+      display: none;
+    }
+
+    .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .summary-box {
+      background: #f8fafc;
+      border: 1px solid #e5e7eb;
+      border-radius: 14px;
+      padding: 12px;
+    }
+
+    .summary-label {
+      font-size: 12px;
+      color: #64748b;
+      margin-bottom: 6px;
+      font-weight: 700;
+    }
+
+    .summary-value {
+      font-size: 22px;
+      font-weight: 800;
+      color: #0f172a;
+    }
+
+    .selected-box {
+      background: #f8fafc;
+      border: 1px solid #dbeafe;
+      border-radius: 14px;
+      padding: 12px;
+    }
+
+    .selected-title {
+      font-size: 13px;
+      font-weight: 800;
+      color: #1e3a8a;
+      margin-bottom: 6px;
+    }
+
+    .selected-text {
+      font-size: 13px;
+      color: #475569;
+      line-height: 1.6;
+    }
+
+    .legend {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+      font-size: 12px;
+      color: #64748b;
+      font-weight: 700;
+    }
+
+    .legend span {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .legend-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 999px;
+      display: inline-block;
+    }
+
+    .driver-panel {
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      padding: 14px 16px 16px;
+    }
+
+    .driver-panel::after {
+      content: "";
+      display: block;
+      height: 6px;
+      flex: 0 0 auto;
+    }
+
+    .driver-panel-header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 10px;
+      flex-wrap: wrap;
+    }
+
+    .title-stack {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      min-width: 240px;
+    }
+
+    .panel-title {
+      font-size: 22px;
+      font-weight: 800;
+      color: var(--text-main);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin: 0;
+    }
+
+    .panel-subtitle {
+      font-size: 12px;
+      color: #64748b;
+      font-weight: 700;
+      line-height: 1.45;
+    }
+
+    .filter-row {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+
+    .filter-chip {
+      border: 1px solid #dbe2ea;
+      background: white;
+      color: #475569;
+      border-radius: 999px;
+      padding: 8px 13px;
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 700;
+      transition: all 0.2s ease;
+    }
+    .filter-chip.active {
+      background: #eef4ff;
+      color: #1d4ed8;
+      border-color: #bfdbfe;
+      box-shadow: 0 4px 14px rgba(37,99,235,0.1);
+    }
+
+    .driver-list {
+      flex: 1;
+      min-height: 0;
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(390px, 1fr));
+      gap: 12px;
+      overflow-y: auto;
+      overflow-x: hidden;
+      align-content: start;
+      padding-right: 6px;
+      padding-bottom: 20px;
+    }
+
+    .driver-card {
+      width: 100%;
+      min-height: 174px;
+      background: #f8fafc;
+      border: 1px solid #e5e7eb;
+      border-radius: 16px;
+      padding: 14px 16px;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      display: flex;
+      flex-direction: column;
+    }
+    .driver-card:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 10px 22px rgba(0,0,0,0.06);
+    }
+    .driver-card.active {
+      border-color: #93c5fd;
+      box-shadow: 0 0 0 2px rgba(37,99,235,0.12);
+      background: #f8fbff;
+    }
+
+    .driver-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 10px;
+    }
+
+    .driver-name {
+      font-size: 17px;
+      font-weight: 800;
+      color: #0f172a;
+    }
+
+    .status-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 7px 12px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 700;
+      flex: 0 0 auto;
+    }
+
+    .online {
+      background: #dcfce7;
+      color: #166534;
+    }
+    .offline {
+      background: #fee2e2;
+      color: #991b1b;
+    }
+
+    .driver-meta {
+      font-size: 13px;
+      color: #64748b;
+      line-height: 1.6;
+      margin-bottom: 10px;
+    }
+
+    .progress-wrap {
+      margin-top: auto;
+      padding-top: 4px;
+    }
+
+    .progress-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      font-size: 12px;
+      color: #475569;
+      font-weight: 700;
+      margin-bottom: 6px;
+      flex-wrap: wrap;
+    }
+
+    .progress-bar {
+      width: 100%;
+      height: 10px;
+      background: #e2e8f0;
+      border-radius: 999px;
+      overflow: hidden;
+      margin-bottom: 8px;
+    }
+
+    .progress-fill {
+      height: 100%;
+      background: linear-gradient(90deg, #4A90E2, #8b5cf6);
+      border-radius: 999px;
+      transition: width 0.3s ease;
+    }
+
+    .step-scroll {
+      overflow-x: auto;
+      overflow-y: hidden;
+      padding-bottom: 2px;
+    }
+    .step-scroll::-webkit-scrollbar {
+      height: 6px;
+    }
+    .step-scroll::-webkit-scrollbar-thumb {
+      background: #cbd5e1;
+      border-radius: 999px;
+    }
+
+    .step-strip {
+      display: inline-flex;
+      gap: 6px;
+      min-width: max-content;
+      padding-right: 4px;
+    }
+
+    .step-item {
+      width: 24px;
+      height: 24px;
+      border-radius: 999px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: #e2e8f0;
+      color: #64748b;
+      font-size: 10px;
+      font-weight: 800;
+      flex: 0 0 auto;
+      border: 2px solid transparent;
+    }
+    .step-item.done {
+      background: #22c55e;
+      color: #fff;
+    }
+    .step-item.current {
+      background: #2563eb;
+      color: #fff;
+      border-color: rgba(37,99,235,0.15);
+      box-shadow: 0 0 0 3px rgba(37,99,235,0.12);
+    }
+
+    .empty-box {
+      padding: 18px;
+      text-align: center;
+      color: #64748b;
+      background: #f8fafc;
+      border-radius: 12px;
+      border: 1px dashed #cbd5e1;
+    }
+
+    .monitor-marker {
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #fff;
+      font-size: 11px;
+      font-weight: 800;
+      border: 3px solid #ffffff;
+      box-shadow: 0 4px 14px rgba(0,0,0,.24);
+      width: 42px;
+      height: 42px;
+    }
+
+    .route-stop-icon {
+      width: 26px;
+      height: 26px;
+      border-radius: 999px;
+      background: var(--route-color);
+      color: #fff;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 11px;
+      font-weight: 800;
+      border: 2px solid #ffffff;
+      box-shadow: 0 3px 10px rgba(0,0,0,.18);
+    }
+
+    @media (max-width: 1280px) {
+      .driver-list {
+        grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+      }
+
+      .summary-drawer {
+        width: 292px;
+      }
+    }
+
+    @media (max-width: 960px) {
+      body, html {
+        overflow: auto;
+      }
+
+      .layout {
+        position: static;
+        margin: 90px 15px 15px 110px;
+        height: auto;
+        min-height: calc(100vh - 105px);
+        grid-template-rows: 360px auto;
+      }
+
+      .summary-drawer {
+        width: min(320px, calc(100% - 32px));
+        bottom: auto;
+        max-height: calc(100% - 32px);
+      }
+
+      .summary-drawer.collapsed {
+        width: 56px;
+        height: 56px;
+      }
+
+      .driver-list {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <aside id="soft-sidebar">
+    <div class="sidebar-header">
+      <div class="logo-box"><i data-lucide="layout-grid" size="18"></i></div>
+      <span>Dispatch Nav</span>
+    </div>
+    <div class="menu-list">
+      <a href="{% url 'home' %}" class="menu-item">
+        <div class="icon-box"><i data-lucide="home" size="18"></i></div>
+        <span>Dashboard</span>
+      </a>
+
+      <a href="{% url 'live_monitor_page' %}" class="menu-item active">
+        <div class="icon-box"><i data-lucide="map-pinned" size="18"></i></div>
+        <span>即時監控</span>
+      </a>
+
+      <a href="{% url 'report_page' %}" class="menu-item">
+        <div class="icon-box"><i data-lucide="triangle-alert" size="18"></i></div>
+        <span>問題回報</span>
+      </a>
+
+      <a href="{% url 'driver_admin_page' %}" class="menu-item">
+        <div class="icon-box"><i data-lucide="users-round" size="18"></i></div>
+        <span>帳號管理</span>
+      </a>
+
+      <a href="{% url 'data_list' %}" class="menu-item">
+        <div class="icon-box"><i data-lucide="table" size="18"></i></div>
+        <span>資料管理</span>
+      </a>
+
+      <a href="{% url 'login' %}" class="menu-item">
+        <div class="icon-box"><i data-lucide="log-out" size="14"></i></div>
+        <span>登出</span>
+      </a>
+    </div>
+  </aside>
+
+  <nav id="top-nav">
+    <div class="nav-brand"><i data-lucide="radar"></i> 即時監控 4.1</div>
+    <div class="nav-right">
+      <span id="serverTimeText">伺服器時間：--</span>
+      <span id="refreshText">下次更新：--</span>
+      <button type="button" id="refreshBtn" class="small-btn">重新整理</button>
+    </div>
+  </nav>
+
+  <div class="layout">
+    <section class="panel-card map-panel">
+      <div class="map-shell">
+        <div class="map-toolbar">
+          <i data-lucide="map"></i>
+          <span>下方司機區保留在底部區塊，並預留安全距離避免貼到底部</span>
+        </div>
+
+        <div class="summary-drawer" id="summaryDrawer">
+          <div class="summary-drawer-header">
+            <div class="summary-drawer-title">
+              <i data-lucide="layout-dashboard"></i>
+              <span>監控摘要</span>
+            </div>
+            <button type="button" class="icon-toggle" id="summaryToggle" aria-expanded="true" title="收合摘要">
+              <i data-lucide="panel-right-close"></i>
+            </button>
+          </div>
+
+          <div class="summary-content">
+            <div class="summary-grid">
+              <div class="summary-box">
+                <div class="summary-label">司機總數</div>
+                <div class="summary-value" id="summaryTotal">0</div>
+              </div>
+              <div class="summary-box">
+                <div class="summary-label">在線中</div>
+                <div class="summary-value" id="summaryOnline">0</div>
+              </div>
+              <div class="summary-box">
+                <div class="summary-label">離線中</div>
+                <div class="summary-value" id="summaryOffline">0</div>
+              </div>
+              <div class="summary-box">
+                <div class="summary-label">執行中</div>
+                <div class="summary-value" id="summaryWorking">0</div>
+              </div>
+            </div>
+
+            <div class="selected-box">
+              <div class="selected-title">目前地圖高亮路線</div>
+              <div class="selected-text" id="selectedDriverText">尚未選取司機，請點下方司機卡片。</div>
+            </div>
+
+            <div class="legend">
+              <span><i class="legend-dot" style="background:#22c55e;"></i> 已完成</span>
+              <span><i class="legend-dot" style="background:#2563eb;"></i> 目前站點</span>
+              <span><i class="legend-dot" style="background:#dbe2ea;"></i> 未完成</span>
+            </div>
+          </div>
+        </div>
+
+        <div id="map"></div>
+      </div>
+    </section>
+
+    <section class="panel-card driver-panel">
+      <div class="driver-panel-header">
+        <div class="title-stack">
+          <h2 class="panel-title"><i data-lucide="truck"></i> 司機即時狀態</h2>
+          <div class="panel-subtitle">司機即時狀態固定留在下半部，底部多預留一段安全空間，不會再視覺上貼到工具列。</div>
+        </div>
+
+        <div class="filter-row">
+          <button class="filter-chip active" data-filter="all">全部</button>
+          <button class="filter-chip" data-filter="online">只看在線</button>
+          <button class="filter-chip" data-filter="working">只看執行中</button>
+          <button class="filter-chip" data-filter="offline">只看離線</button>
+        </div>
+      </div>
+
+      <div class="driver-list" id="driverList">
+        <div class="empty-box">載入中...</div>
+      </div>
+    </section>
+  </div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script>
+    lucide.createIcons();
+
+    let map;
+    let markerLayer;
+    let routeLayer;
+    let refreshTimer = null;
+    let countdownTimer = null;
+    let countdown = 5;
+    let currentFilter = 'all';
+    let currentDrivers = [];
+    let selectedDriverCode = null;
+    let routeCache = {};
+
+    function initMap() {
+      map = L.map("map", { zoomControl: true }).setView([25.04, 121.56], 11);
+      L.tileLayer("https://{s}.google.com/vt/lyrs=m&x={x}&y={y}&z={z}", {
+        maxZoom: 20,
+        subdomains: ["mt0", "mt1", "mt2", "mt3"]
+      }).addTo(map);
+
+      markerLayer = L.layerGroup().addTo(map);
+      routeLayer = L.layerGroup().addTo(map);
+    }
+
+    function makeDriverIcon(driver) {
+      const online = driver.online === true;
+      const working = ['working', 'navigating'].includes(String(driver.status || ''));
+      let color = '#ef4444';
+      if (online && working) color = '#2563eb';
+      if (online && !working) color = '#16a34a';
+
+      return L.divIcon({
+        className: "",
+        html: `<div class="monitor-marker" style="background:${color};">${driver.driver_code || "?"}</div>`,
+        iconSize: [42, 42],
+        iconAnchor: [21, 21]
+      });
+    }
+
+    function applyFilter(drivers) {
+      if (currentFilter === 'online') {
+        return drivers.filter(d => d.online);
+      }
+      if (currentFilter === 'working') {
+        return drivers.filter(d => ['working', 'navigating'].includes(String(d.status || '')));
+      }
+      if (currentFilter === 'offline') {
+        return drivers.filter(d => !d.online);
+      }
+      return drivers;
+    }
+
+    function renderSummary(drivers) {
+      const total = drivers.length;
+      const online = drivers.filter(d => d.online).length;
+      const offline = drivers.filter(d => !d.online).length;
+      const working = drivers.filter(d => ['working', 'navigating'].includes(String(d.status || ''))).length;
+
+      document.getElementById("summaryTotal").textContent = total;
+      document.getElementById("summaryOnline").textContent = online;
+      document.getElementById("summaryOffline").textContent = offline;
+      document.getElementById("summaryWorking").textContent = working;
+    }
+
+    function renderMarkers(drivers) {
+      markerLayer.clearLayers();
+
+      const filtered = applyFilter(drivers);
+      const points = [];
+
+      filtered.forEach(driver => {
+        const lat = Number(driver.lat);
+        const lon = Number(driver.lon);
+
+        if (!Number.isFinite(lat) || !Number.isFinite(lon)) return;
+
+        points.push([lat, lon]);
+
+        const marker = L.marker([lat, lon], {
+          icon: makeDriverIcon(driver)
+        }).addTo(markerLayer);
+
+        marker.on('click', () => {
+          selectedDriverCode = driver.driver_code;
+          updateSelectedText();
+          renderDriverCards(currentDrivers);
+          drawSelectedDriverRoute();
+        });
+
+        marker.bindPopup(`
+          <div>
+            <div><strong>${escapeHtml(driver.driver_label || driver.driver_code)}</strong></div>
+            <div>狀態：${escapeHtml(driver.status || "-")}</div>
+            <div>第 ${escapeHtml(driver.day || "-")} 天</div>
+            <div>路線：${escapeHtml(driver.route_id || "-")}</div>
+            <div>進度：${escapeHtml(driver.completed_count || 0)} / ${escapeHtml(driver.total_count || 0)}</div>
+            <div>目前站點：${escapeHtml(driver.current_stop_seq || 0)}</div>
+            <div>最後更新：${escapeHtml(driver.updated_at || "-")}</div>
+          </div>
+        `);
+      });
+
+      if (points.length > 0 && !selectedDriverCode) {
+        const group = L.featureGroup(points.map(p => L.marker(p)));
+        map.fitBounds(group.getBounds().pad(0.2));
+      }
+    }
+
+    function buildStepStrip(driver) {
+      const total = Number(driver.total_count || 0);
+      const completed = Number(driver.completed_count || 0);
+      const currentStop = Number(driver.current_stop_seq || 0);
+
+      if (!Number.isFinite(total) || total <= 0) {
+        return '<div class="empty-box" style="padding:10px;">尚無站點進度資料</div>';
+      }
+
+      let html = '<div class="step-scroll"><div class="step-strip">';
+
+      for (let i = 1; i <= total; i += 1) {
+        let cls = 'step-item';
+
+        if (i <= completed) {
+          cls += ' done';
+        } else if (i === currentStop && currentStop > completed) {
+          cls += ' current';
+        }
+
+        html += `<div class="${cls}" title="第 ${i} 站">${i}</div>`;
+      }
+
+      html += '</div></div>';
+      return html;
+    }
+
+    function renderDriverCards(drivers) {
+      const container = document.getElementById("driverList");
+      const filtered = applyFilter(drivers);
+
+      if (!filtered.length) {
+        container.innerHTML = '<div class="empty-box">目前沒有符合條件的司機資料</div>';
+        return;
+      }
+
+      filtered.sort((a, b) => {
+        const aOnline = a.online ? 1 : 0;
+        const bOnline = b.online ? 1 : 0;
+        if (aOnline !== bOnline) return bOnline - aOnline;
+        return String(a.driver_code || '').localeCompare(String(b.driver_code || ''));
+      });
+
+      container.innerHTML = filtered.map(driver => {
+        const progress = Number(driver.progress_pct || 0);
+        const onlineClass = driver.online ? "online" : "offline";
+        const onlineText = driver.online ? "在線" : "離線";
+        const activeClass = selectedDriverCode === driver.driver_code ? 'active' : '';
+
+        return `
+          <div class="driver-card ${activeClass}" data-driver-code="${escapeHtml(driver.driver_code)}">
+            <div class="driver-head">
+              <div class="driver-name">${escapeHtml(driver.driver_label || driver.driver_code)}</div>
+              <div class="status-pill ${onlineClass}">${onlineText}</div>
+            </div>
+
+            <div class="driver-meta">
+              <div>顯示名稱：${escapeHtml(driver.display_name || "-")}</div>
+              <div>電話：${escapeHtml(driver.phone || "-")}</div>
+              <div>第 ${escapeHtml(driver.day || 0)} 天 ｜ 路線：${escapeHtml(driver.route_id || "-")}</div>
+              <div>目前站點：${escapeHtml(driver.current_stop_seq || 0)} ｜ 狀態：${escapeHtml(driver.status || "idle")}</div>
+              <div>最後更新：${escapeHtml(driver.updated_at || "-")}</div>
+            </div>
+
+            <div class="progress-wrap">
+              <div class="progress-head">
+                <span>完成進度</span>
+                <span>${escapeHtml(driver.completed_count || 0)} / ${escapeHtml(driver.total_count || 0)} (${progress}%)</span>
+              </div>
+              <div class="progress-bar">
+                <div class="progress-fill" style="width:${Math.max(0, Math.min(100, progress))}%"></div>
+              </div>
+              ${buildStepStrip(driver)}
+            </div>
+          </div>
+        `;
+      }).join("");
+
+      container.querySelectorAll('.driver-card').forEach(card => {
+        card.addEventListener('click', () => {
+          selectedDriverCode = card.dataset.driverCode;
+          updateSelectedText();
+          renderDriverCards(currentDrivers);
+          drawSelectedDriverRoute();
+        });
+      });
+    }
+
+    function escapeHtml(text) {
+      return String(text ?? "")
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;");
+    }
+
+    function renderAll() {
+      renderSummary(currentDrivers);
+      renderMarkers(currentDrivers);
+      renderDriverCards(currentDrivers);
+      updateSelectedText();
+    }
+
+    function getSelectedDriver() {
+      return currentDrivers.find(d => d.driver_code === selectedDriverCode) || null;
+    }
+
+    function updateSelectedText() {
+      const textEl = document.getElementById('selectedDriverText');
+      const driver = getSelectedDriver();
+
+      if (!driver) {
+        textEl.textContent = '尚未選取司機，請點下方司機卡片。';
+        return;
+      }
+
+      textEl.innerHTML =
+        `目前選取：<strong>${escapeHtml(driver.driver_label || driver.driver_code)}</strong><br>` +
+        `第 ${escapeHtml(driver.day || 0)} 天 ｜ 路線：${escapeHtml(driver.route_id || "-")} ｜ 狀態：${escapeHtml(driver.status || "-")}`;
+    }
+
+    async function fetchRouteDetail(driver) {
+      if (!driver) return null;
+
+      const key = `${driver.driver_code}__${driver.day}`;
+      if (routeCache[key]) {
+        return routeCache[key];
+      }
+
+      const url = `/api/routes/detail/?variant=normal&driver=${encodeURIComponent(driver.driver_code)}&day=${encodeURIComponent(driver.day)}`;
+      const res = await fetch(url);
+      const data = await res.json();
+
+      if (!res.ok || !data.route) {
+        throw new Error(data.message || '讀取路線失敗');
+      }
+
+      routeCache[key] = data.route;
+      return data.route;
+    }
+
+    function validPoint(item) {
+      return Number.isFinite(Number(item?.lat)) && Number.isFinite(Number(item?.lon));
+    }
+
+    function makeStopIcon(seq) {
+      return L.divIcon({
+        className: '',
+        html: `<div class="route-stop-icon">${seq}</div>`,
+        iconSize: [26, 26],
+        iconAnchor: [13, 13]
+      });
+    }
+
+    async function drawSelectedDriverRoute() {
+      routeLayer.clearLayers();
+
+      const driver = getSelectedDriver();
+      if (!driver) return;
+
+      try {
+        const route = await fetchRouteDetail(driver);
+        const color = '#2563eb';
+        const coords = [];
+
+        if (validPoint(route.depot)) {
+          coords.push([Number(route.depot.lat), Number(route.depot.lon)]);
+        }
+
+        (route.stops || []).forEach(stop => {
+          if (validPoint(stop)) {
+            const lat = Number(stop.lat);
+            const lon = Number(stop.lon);
+            coords.push([lat, lon]);
+
+            const marker = L.marker([lat, lon], {
+              icon: makeStopIcon(stop.seq ?? '?')
+            }).addTo(routeLayer);
+
+            marker.bindPopup(`
+              <div>
+                <div><strong>第 ${escapeHtml(stop.seq ?? '-')} 站</strong></div>
+                <div>${escapeHtml(stop.address || '無地址')}</div>
+                <div>任務：${escapeHtml(stop.task_id || '-')}</div>
+              </div>
+            `);
+          }
+        });
+
+        if (coords.length >= 2) {
+          try {
+            const coordStr = coords.map(([lat, lon]) => `${lon},${lat}`).join(';');
+            const osrmRes = await fetch(`https://router.project-osrm.org/route/v1/driving/${coordStr}?overview=full&geometries=geojson`);
+            const osrmData = await osrmRes.json();
+
+            if (osrmData.routes && osrmData.routes[0]) {
+              const latlngs = osrmData.routes[0].geometry.coordinates.map(([lon, lat]) => [lat, lon]);
+              L.polyline(latlngs, { color: '#ffffff', weight: 9, opacity: 0.9 }).addTo(routeLayer);
+              L.polyline(latlngs, { color, weight: 4, opacity: 0.96 }).addTo(routeLayer);
+
+              const group = L.featureGroup([...routeLayer.getLayers(), ...markerLayer.getLayers()]);
+              if (group.getLayers().length > 0) {
+                map.fitBounds(group.getBounds().pad(0.15));
+              }
+              return;
+            }
+          } catch (e) {
+            console.warn('OSRM route failed, fallback to straight line.', e);
+          }
+
+          L.polyline(coords, { color: '#ffffff', weight: 9, opacity: 0.9 }).addTo(routeLayer);
+          L.polyline(coords, { color, weight: 4, opacity: 0.96 }).addTo(routeLayer);
+        }
+
+        const group = L.featureGroup([...routeLayer.getLayers(), ...markerLayer.getLayers()]);
+        if (group.getLayers().length > 0) {
+          map.fitBounds(group.getBounds().pad(0.15));
+        }
+      } catch (err) {
+        console.warn('drawSelectedDriverRoute failed:', err);
+      }
+    }
+
+    async function loadOverview() {
+      try {
+        const res = await fetch("/api/admin/live/overview/");
+        const data = await res.json();
+
+        if (!res.ok || !data.ok) {
+          document.getElementById("driverList").innerHTML = `<div class="empty-box">讀取失敗：${escapeHtml(data.message || "未知錯誤")}</div>`;
+          return;
+        }
+
+        document.getElementById("serverTimeText").textContent = `伺服器時間：${data.server_time || "--"}`;
+
+        currentDrivers = Array.isArray(data.drivers) ? data.drivers : [];
+
+        if (selectedDriverCode) {
+          const stillExists = currentDrivers.some(d => d.driver_code === selectedDriverCode);
+          if (!stillExists) {
+            selectedDriverCode = null;
+            routeLayer.clearLayers();
+          }
+        }
+
+        renderAll();
+
+        if (selectedDriverCode) {
+          drawSelectedDriverRoute();
+        }
+
+        countdown = 5;
+      } catch (err) {
+        document.getElementById("driverList").innerHTML = `<div class="empty-box">連線失敗：${escapeHtml(err)}</div>`;
+      }
+    }
+
+    function startTimers() {
+      refreshTimer = setInterval(loadOverview, 5000);
+
+      countdownTimer = setInterval(() => {
+        countdown -= 1;
+        if (countdown < 0) countdown = 5;
+        document.getElementById("refreshText").textContent = `下次更新：${countdown} 秒`;
+      }, 1000);
+    }
+
+    function initSummaryToggle() {
+      const drawer = document.getElementById('summaryDrawer');
+      const btn = document.getElementById('summaryToggle');
+
+      function updateState() {
+        const collapsed = drawer.classList.contains('collapsed');
+        btn.setAttribute('aria-expanded', String(!collapsed));
+        btn.title = collapsed ? '展開摘要' : '收合摘要';
+        btn.innerHTML = collapsed
+          ? '<i data-lucide="panel-right-open"></i>'
+          : '<i data-lucide="panel-right-close"></i>';
+        lucide.createIcons();
+      }
+
+      btn.addEventListener('click', () => {
+        drawer.classList.toggle('collapsed');
+        updateState();
+      });
+
+      updateState();
+    }
+
+    document.getElementById("refreshBtn").addEventListener("click", () => {
+      loadOverview();
+    });
+
+    document.querySelectorAll(".filter-chip").forEach(btn => {
+      btn.addEventListener("click", () => {
+        currentFilter = btn.dataset.filter;
+        document.querySelectorAll(".filter-chip").forEach(x => x.classList.remove("active"));
+        btn.classList.add("active");
+        renderAll();
+        if (selectedDriverCode) {
+          drawSelectedDriverRoute();
+        }
+      });
+    });
+
+    initMap();
+    initSummaryToggle();
+    loadOverview();
+    startTimers();
+  </script>
+</body>
+</html>

@@ -57,8 +57,8 @@ from scipy.spatial import distance  # 空間距離計算
 
 # --- 輸出檔案設定 ---
 # 注意：只從 Django 資料庫讀取，不再使用 Excel 檔案
-OUTPUT_MAP_NAME = '../output/maintenance_map_phase1.html'  # 輸出地圖檔名
-OUTPUT_CSV_NAME = '../output/processed_nodes_phase1.csv'  # 輸出節點資料
+OUTPUT_MAP_NAME = 'maintenance_map_phase1.html'  # 輸出地圖檔名
+OUTPUT_CSV_NAME = 'processed_nodes_phase1.csv'  # 輸出節點資料
 
 # --- 場站 (Depots) 座標與視覺設定 ---
 # 定義：總部位置與地圖顯示顏色
