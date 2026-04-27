@@ -6,16 +6,172 @@ import 'package:geolocator/geolocator.dart';
 import 'package:http/http.dart' as http;
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'dart:io';
+import 'package:image_picker/image_picker.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:uuid/uuid.dart';
 
-const String kBaseUrl = 'https://daniel-subscribe-forward-greensboro.trycloudflare.com/';
-const String kRouteVariant = 'normal';
+String kBaseUrl = 'https://schools-rivers-sub-lifetime.trycloudflare.com';
+String kRouteVariant = 'normal';
 
-void main() {
+const Map<String, String> kRouteVariantLabels = {
+  'normal': '不跨縣市',
+  'compact': '可跨縣市',
+};
+
+const List<String> kVisibleRouteVariants = ['normal', 'compact'];
+
+Future<void> showConnectionSettingsSheet(
+  BuildContext context, {
+  FutureOr<void> Function()? onSaved,
+}) async {
+  final urlController = TextEditingController(text: kBaseUrl);
+
+  await showModalBottomSheet<void>(
+    context: context,
+    isScrollControlled: true,
+    builder: (context) {
+      return Padding(
+        padding: EdgeInsets.only(
+          left: 20,
+          right: 20,
+          top: 20,
+          bottom: MediaQuery.of(context).viewInsets.bottom + 24,
+        ),
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                '連線設定',
+                style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                'Android 實機請填你電腦的 IPv4。Android 模擬器常用 10.0.2.2，iOS 模擬器常用 127.0.0.1。',
+                style: TextStyle(color: Colors.black54),
+              ),
+              const SizedBox(height: 16),
+              TextField(
+                controller: urlController,
+                keyboardType: TextInputType.url,
+                decoration: const InputDecoration(
+                  labelText: 'Django Base URL',
+                  hintText: '例如：http://172.20.10.2:8000',
+                  prefixIcon: Icon(Icons.link),
+                ),
+              ),
+              const SizedBox(height: 16),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  for (final preset in const [
+                    'http://172.20.10.2:8000',
+                    'http://10.0.2.2:8000',
+                    'http://127.0.0.1:8000',
+                  ])
+                    ActionChip(
+                      label: Text(preset),
+                      onPressed: () {
+                        urlController.text = preset;
+                      },
+                    ),
+                ],
+              ),
+              const SizedBox(height: 20),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: () => Navigator.of(context).pop(),
+                      child: const Text('取消'),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: ElevatedButton(
+                      onPressed: () async {
+                        final newUrl = urlController.text.trim();
+                        if (newUrl.isEmpty ||
+                            !(newUrl.startsWith('http://') ||
+                                newUrl.startsWith('https://'))) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text('請輸入完整網址，例如 http://172.20.10.2:8000'),
+                            ),
+                          );
+                          return;
+                        }
+                        kBaseUrl = newUrl.replaceAll(RegExp(r'/+$'), '');
+                        Navigator.of(context).pop();
+                        await onSaved?.call();
+                        if (!context.mounted) return;
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(content: Text('目前後台已切換為：$kBaseUrl')),
+                        );
+                      },
+                      child: const Text('儲存'),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      );
+    },
+  );
+}
+
+void goToLoginPage(BuildContext context) {
+  Navigator.of(context).pushAndRemoveUntil(
+    MaterialPageRoute(builder: (_) => const LoginPage()),
+    (route) => false,
+  );
+}
+
+Future<void> confirmLogout(BuildContext context) async {
+  final shouldLogout = await showDialog<bool>(
+    context: context,
+    builder: (context) {
+      return AlertDialog(
+        title: const Text('確認登出'),
+        content: const Text('要登出並回到登入頁嗎？'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('取消'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('登出'),
+          ),
+        ],
+      );
+    },
+  );
+
+  if (shouldLogout == true && context.mounted) {
+    goToLoginPage(context);
+  }
+}
+
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+
+  await Supabase.initialize(
+    url: 'https://evwzonunmjvulzitxjmn.supabase.co',
+    anonKey: 'sb_publishable_eDjLIB4zVls0zm1ImfPYCA_cD9UAIfd',
+  );
+
   runApp(const DriverApp());
 }
 
 class DriverApp extends StatelessWidget {
   const DriverApp({super.key});
+
 
   @override
   Widget build(BuildContext context) {
@@ -41,7 +197,7 @@ class DriverApp extends StatelessWidget {
         ),
         inputDecorationTheme: InputDecorationTheme(
           filled: true,
-          fillColor: Colors.white.withOpacity(0.92),
+          fillColor: Colors.white.withValues(alpha:0.92),
           border: OutlineInputBorder(
             borderRadius: BorderRadius.circular(18),
             borderSide: const BorderSide(color: Color(0x22000000)),
@@ -72,7 +228,7 @@ class DriverApp extends StatelessWidget {
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(18),
             ),
-            backgroundColor: Colors.white.withOpacity(0.88),
+            backgroundColor: Colors.white.withValues(alpha:0.88),
           ),
         ),
         snackBarTheme: const SnackBarThemeData(
@@ -85,6 +241,80 @@ class DriverApp extends StatelessWidget {
 }
 
 class ApiService {
+  
+  static Future<Map<String, dynamic>> uploadImageToSupabase({
+    required String driverCode,
+    required int day,
+    required String routeId,
+    required File imageFile,
+    required String photoType, // before / after
+    required bool isQualified,
+    required String reviewStatus,
+    required String pointKey,
+    int? stopSeq,
+    required bool? isRisk,
+    required int? riskScore,
+    required String? riskReason,
+    String? stopAddress,
+    String? stopCounty,
+    double? stopLat,
+    double? stopLon,
+  }) async {
+    final supabase = Supabase.instance.client;
+    final fileExt = imageFile.path.split('.').last.toLowerCase();
+    final fileName = const Uuid().v4();
+    final filePath =
+        '$driverCode/day_$day/$routeId/$photoType/${stopSeq ?? 0}_$fileName.$fileExt';
+
+    await supabase.storage
+        .from('photos')
+        .upload(filePath, imageFile);
+
+    final publicUrl = supabase.storage
+        .from('photos')
+        .getPublicUrl(filePath);
+
+    await supabase.from('uploaded_photos').insert({
+      'driver_code': driverCode,
+      'day': day,
+      'route_id': routeId,
+      'stop_seq': stopSeq,
+      'photo_type': photoType,
+      'point_key': pointKey,
+      'file_path': filePath,
+      'public_url': publicUrl,
+      'is_qualified': isQualified,
+      'review_status': reviewStatus,
+      'is_risk': isRisk,
+      'risk_score': riskScore,
+      'risk_reason': riskReason,
+      'stop_address': stopAddress,
+      'stop_county': stopCounty,
+      'stop_lat': stopLat,
+      'stop_lon': stopLon,
+    });
+
+    return {
+      'file_path': filePath,
+      'public_url': publicUrl,
+      'driver_code': driverCode,
+    };
+  }
+
+  static Future<Map<String, dynamic>> checkBackend() async {
+    final response = await http
+        .get(Uri.parse('$kBaseUrl/api/driver/reports/?limit=1'))
+        .timeout(const Duration(seconds: 12));
+
+    final data = jsonDecode(utf8.decode(response.bodyBytes));
+
+    if (response.statusCode == 200 && data['ok'] == true) {
+      return Map<String, dynamic>.from(data);
+    }
+
+    throw Exception(data['message'] ?? '後台連線失敗');
+  }
+
   static Future<Map<String, dynamic>> login({
     required String driverCode,
     required String password,
@@ -190,7 +420,7 @@ class ApiService {
     throw Exception(data['message'] ?? '取得回報紀錄失敗');
   }
 
-  static Future<Map<String, dynamic>> uploadLiveLocation({
+    static Future<Map<String, dynamic>> uploadLiveLocation({
     required String driverCode,
     required int day,
     required String routeId,
@@ -225,7 +455,59 @@ class ApiService {
 
     throw Exception(data['message'] ?? '上傳位置失敗');
   }
+
+  static Future<Map<String, dynamic>> uploadCleaningImage({
+    required String driverCode,
+    required File imageFile,
+  }) async {
+    final uri = Uri.parse('$kBaseUrl/api/driver/upload-image/');
+    final request = http.MultipartRequest('POST', uri);
+
+    request.fields['driver_code'] = driverCode;
+    request.files.add(
+      await http.MultipartFile.fromPath('image', imageFile.path),
+    );
+
+    final streamedResponse = await request.send();
+    final response = await http.Response.fromStream(streamedResponse);
+    final data = jsonDecode(utf8.decode(response.bodyBytes));
+
+    if (response.statusCode == 200 && data['ok'] == true) {
+      return Map<String, dynamic>.from(data);
+    }
+
+    throw Exception(data['message'] ?? '圖片上傳失敗');
+  }
+  
+ 
+  static Future<Map<String, dynamic>> detectCleaningAI({
+    required String driverCode,
+    required File imageFile,
+    required String photoType,
+  }) async {
+    final uri = Uri.parse('$kBaseUrl/api/ai/detect/');
+    final request = http.MultipartRequest('POST', uri);
+
+    request.fields['driver_code'] = driverCode;
+    request.fields['photo_type'] = photoType;
+    request.files.add(
+      await http.MultipartFile.fromPath('image', imageFile.path),
+    );
+
+
+    final streamedResponse = await request.send();
+    final response = await http.Response.fromStream(streamedResponse);
+    final data = jsonDecode(utf8.decode(response.bodyBytes));
+
+    if (response.statusCode == 200 && data['ok'] == true) {
+      return Map<String, dynamic>.from(data);
+    }
+
+    throw Exception(data['message'] ?? 'AI辨識失敗');
+  }
 }
+
+
 
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
@@ -238,6 +520,7 @@ class _LoginPageState extends State<LoginPage> {
   final TextEditingController driverIdController = TextEditingController();
   final TextEditingController passwordController = TextEditingController();
   bool isLoading = false;
+  bool isCheckingConnection = false;
 
   @override
   void dispose() {
@@ -285,10 +568,37 @@ class _LoginPageState extends State<LoginPage> {
         SnackBar(content: Text('登入失敗：$e')),
       );
     } finally {
+      if (mounted) { 
+        setState(() {
+          isLoading = false;
+        });
+      }
+    }
+  }
+
+
+  Future<void> handleTestConnection() async {
+    setState(() {
+      isCheckingConnection = true;
+    });
+
+    try {
+      await ApiService.checkBackend();
       if (!mounted) return;
-      setState(() {
-        isLoading = false;
-      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('後台連線成功：$kBaseUrl')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('後台連線失敗：$e')),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          isCheckingConnection = false;
+        });
+      }
     }
   }
 
@@ -365,9 +675,55 @@ class _LoginPageState extends State<LoginPage> {
                       ),
                     ),
                     const SizedBox(height: 12),
+                    SizedBox(
+                      width: double.infinity,
+                      height: 48,
+                      child: OutlinedButton.icon(
+                        onPressed: isCheckingConnection ? null : handleTestConnection,
+                        icon: isCheckingConnection
+                            ? const SizedBox(
+                                width: 18,
+                                height: 18,
+                                child: CircularProgressIndicator(strokeWidth: 2),
+                              )
+                            : const Icon(Icons.wifi_tethering),
+                        label: const Text('測試後台連線'),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    SizedBox(
+                      width: double.infinity,
+                      height: 48,
+                      child: OutlinedButton.icon(
+                        onPressed: () async {
+                          await showConnectionSettingsSheet(
+                            context,
+                            onSaved: () {
+                              if (mounted) setState(() {});
+                            },
+                          );
+                        },
+                        icon: const Icon(Icons.settings_ethernet),
+                        label: const Text('修改連線設定'),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    Text(
+                      '目前後台：$kBaseUrl',
+                      style: const TextStyle(fontSize: 12, color: Colors.grey),
+                      textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      '目前模式：${kRouteVariantLabels[kRouteVariant] ?? kRouteVariant}',
+                      style: const TextStyle(fontSize: 12, color: Colors.grey),
+                      textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: 6),
                     const Text(
-                      '請確認 kBaseUrl 已改成你目前電腦的 IPv4',
+                      '請確認 Base URL 是你目前 Django 可連到的位址',
                       style: TextStyle(fontSize: 12, color: Colors.grey),
+                      textAlign: TextAlign.center,
                     ),
                   ],
                 ),
@@ -489,10 +845,19 @@ class _MainMapScreenState extends State<MainMapScreen> {
             infoWindow: InfoWindow(title: '預設地圖中心'),
           ),
         };
-        loadError = e.toString();
+        loadError = _friendlyTaskError(e, day);
         isLoadingRoute = false;
       });
     }
+  }
+
+  String _friendlyTaskError(Object error, int day) {
+    final raw = error.toString().replaceFirst('Exception: ', '').trim();
+    if (raw.contains('找不到') && raw.contains('排程')) {
+      final modeLabel = kRouteVariantLabels[kRouteVariant] ?? kRouteVariant;
+      return '$raw\n\n這通常不是 app 壞掉，而是司機 ${widget.driverCode} 目前在「$modeLabel」模式下沒有第 $day 天的排程資料。\n請先到 Django 後台重新產生或重新分派排程，再回 app 按右上角重新整理。';
+    }
+    return raw;
   }
 
   Future<void> _fitRouteCamera() async {
@@ -555,7 +920,7 @@ class _MainMapScreenState extends State<MainMapScreen> {
   }) {
     return Container(
       decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.92),
+        color: Colors.white.withValues(alpha:0.92),
         shape: BoxShape.circle,
         boxShadow: const [
           BoxShadow(
@@ -595,6 +960,38 @@ class _MainMapScreenState extends State<MainMapScreen> {
     );
   }
 
+
+  Widget _variantChip(String variant) {
+    final active = kRouteVariant == variant;
+    final label = kRouteVariantLabels[variant] ?? variant;
+
+    return Padding(
+      padding: const EdgeInsets.only(right: 10),
+      child: ChoiceChip(
+        label: Text(label),
+        selected: active,
+        onSelected: (_) {
+          if (kRouteVariant == variant) return;
+          setState(() {
+            kRouteVariant = variant;
+          });
+          loadRouteForDay(selectedDay);
+        },
+        selectedColor: Colors.indigo,
+        labelStyle: TextStyle(
+          color: active ? Colors.white : Colors.black87,
+          fontWeight: FontWeight.w600,
+        ),
+        backgroundColor: Colors.white,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+          side: const BorderSide(color: Color(0x22000000)),
+        ),
+        showCheckmark: false,
+      ),
+    );
+  }
+
   Widget _summaryCard(Map<String, dynamic> data) {
     final route = Map<String, dynamic>.from(data['route'] ?? {});
     final metrics = Map<String, dynamic>.from(route['metrics'] ?? {});
@@ -615,7 +1012,7 @@ class _MainMapScreenState extends State<MainMapScreen> {
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
           decoration: BoxDecoration(
-            color: Colors.white.withOpacity(0.82),
+            color: Colors.white.withValues(alpha:0.82),
             borderRadius: BorderRadius.circular(18),
             border: Border.all(color: const Color(0x14000000)),
           ),
@@ -652,13 +1049,18 @@ class _MainMapScreenState extends State<MainMapScreen> {
           '總部：${widget.depotId} ｜ 工時上限：${widget.maxMinutes} 分',
           style: const TextStyle(fontSize: 14, color: Colors.black54),
         ),
+        const SizedBox(height: 4),
+        Text(
+          '後台：$kBaseUrl',
+          style: const TextStyle(fontSize: 12, color: Colors.black45),
+        ),
         const SizedBox(height: 14),
         Container(
           padding: const EdgeInsets.all(18),
           decoration: BoxDecoration(
-            color: Colors.white.withOpacity(0.76),
+            color: Colors.white.withValues(alpha:0.76),
             borderRadius: BorderRadius.circular(24),
-            border: Border.all(color: Colors.white.withOpacity(0.5)),
+            border: Border.all(color: Colors.white.withValues(alpha:0.5)),
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -670,7 +1072,7 @@ class _MainMapScreenState extends State<MainMapScreen> {
               const SizedBox(height: 8),
               Text('路線編號：${route['route_id'] ?? '-'}'),
               const SizedBox(height: 4),
-              Text('模式：${data['label'] ?? kRouteVariant}'),
+              Text('模式：${data['label'] ?? (kRouteVariantLabels[kRouteVariant] ?? kRouteVariant)}'),
               const SizedBox(height: 4),
               Text('縣市：${counties.isEmpty ? '-' : counties.join('、')}'),
               const SizedBox(height: 4),
@@ -702,7 +1104,7 @@ class _MainMapScreenState extends State<MainMapScreen> {
       return Container(
         padding: const EdgeInsets.all(18),
         decoration: BoxDecoration(
-          color: Colors.white.withOpacity(0.82),
+          color: Colors.white.withValues(alpha:0.82),
           borderRadius: BorderRadius.circular(22),
         ),
         child: const Text('今天沒有排程資料'),
@@ -730,7 +1132,7 @@ class _MainMapScreenState extends State<MainMapScreen> {
               child: Container(
                 padding: const EdgeInsets.all(16),
                 decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.86),
+                  color: Colors.white.withValues(alpha:0.86),
                   borderRadius: BorderRadius.circular(22),
                   border: Border.all(color: const Color(0x14000000)),
                 ),
@@ -890,18 +1292,27 @@ class _MainMapScreenState extends State<MainMapScreen> {
           Positioned(
             top: 52,
             left: 18,
-            child: _buildGlassButton(
-              icon: Icons.person_outline,
-              onTap: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) => DriverProfilePage(
-                      driverCode: widget.driverCode,
-                    ),
-                  ),
-                );
-              },
+            child: Column(
+              children: [
+                _buildGlassButton(
+                  icon: Icons.person_outline,
+                  onTap: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => DriverProfilePage(
+                          driverCode: widget.driverCode,
+                        ),
+                      ),
+                    );
+                  },
+                ),
+                const SizedBox(height: 10),
+                _buildGlassButton(
+                  icon: Icons.logout,
+                  onTap: () => confirmLogout(context),
+                ),
+              ],
             ),
           ),
           Positioned(
@@ -918,6 +1329,19 @@ class _MainMapScreenState extends State<MainMapScreen> {
                   icon: Icons.center_focus_strong,
                   onTap: _fitRouteCamera,
                 ),
+                const SizedBox(height: 10),
+                _buildGlassButton(
+                  icon: Icons.settings,
+                  onTap: () async {
+                    await showConnectionSettingsSheet(
+                      context,
+                      onSaved: () async {
+                        if (!mounted) return;
+                        await loadRouteForDay(selectedDay);
+                      },
+                    );
+                  },
+                ),
               ],
             ),
           ),
@@ -932,9 +1356,9 @@ class _MainMapScreenState extends State<MainMapScreen> {
                   filter: ImageFilter.blur(sigmaX: 22, sigmaY: 22),
                   child: Container(
                     decoration: BoxDecoration(
-                      color: const Color(0xFFE1F5FE).withOpacity(0.64),
+                      color: const Color(0xFFE1F5FE).withValues(alpha:0.64),
                       borderRadius: const BorderRadius.vertical(top: Radius.circular(30)),
-                      border: Border.all(color: Colors.white.withOpacity(0.5)),
+                      border: Border.all(color: Colors.white.withValues(alpha:0.5)),
                     ),
                     child: ListView(
                       controller: scrollController,
@@ -945,7 +1369,7 @@ class _MainMapScreenState extends State<MainMapScreen> {
                             width: 46,
                             height: 5,
                             decoration: BoxDecoration(
-                              color: Colors.black.withOpacity(0.12),
+                              color: Colors.black.withValues(alpha:0.12),
                               borderRadius: BorderRadius.circular(20),
                             ),
                           ),
@@ -958,6 +1382,21 @@ class _MainMapScreenState extends State<MainMapScreen> {
                             children: List.generate(6, (i) => _dayChip(i + 1)),
                           ),
                         ),
+                        const SizedBox(height: 12),
+                        SizedBox(
+                          height: 40,
+                          child: ListView(
+                            scrollDirection: Axis.horizontal,
+                            children: kVisibleRouteVariants
+                                .map((variant) => _variantChip(variant))
+                                .toList(),
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          '目前抓取模式：${kRouteVariantLabels[kRouteVariant] ?? kRouteVariant}',
+                          style: const TextStyle(fontSize: 12, color: Colors.black54),
+                        ),
                         const SizedBox(height: 18),
                         if (isLoadingRoute)
                           const Padding(
@@ -968,7 +1407,7 @@ class _MainMapScreenState extends State<MainMapScreen> {
                           Container(
                             padding: const EdgeInsets.all(18),
                             decoration: BoxDecoration(
-                              color: Colors.white.withOpacity(0.82),
+                              color: Colors.white.withValues(alpha:0.82),
                               borderRadius: BorderRadius.circular(22),
                             ),
                             child: Text('載入失敗：$loadError'),
@@ -1042,6 +1481,11 @@ class _DriverProfilePageState extends State<DriverProfilePage> {
           IconButton(
             onPressed: refreshProfile,
             icon: const Icon(Icons.refresh),
+          ),
+          IconButton(
+            onPressed: () => confirmLogout(context),
+            icon: const Icon(Icons.logout),
+            tooltip: '登出',
           ),
         ],
       ),
@@ -1297,8 +1741,8 @@ class _SchedulePageState extends State<SchedulePage> {
                             ),
                           ),
                         );
-
-                        if (!mounted) return;
+                    
+                        if (!context.mounted) return;
                         ScaffoldMessenger.of(context).showSnackBar(
                           const SnackBar(content: Text('已返回排程頁')),
                         );
@@ -1359,7 +1803,7 @@ class _SchedulePageState extends State<SchedulePage> {
                         const SizedBox(height: 4),
                         Text('路線編號：${route['route_id'] ?? '-'}'),
                         const SizedBox(height: 4),
-                        Text('模式：${data['label'] ?? kRouteVariant}'),
+                        Text('模式：${data['label'] ?? (kRouteVariantLabels[kRouteVariant] ?? kRouteVariant)}'),
                         const SizedBox(height: 4),
                         Text('縣市：${counties.isEmpty ? '-' : counties.join("、")}'),
                         const SizedBox(height: 4),
@@ -1447,6 +1891,12 @@ class _LiveLocationPageState extends State<LiveLocationPage> {
   String lastResultText = '尚未上傳位置';
   String autoUploadText = '自動上傳未啟動';
   Timer? autoUploadTimer;
+  final ImagePicker _picker = ImagePicker();
+  File? selectedImage;
+  bool isUploadingImage = false;
+  String uploadImageResult = '尚未上傳清掃照片';
+  String selectedPhotoType = 'before';
+  bool hasUploadedAfter = false;
 
   final List<String> statusOptions = const [
     'idle',
@@ -1724,10 +2174,11 @@ class _LiveLocationPageState extends State<LiveLocationPage> {
         );
       }
     } finally {
-      if (!mounted) return;
-      setState(() {
-        isUploading = false;
-      });
+      if (mounted) {
+        setState(() {
+          isUploading = false;
+        });
+      }
     }
   }
 
@@ -1806,6 +2257,13 @@ class _LiveLocationPageState extends State<LiveLocationPage> {
       newStatus: isFinished ? 'finished' : 'working',
     );
 
+    setState(() {
+      selectedImage = null;
+      uploadImageResult = '尚未上傳清掃照片';
+      selectedPhotoType = 'before';
+      hasUploadedAfter = false;
+    });
+
     await uploadLocation();
   }
 
@@ -1843,6 +2301,13 @@ class _LiveLocationPageState extends State<LiveLocationPage> {
       newStatus: isFinished ? 'finished' : 'navigating',
     );
 
+    setState(() {
+      selectedImage = null;
+      uploadImageResult = '尚未上傳清掃照片';
+      selectedPhotoType = 'before';
+      hasUploadedAfter = false;
+    });
+
     await uploadLocation();
 
     if (!isFinished && mounted) {
@@ -1865,6 +2330,159 @@ class _LiveLocationPageState extends State<LiveLocationPage> {
     );
 
     await uploadLocation();
+  }
+
+  void showAiResultDialog(String message) {
+    showDialog(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('AI 辨識結果'),
+          content: SingleChildScrollView(
+            child: Text(message),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('確定'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+
+  Future<void> pickCleaningImage() async {
+    try {
+      final XFile? pickedFile = await _picker.pickImage(
+        source: ImageSource.camera,
+      );
+
+      if (pickedFile == null) return;
+
+      setState(() {
+        selectedImage = File(pickedFile.path);
+      });
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('拍照失敗：$e')),
+      );
+    }
+  }
+
+  Future<void> uploadCleaningImage() async {
+    if (selectedImage == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('請先拍照')),
+      );
+      return;
+    }
+
+    setState(() {
+      isUploadingImage = true;
+    });
+
+    try {
+      final stopSeq = currentStopSeq;
+      final stopData = currentStopData;
+      final stopAddress = stopData?['address']?.toString();
+      final stopCounty = stopData?['county']?.toString();
+      final stopLat = double.tryParse('${stopData?['lat'] ?? ''}');
+      final stopLon = double.tryParse('${stopData?['lon'] ?? ''}');
+
+      final result = await ApiService.detectCleaningAI(
+        driverCode: widget.driverCode,
+        imageFile: selectedImage!,
+        photoType: selectedPhotoType,
+      );
+
+      final isQualified = result['is_qualified'] ?? false;
+      final reviewStatus = result['status']?.toString() ?? 'normal';
+
+      final uploadResult = await ApiService.uploadImageToSupabase(
+        driverCode: widget.driverCode,
+        day: widget.day,
+        routeId: widget.routeId,
+        imageFile: selectedImage!,
+        photoType: selectedPhotoType,
+        isQualified: isQualified,
+        reviewStatus: reviewStatus,
+        pointKey: '${widget.routeId}_$stopSeq',
+        stopSeq: stopSeq,
+        isRisk: result['is_risk'],
+        riskScore: result['risk_score'],
+        riskReason: result['reason']?.toString(),
+        stopAddress: stopAddress,
+        stopCounty: stopCounty,
+        stopLat: stopLat,
+        stopLon: stopLon,
+      );
+
+      if (!mounted) return;
+
+      String dialogMessage = '';
+
+      setState(() {
+        if (selectedPhotoType == 'after') {
+          hasUploadedAfter = true;
+        }
+
+        final photoTypeText = selectedPhotoType == 'before' ? '清潔前' : '清潔後';
+
+        final classCountsRaw = result['class_counts'];
+        Map<String, dynamic> detectionMap = {};
+
+        if (classCountsRaw is Map) {
+          detectionMap = Map<String, dynamic>.from(classCountsRaw);
+        }
+
+        final detectionText = detectionMap.isEmpty ? '無' : detectionMap.toString();
+
+        if (selectedPhotoType == 'before') {
+          final isRisk = result['is_risk'] ?? false;
+          final reason = result['reason']?.toString() ?? '環境狀況尚可';
+          final riskScore = result['risk_score'] ?? 0;
+
+          uploadImageResult =
+              '照片類型：$photoTypeText\n'
+              '上傳者：${uploadResult['driver_code']}\n\n'
+              'AI辨識完成\n'
+              '風險分數：$riskScore\n'
+              '點位風險：${isRisk ? "是" : "否"}\n'
+              '原因：$reason\n'
+              '辨識結果：$detectionText';
+
+          dialogMessage = uploadImageResult;
+        } else {
+          final reviewStatus = result['status']?.toString() ?? '未知';
+
+          uploadImageResult =
+              '照片類型：$photoTypeText\n'
+              '上傳者：${uploadResult['driver_code']}\n\n'
+              'AI辨識完成\n'
+              '清潔狀態：$reviewStatus\n'
+              '辨識結果：$detectionText';
+
+          dialogMessage = uploadImageResult;
+        }
+      });
+
+      if (!mounted) return;
+      showAiResultDialog(dialogMessage);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        uploadImageResult = '上傳或辨識失敗：$e';
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          isUploadingImage = false;
+        });
+      }
+    }
   }
 
   Widget infoCard({
@@ -1918,230 +2536,412 @@ class _LiveLocationPageState extends State<LiveLocationPage> {
       appBar: AppBar(
         title: const Text('即時定位上傳'),
       ),
-      body: ListView(
-        padding: const EdgeInsets.all(16),
+      body: Stack(
         children: [
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    '司機：${widget.driverCode}',
-                    style: const TextStyle(
-                      fontSize: 20,
-                      fontWeight: FontWeight.bold,
-                    ),
+          ListView(
+            padding: const EdgeInsets.all(16),
+            children: [
+              Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        '司機：${widget.driverCode}',
+                        style: const TextStyle(
+                          fontSize: 20,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Text('第 ${widget.day} 天'),
+                      const SizedBox(height: 4),
+                      Text('路線編號：${widget.routeId.isEmpty ? "-" : widget.routeId}'),
+                      const SizedBox(height: 4),
+                      Text('總站點數：${widget.totalCount}'),
+                    ],
                   ),
-                  const SizedBox(height: 8),
-                  Text('第 ${widget.day} 天'),
-                  const SizedBox(height: 4),
-                  Text('路線編號：${widget.routeId.isEmpty ? "-" : widget.routeId}'),
-                  const SizedBox(height: 4),
-                  Text('總站點數：${widget.totalCount}'),
+                ),
+              ),
+              const SizedBox(height: 12),
+              Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        '今日進度',
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      Text('已完成：$progressText 站（$progressPercent%）'),
+                      const SizedBox(height: 10),
+                      LinearProgressIndicator(
+                        value: progressRatio,
+                        minHeight: 10,
+                        borderRadius: BorderRadius.circular(999),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
+              stopCard(
+                title: '目前站點',
+                stop: currentStopData,
+                icon: Icons.place_outlined,
+              ),
+              stopCard(
+                title: '下一站',
+                stop: nextStopData,
+                icon: Icons.navigation_outlined,
+              ),
+              const SizedBox(height: 12),
+              SizedBox(
+                height: 52,
+                child: OutlinedButton.icon(
+                  onPressed: navigateToCurrentStop,
+                  icon: const Icon(Icons.directions),
+                  label: const Text('導航到目前站點'),
+                ),
+              ),
+              const SizedBox(height: 12),
+              SizedBox(
+                height: 52,
+                child: OutlinedButton.icon(
+                  onPressed: navigateToNextStop,
+                  icon: const Icon(Icons.alt_route),
+                  label: const Text('導航到下一站'),
+                ),
+              ),
+              const SizedBox(height: 12),
+              infoCard(
+                title: '目前緯度',
+                value: latText,
+                icon: Icons.my_location,
+              ),
+              infoCard(
+                title: '目前經度',
+                value: lonText,
+                icon: Icons.explore_outlined,
+              ),
+              const SizedBox(height: 12),
+              Card(
+                child: SwitchListTile(
+                  value: autoUploadEnabled,
+                  title: const Text('自動上傳位置'),
+                  subtitle: Text(autoUploadText),
+                  onChanged: (value) {
+                    toggleAutoUpload(value);
+                  },
+                ),
+              ),
+              const SizedBox(height: 12),
+              const SizedBox(height: 24),
+              const Text(
+                '清掃照片上傳',
+                style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 12),
+              DropdownButtonFormField<String>(
+                initialValue: selectedPhotoType,
+                decoration: const InputDecoration(
+                  labelText: '照片類型',
+                  border: OutlineInputBorder(),
+                ),
+                items: const [
+                  DropdownMenuItem(value: 'before', child: Text('清潔前')),
+                  DropdownMenuItem(value: 'after', child: Text('清潔後')),
                 ],
+                onChanged: (value) {
+                  setState(() {
+                    selectedPhotoType = value ?? 'before';
+                  });
+                },
               ),
-            ),
-          ),
-          const SizedBox(height: 12),
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    '今日進度',
-                    style: TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                    ),
+              const SizedBox(height: 12),
+              if (selectedImage != null)
+                Image.file(selectedImage!, height: 200)
+              else
+                const Text('尚未拍照'),
+              const SizedBox(height: 12),
+              ElevatedButton(
+                onPressed: pickCleaningImage,
+                child: const Text('拍照'),
+              ),
+              const SizedBox(height: 12),
+              ElevatedButton(
+                onPressed: isUploadingImage ? null : uploadCleaningImage,
+                child: isUploadingImage
+                    ? const CircularProgressIndicator()
+                    : const Text('上傳照片'),
+              ),
+              const SizedBox(height: 12),
+              Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        hasUploadedAfter ? '清潔後照片：已完成' : '清潔後照片：未完成',
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        uploadImageResult == '尚未上傳清掃照片'
+                            ? '尚未上傳清掃照片'
+                            : 'AI 辨識完成，請查看彈出結果',
+                      ),
+                      if (uploadImageResult != '尚未上傳清掃照片') ...[
+                        const SizedBox(height: 12),
+                        SizedBox(
+                          width: double.infinity,
+                          child: ElevatedButton(
+                            onPressed: () {
+                              showAiResultDialog(uploadImageResult);
+                            },
+                            child: const Text('查看辨識結果'),
+                          ),
+                        ),
+                      ],
+                    ],
                   ),
-                  const SizedBox(height: 10),
-                  Text('已完成：$progressText 站（$progressPercent%）'),
-                  const SizedBox(height: 10),
-                  LinearProgressIndicator(
-                    value: progressRatio,
-                    minHeight: 10,
-                    borderRadius: BorderRadius.circular(999),
+                ),
+              ),
+              const SizedBox(height: 16),
+              DropdownButtonFormField<String>(
+                initialValue: selectedStatus,
+                decoration: const InputDecoration(
+                  labelText: '目前狀態',
+                  border: OutlineInputBorder(),
+                ),
+                items: statusOptions.map((status) {
+                  return DropdownMenuItem<String>(
+                    value: status,
+                    child: Text(status),
+                  );
+                }).toList(),
+                onChanged: (value) {
+                  setState(() {
+                    selectedStatus = value ?? 'working';
+                  });
+                },
+              ),
+              const SizedBox(height: 16),
+              TextField(
+                controller: currentStopSeqController,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(
+                  labelText: '目前第幾站',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 16),
+              TextField(
+                controller: completedCountController,
+                keyboardType: TextInputType.number,
+                decoration: InputDecoration(
+                  labelText: '已完成站數',
+                  border: const OutlineInputBorder(),
+                  helperText: '總站數固定為 ${widget.totalCount}',
+                ),
+              ),
+              const SizedBox(height: 16),
+              SizedBox(
+                height: 52,
+                child: ElevatedButton.icon(
+                  onPressed: isLocating ? null : getCurrentLocation,
+                  icon: const Icon(Icons.gps_fixed),
+                  label: isLocating
+                      ? const SizedBox(
+                          width: 22,
+                          height: 22,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Text('取得目前位置'),
+                ),
+              ),
+              const SizedBox(height: 12),
+              SizedBox(
+                height: 52,
+                child: ElevatedButton.icon(
+                  onPressed: isUploading
+                      ? null
+                      : () {
+                          uploadLocation();
+                        },
+                  icon: const Icon(Icons.upload),
+                  label: isUploading
+                      ? const SizedBox(
+                          width: 22,
+                          height: 22,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Text('手動上傳目前位置'),
+                ),
+              ),
+              const SizedBox(height: 12),
+              SizedBox(
+                height: 52,
+                child: ElevatedButton.icon(
+                  onPressed:
+                      (isUploading || !hasUploadedAfter) ? null : completeCurrentStopAndUpload,
+                  icon: const Icon(Icons.task_alt),
+                  label: const Text('完成目前站點並上傳'),
+                ),
+              ),
+              const SizedBox(height: 12),
+              SizedBox(
+                height: 52,
+                child: ElevatedButton.icon(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.deepPurple,
+                    foregroundColor: Colors.white,
                   ),
-                ],
+                  onPressed:
+                      (isUploading || !hasUploadedAfter) ? null : completeCurrentStopAndNavigateNext,
+                  icon: const Icon(Icons.near_me),
+                  label: const Text('完成目前站點並導航下一站'),
+                ),
               ),
-            ),
-          ),
-          const SizedBox(height: 12),
-          stopCard(
-            title: '目前站點',
-            stop: currentStopData,
-            icon: Icons.place_outlined,
-          ),
-          stopCard(
-            title: '下一站',
-            stop: nextStopData,
-            icon: Icons.navigation_outlined,
-          ),
-          const SizedBox(height: 12),
-          SizedBox(
-            height: 52,
-            child: OutlinedButton.icon(
-              onPressed: navigateToCurrentStop,
-              icon: const Icon(Icons.directions),
-              label: const Text('導航到目前站點'),
-            ),
-          ),
-          const SizedBox(height: 12),
-          SizedBox(
-            height: 52,
-            child: OutlinedButton.icon(
-              onPressed: navigateToNextStop,
-              icon: const Icon(Icons.alt_route),
-              label: const Text('導航到下一站'),
-            ),
-          ),
-          const SizedBox(height: 12),
-          infoCard(
-            title: '目前緯度',
-            value: latText,
-            icon: Icons.my_location,
-          ),
-          infoCard(
-            title: '目前經度',
-            value: lonText,
-            icon: Icons.explore_outlined,
-          ),
-          const SizedBox(height: 12),
-          Card(
-            child: SwitchListTile(
-              value: autoUploadEnabled,
-              title: const Text('自動上傳位置'),
-              subtitle: Text(autoUploadText),
-              onChanged: (value) {
-                toggleAutoUpload(value);
-              },
-            ),
-          ),
-          const SizedBox(height: 12),
-          DropdownButtonFormField<String>(
-            initialValue: selectedStatus,
-            decoration: const InputDecoration(
-              labelText: '目前狀態',
-              border: OutlineInputBorder(),
-            ),
-            items: statusOptions.map((status) {
-              return DropdownMenuItem<String>(
-                value: status,
-                child: Text(status),
-              );
-            }).toList(),
-            onChanged: (value) {
-              setState(() {
-                selectedStatus = value ?? 'working';
-              });
-            },
-          ),
-          const SizedBox(height: 16),
-          TextField(
-            controller: currentStopSeqController,
-            keyboardType: TextInputType.number,
-            decoration: const InputDecoration(
-              labelText: '目前第幾站',
-              border: OutlineInputBorder(),
-            ),
-          ),
-          const SizedBox(height: 16),
-          TextField(
-            controller: completedCountController,
-            keyboardType: TextInputType.number,
-            decoration: InputDecoration(
-              labelText: '已完成站數',
-              border: const OutlineInputBorder(),
-              helperText: '總站數固定為 ${widget.totalCount}',
-            ),
-          ),
-          const SizedBox(height: 16),
-          SizedBox(
-            height: 52,
-            child: ElevatedButton.icon(
-              onPressed: isLocating ? null : getCurrentLocation,
-              icon: const Icon(Icons.gps_fixed),
-              label: isLocating
-                  ? const SizedBox(
-                      width: 22,
-                      height: 22,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Text('取得目前位置'),
-            ),
-          ),
-          const SizedBox(height: 12),
-          SizedBox(
-            height: 52,
-            child: ElevatedButton.icon(
-              onPressed: isUploading
-                  ? null
-                  : () {
-                      uploadLocation();
-                    },
-              icon: const Icon(Icons.upload),
-              label: isUploading
-                  ? const SizedBox(
-                      width: 22,
-                      height: 22,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Text('手動上傳目前位置'),
-            ),
-          ),
-          const SizedBox(height: 12),
-          SizedBox(
-            height: 52,
-            child: ElevatedButton.icon(
-              onPressed: isUploading ? null : completeCurrentStopAndUpload,
-              icon: const Icon(Icons.task_alt),
-              label: const Text('完成目前站點並上傳'),
-            ),
-          ),
-          const SizedBox(height: 12),
-          SizedBox(
-            height: 52,
-            child: ElevatedButton.icon(
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.deepPurple,
-                foregroundColor: Colors.white,
+              const SizedBox(height: 12),
+              SizedBox(
+                height: 52,
+                child: ElevatedButton.icon(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.green,
+                    foregroundColor: Colors.white,
+                  ),
+                  onPressed: (isUploading || currentStopSeq < widget.totalCount)
+                      ? null
+                      : markFinishedAndUpload,
+                  icon: const Icon(Icons.done_all),
+                  label: const Text('標記今日完成'),
+                ),
               ),
-              onPressed:
-                  isUploading ? null : completeCurrentStopAndNavigateNext,
-              icon: const Icon(Icons.near_me),
-              label: const Text('完成目前站點並導航下一站'),
-            ),
-          ),
-          const SizedBox(height: 12),
-          SizedBox(
-            height: 52,
-            child: ElevatedButton.icon(
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.green,
-                foregroundColor: Colors.white,
+              const SizedBox(height: 24),
+              const Text(
+                '上傳結果',
+                style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
               ),
-              onPressed: isUploading ? null : markFinishedAndUpload,
-              icon: const Icon(Icons.done_all),
-              label: const Text('標記今日完成'),
-            ),
+              const SizedBox(height: 12),
+              Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Text(lastResultText),
+                ),
+              ),
+            ],
           ),
-          const SizedBox(height: 24),
-          const Text(
-            '上傳結果',
-            style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-          ),
-          const SizedBox(height: 12),
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Text(lastResultText),
-            ),
-          ),
+          if (isUploadingImage) const AILoadingOverlay(),
         ],
+      ),
+    );
+  }
+}
+
+class AILoadingOverlay extends StatefulWidget {
+  const AILoadingOverlay({super.key});
+
+  @override
+  State<AILoadingOverlay> createState() => _AILoadingOverlayState();
+}
+
+class _AILoadingOverlayState extends State<AILoadingOverlay>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1400),
+    )..repeat(reverse: true);
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Positioned.fill(
+      child: Container(
+        color: Colors.black.withValues(alpha:0.45),
+        child: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              AnimatedBuilder(
+                animation: _controller,
+                builder: (context, child) {
+                  final glow = 12 + (_controller.value * 24);
+
+                  return Container(
+                    width: 110,
+                    height: 110,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: Colors.white,
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.cyanAccent.withValues(alpha:0.75),
+                          blurRadius: glow,
+                          spreadRadius: 2,
+                        ),
+                        BoxShadow(
+                          color: Colors.blueAccent.withValues(alpha:0.35),
+                          blurRadius: glow + 12,
+                          spreadRadius: 6,
+                        ),
+                      ],
+                    ),
+                    child: const Icon(
+                      Icons.auto_awesome,
+                      size: 48,
+                      color: Colors.indigo,
+                    ),
+                  );
+                },
+              ),
+              const SizedBox(height: 24),
+              const Text(
+                'AI 辨識中...',
+                style: TextStyle(
+                  fontSize: 24,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.white,
+                  letterSpacing: 1.2,
+                ),
+              ),
+              const SizedBox(height: 10),
+              const Text(
+                '請稍候，正在分析照片內容',
+                style: TextStyle(
+                  fontSize: 15,
+                  color: Colors.white70,
+                ),
+              ),
+              const SizedBox(height: 18),
+              const SizedBox(
+                width: 30,
+                height: 30,
+                child: CircularProgressIndicator(
+                  strokeWidth: 3,
+                  color: Colors.white,
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -2167,6 +2967,7 @@ class _ReportPageState extends State<ReportPage> {
   final TextEditingController contentController = TextEditingController();
   final TextEditingController stopSeqController = TextEditingController();
 
+  
   String selectedType = '客戶不在';
   bool isSubmitting = false;
   bool isLoadingReports = true;
@@ -2212,10 +3013,11 @@ class _ReportPageState extends State<ReportPage> {
         SnackBar(content: Text('載入回報紀錄失敗：$e')),
       );
     } finally {
-      if (!mounted) return;
-      setState(() {
-        isLoadingReports = false;
-      });
+      if (mounted) {
+        setState(() {
+          isLoadingReports = false;
+        });
+      }
     }
   }
 
@@ -2260,10 +3062,11 @@ class _ReportPageState extends State<ReportPage> {
         SnackBar(content: Text('送出失敗：$e')),
       );
     } finally {
-      if (!mounted) return;
-      setState(() {
-        isSubmitting = false;
-      });
+      if (mounted) {
+        setState(() {
+          isSubmitting = false;
+        });
+      }
     }
   }
 
@@ -2298,99 +3101,104 @@ class _ReportPageState extends State<ReportPage> {
           ),
         ],
       ),
-      body: ListView(
-        padding: const EdgeInsets.all(16),
+      body: Stack(
         children: [
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    '司機：${widget.driverCode}',
-                    style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+          ListView(
+            padding: const EdgeInsets.all(16),
+            children: [
+              Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        '司機：${widget.driverCode}',
+                        style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                      ),
+                      const SizedBox(height: 6),
+                      Text('第 ${widget.day} 天'),
+                      const SizedBox(height: 4),
+                      Text('路線編號：${widget.routeId.isEmpty ? "-" : widget.routeId}'),
+                    ],
                   ),
-                  const SizedBox(height: 6),
-                  Text('第 ${widget.day} 天'),
-                  const SizedBox(height: 4),
-                  Text('路線編號：${widget.routeId.isEmpty ? "-" : widget.routeId}'),
-                ],
+                ),
               ),
-            ),
-          ),
-          const SizedBox(height: 16),
-          DropdownButtonFormField<String>(
-            initialValue: selectedType,
-            decoration: const InputDecoration(
-              labelText: '回報類型',
-              border: OutlineInputBorder(),
-            ),
-            items: reportTypes.map((type) {
-              return DropdownMenuItem<String>(
-                value: type,
-                child: Text(type),
-              );
-            }).toList(),
-            onChanged: (value) {
-              setState(() {
-                selectedType = value ?? reportTypes.first;
-              });
-            },
-          ),
-          const SizedBox(height: 16),
-          TextField(
-            controller: stopSeqController,
-            keyboardType: TextInputType.number,
-            decoration: const InputDecoration(
-              labelText: '第幾站（可不填）',
-              hintText: '例如：3',
-              border: OutlineInputBorder(),
-            ),
-          ),
-          const SizedBox(height: 16),
-          TextField(
-            controller: contentController,
-            maxLines: 5,
-            decoration: const InputDecoration(
-              labelText: '回報內容',
-              hintText: '例如：客戶不在現場，電話未接通，已先拍照回報。',
-              border: OutlineInputBorder(),
-              alignLabelWithHint: true,
-            ),
-          ),
-          const SizedBox(height: 16),
-          SizedBox(
-            height: 52,
-            child: ElevatedButton.icon(
-              onPressed: isSubmitting ? null : submitReport,
-              icon: const Icon(Icons.send),
-              label: isSubmitting
-                  ? const SizedBox(
-                      width: 22,
-                      height: 22,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Text('送出工作回報'),
-            ),
-          ),
-          const SizedBox(height: 24),
-          const Text(
-            '最近回報紀錄',
-            style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-          ),
-          const SizedBox(height: 12),
-          if (isLoadingReports)
-            const Center(child: CircularProgressIndicator())
-          else if (reports.isEmpty)
-            const Card(
-              child: Padding(
-                padding: EdgeInsets.all(20),
-                child: Text('目前沒有回報紀錄'),
+              const SizedBox(height: 16),
+              DropdownButtonFormField<String>(
+                initialValue: selectedType,
+                decoration: const InputDecoration(
+                  labelText: '回報類型',
+                  border: OutlineInputBorder(),
+                ),
+                items: reportTypes.map((type) {
+                  return DropdownMenuItem<String>(
+                    value: type,
+                    child: Text(type),
+                  );
+                }).toList(),
+                onChanged: (value) {
+                  setState(() {
+                    selectedType = value ?? reportTypes.first;
+                  });
+                },
               ),
-            )
-          else
-            ...reports.map(buildReportCard),
+              const SizedBox(height: 16),
+              TextField(
+                controller: stopSeqController,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(
+                  labelText: '第幾站（可不填）',
+                  hintText: '例如：3',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 16),
+              TextField(
+                controller: contentController,
+                maxLines: 5,
+                decoration: const InputDecoration(
+                  labelText: '回報內容',
+                  hintText: '例如：客戶不在現場，電話未接通，已先拍照回報。',
+                  border: OutlineInputBorder(),
+                  alignLabelWithHint: true,
+                ),
+              ),
+              const SizedBox(height: 16),
+              SizedBox(
+                height: 52,
+                child: ElevatedButton.icon(
+                  onPressed: isSubmitting ? null : submitReport,
+                  icon: const Icon(Icons.send),
+                  label: isSubmitting
+                      ? const SizedBox(
+                          width: 22,
+                          height: 22,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Text('送出工作回報'),
+                ),
+              ),
+              
+              const SizedBox(height: 24),
+              const Text(
+                '最近回報紀錄',
+                style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 12),
+              if (isLoadingReports)
+                const Center(child: CircularProgressIndicator())
+              else if (reports.isEmpty)
+                const Card(
+                  child: Padding(
+                    padding: EdgeInsets.all(20),
+                    child: Text('目前沒有回報紀錄'),
+                  ),
+                )
+              else
+                ...reports.map(buildReportCard),
+            ],
+          ),
         ],
       ),
     );
