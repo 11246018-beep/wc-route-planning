@@ -1,0 +1,584 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Dispatch Nav | 清掃分析報表</title>
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <link href="https://fonts.googleapis.com/css?family=Open+Sans:300,400,600,700" rel="stylesheet" />
+  <style>
+    :root {
+      --primary: #4A90E2;
+      --success: #16a34a;
+      --warning: #f59e0b;
+      --danger: #ef4444;
+      --gray: #6b7280;
+      --glass: rgba(255, 255, 255, 0.95);
+      --soft-shadow: 0 10px 30px rgba(0, 0, 0, 0.08);
+      --text-main: #344767;
+      --sidebar-width: 80px;
+      --sidebar-expanded: 260px;
+      --bg: #f8f9fa;
+      --line: #e5e7eb;
+    }
+
+    * { box-sizing: border-box; }
+
+    body, html {
+      height: 100%;
+      margin: 0;
+      font-family: "Open Sans", sans-serif;
+      background: var(--bg);
+      color: var(--text-main);
+    }
+
+    #soft-sidebar {
+      position: fixed;
+      top: 15px;
+      left: 15px;
+      bottom: 15px;
+      width: var(--sidebar-width);
+      z-index: 1200;
+      background: var(--glass);
+      backdrop-filter: blur(10px);
+      border-radius: 15px;
+      box-shadow: var(--soft-shadow);
+      transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      border: 1px solid rgba(255, 255, 255, 0.3);
+    }
+
+    #soft-sidebar:hover { width: var(--sidebar-expanded); }
+
+    .sidebar-header {
+      padding: 25px 20px;
+      display: flex;
+      align-items: center;
+      gap: 15px;
+      min-width: 260px;
+    }
+
+    .sidebar-header .logo-box {
+      background: var(--primary);
+      color: white;
+      padding: 8px;
+      border-radius: 8px;
+      display: flex;
+    }
+
+    .sidebar-header span {
+      font-weight: 700;
+      color: var(--text-main);
+      white-space: nowrap;
+      opacity: 0;
+      transition: 0.3s;
+    }
+
+    #soft-sidebar:hover .sidebar-header span { opacity: 1; }
+
+    .menu-list {
+      flex: 1;
+      padding: 10px 15px;
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+    }
+
+    .menu-item {
+      display: flex;
+      align-items: center;
+      gap: 15px;
+      padding: 12px;
+      border-radius: 10px;
+      cursor: pointer;
+      transition: background 0.2s;
+      min-width: 230px;
+      text-decoration: none;
+    }
+
+    .menu-item:hover { background: #f8f9fa; }
+
+    .menu-item .icon-box {
+      width: 32px;
+      height: 32px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 8px;
+      background: white;
+      box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+      color: #8392ab;
+    }
+
+    .menu-item.active .icon-box {
+      background: var(--primary);
+      color: white;
+    }
+
+    .menu-item span {
+      font-size: 14px;
+      font-weight: 600;
+      color: #67748e;
+      white-space: nowrap;
+      opacity: 0;
+      transition: 0.2s;
+    }
+
+    #soft-sidebar:hover .menu-item span { opacity: 1; }
+
+    #top-nav {
+      position: fixed;
+      top: 15px;
+      left: 110px;
+      right: 15px;
+      height: 60px;
+      z-index: 1000;
+      background: var(--glass);
+      backdrop-filter: blur(10px);
+      border-radius: 12px;
+      box-shadow: var(--soft-shadow);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 20px;
+      border: 1px solid rgba(255, 255, 255, 0.3);
+      transition: left 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    body:has(#soft-sidebar:hover) #top-nav { left: 290px; }
+
+    .nav-brand {
+      font-weight: 700;
+      font-size: 18px;
+      color: var(--text-main);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .nav-right {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      font-size: 13px;
+      color: #67748e;
+      font-weight: 600;
+    }
+
+    .page-wrap {
+      margin-left: 110px;
+      padding: 95px 20px 24px;
+      transition: margin-left 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    body:has(#soft-sidebar:hover) .page-wrap { margin-left: 290px; }
+
+    .summary-grid,
+    .chart-grid,
+    .panel,
+    .table-wrap {
+      max-width: 1500px;
+      margin: 0 auto 16px;
+    }
+
+    .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 14px;
+    }
+
+    .summary-card,
+    .panel,
+    .table-wrap {
+      background: var(--glass);
+      border-radius: 16px;
+      box-shadow: var(--soft-shadow);
+      border: 1px solid rgba(255,255,255,0.4);
+    }
+
+    .summary-card { padding: 18px; }
+
+    .summary-label {
+      font-size: 12px;
+      font-weight: 700;
+      color: #8392ab;
+      text-transform: uppercase;
+      margin-bottom: 10px;
+    }
+
+    .summary-value {
+      font-size: 28px;
+      font-weight: 700;
+      color: var(--text-main);
+    }
+
+    .chart-grid {
+      display: grid;
+      grid-template-columns: 0.95fr 1.05fr;
+      gap: 16px;
+    }
+
+    .panel {
+      padding: 18px;
+    }
+
+    .panel h3 {
+      margin: 0 0 10px;
+      font-size: 18px;
+    }
+
+    .panel-note {
+      font-size: 13px;
+      line-height: 1.7;
+      color: #64748b;
+      margin-bottom: 14px;
+      background: #f8fafc;
+      border: 1px solid #e2e8f0;
+      border-radius: 12px;
+      padding: 12px 14px;
+    }
+
+    .chart-wrap {
+      position: relative;
+      min-height: 320px;
+      background: white;
+      border-radius: 14px;
+      padding: 12px;
+      border: 1px solid #e5e7eb;
+    }
+
+    .table-wrap {
+      overflow: hidden;
+    }
+
+    .table-header {
+      padding: 18px 18px 8px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+
+    .table-title {
+      margin: 0;
+      font-size: 20px;
+      font-weight: 700;
+    }
+
+    .small-text {
+      font-size: 12px;
+      line-height: 1.6;
+      color: #64748b;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 14px;
+      background: white;
+    }
+
+    th, td {
+      border-bottom: 1px solid #e5e7eb;
+      padding: 12px 10px;
+      text-align: left;
+      vertical-align: top;
+    }
+
+    th {
+      background: #eef3ff;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    .status-pill {
+      display: inline-block;
+      padding: 5px 10px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    .status-success {
+      background: #dcfce7;
+      color: #166534;
+    }
+
+    .status-danger {
+      background: #fee2e2;
+      color: #991b1b;
+    }
+
+    .empty-box {
+      padding: 30px;
+      text-align: center;
+      color: #8392ab;
+    }
+
+    @media (max-width: 1200px) {
+      .summary-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+      .chart-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    @media (max-width: 800px) {
+      .summary-grid {
+        grid-template-columns: 1fr;
+      }
+      .page-wrap {
+        padding-right: 12px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <aside id="soft-sidebar">
+    <div class="sidebar-header">
+      <div class="logo-box"><i data-lucide="layout-grid" size="18"></i></div>
+      <span>Dispatch Nav</span>
+    </div>
+    <div class="menu-list">
+      <a href="{% url 'home' %}" class="menu-item">
+        <div class="icon-box"><i data-lucide="home" size="18"></i></div>
+        <span>主要地圖</span>
+      </a>
+
+      <a href="{% url 'live_monitor_page' %}" class="menu-item">
+        <div class="icon-box"><i data-lucide="map-pinned" size="18"></i></div>
+        <span>即時監控</span>
+      </a>
+
+      <a href="{% url 'report_page' %}" class="menu-item">
+        <div class="icon-box"><i data-lucide="triangle-alert" size="18"></i></div>
+        <span>問題回報</span>
+      </a>
+
+      <a href="{% url 'driver_admin_page' %}" class="menu-item">
+        <div class="icon-box"><i data-lucide="users-round" size="18"></i></div>
+        <span>帳號管理</span>
+      </a>
+
+      <a href="{% url 'data_list' %}" class="menu-item">
+        <div class="icon-box"><i data-lucide="table" size="18"></i></div>
+        <span>資料管理</span>
+      </a>
+
+      <a href="{% url 'cleaning_records_page' %}" class="menu-item active">
+        <div class="icon-box"><i data-lucide="file-box" size="18"></i></div>
+        <span>清掃紀錄</span>
+      </a>
+
+      <a href="{% url 'login' %}" class="menu-item">
+        <div class="icon-box"><i data-lucide="log-out" size="14"></i></div>
+        <span>登出</span>
+      </a>
+    </div>
+  </aside>
+
+  <nav id="top-nav">
+    <div class="nav-brand"><i data-lucide="bar-chart-3"></i> 清掃分析報表</div>
+    <div class="nav-right">
+      <span id="lastUpdateText">最後更新：--</span>
+    </div>
+  </nav>
+
+  <main class="page-wrap">
+    <section class="summary-grid">
+      <div class="summary-card">
+        <div class="summary-label">總紀錄數</div>
+        <div class="summary-value" id="total">0</div>
+      </div>
+      <div class="summary-card">
+        <div class="summary-label">平均風險分數</div>
+        <div class="summary-value" id="avg">0</div>
+      </div>
+      <div class="summary-card">
+        <div class="summary-label">清潔後合格</div>
+        <div class="summary-value" id="pass">0</div>
+      </div>
+      <div class="summary-card">
+        <div class="summary-label">清潔後不合格</div>
+        <div class="summary-value" id="fail">0</div>
+      </div>
+    </section>
+
+    <section class="chart-grid">
+      <div class="panel">
+        <h3>清掃後整體合格狀況</h3>
+        <div class="panel-note">
+          這張圖只統計清潔後照片，讓管理者快速判斷目前清掃成果整體是偏穩定還是需要加強。
+        </div>
+        <div class="chart-wrap">
+          <canvas id="pieChart"></canvas>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h3>司機清掃後合格率</h3>
+        <div class="panel-note">
+          依司機統計清潔後照片的合格率，適合用來觀察不同司機的清掃完成品質。
+        </div>
+        <div class="chart-wrap">
+          <canvas id="barChart"></canvas>
+        </div>
+      </div>
+    </section>
+
+    <section class="table-wrap">
+      <div class="table-header">
+        <div>
+          <h3 class="table-title">司機報表明細</h3>
+          <div class="small-text">
+            下表整理每位司機的清掃後紀錄數、合格數與合格率，搭配圖表一起看最清楚。
+          </div>
+        </div>
+      </div>
+
+      <table>
+        <thead>
+          <tr>
+            <th>司機</th>
+            <th>清掃後總筆數</th>
+            <th>合格筆數</th>
+            <th>不合格筆數</th>
+            <th>合格率</th>
+          </tr>
+        </thead>
+        <tbody id="driverTable">
+          <tr><td colspan="5" class="empty-box">載入中...</td></tr>
+        </tbody>
+      </table>
+    </section>
+  </main>
+
+  <script>
+    lucide.createIcons();
+
+    let pieChartInstance = null;
+    let barChartInstance = null;
+
+    function updateLastUpdateTime() {
+      const now = new Date();
+      const text = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`;
+      document.getElementById('lastUpdateText').textContent = `最後更新：${text}`;
+    }
+
+    function escapeHtml(text) {
+      return String(text ?? '')
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&#039;');
+    }
+
+    function getRateClass(rate) {
+      if (rate >= 80) return 'status-success';
+      return 'status-danger';
+    }
+
+    async function loadReport() {
+      const res = await fetch('/api/admin/cleaning-summary/');
+      const data = await res.json();
+
+      if (!data.ok) {
+        alert("讀取失敗");
+        return;
+      }
+
+      const summary = data.summary || {};
+      const drivers = Array.isArray(data.drivers) ? data.drivers : [];
+
+      document.getElementById("total").textContent = summary.total_count ?? 0;
+      document.getElementById("avg").textContent = summary.avg_score ?? 0;
+      document.getElementById("pass").textContent = summary.pass_count ?? 0;
+      document.getElementById("fail").textContent = summary.fail_count ?? 0;
+
+      if (pieChartInstance) pieChartInstance.destroy();
+      pieChartInstance = new Chart(document.getElementById("pieChart"), {
+        type: "doughnut",
+        data: {
+          labels: ["合格", "不合格"],
+          datasets: [{
+            data: [summary.pass_count || 0, summary.fail_count || 0]
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: {
+              position: "bottom"
+            }
+          }
+        }
+      });
+
+      if (barChartInstance) barChartInstance.destroy();
+      barChartInstance = new Chart(document.getElementById("barChart"), {
+        type: "bar",
+        data: {
+          labels: drivers.map(d => d.driver_code),
+          datasets: [{
+            label: "合格率 (%)",
+            data: drivers.map(d => d.avg_score || 0),
+            borderWidth: 1
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: {
+              display: false
+            }
+          },
+          scales: {
+            y: {
+              beginAtZero: true,
+              max: 100
+            }
+          }
+        }
+      });
+
+      const tbody = document.getElementById("driverTable");
+
+      if (!drivers.length) {
+        tbody.innerHTML = `<tr><td colspan="5" class="empty-box">目前沒有司機統計資料</td></tr>`;
+      } else {
+        tbody.innerHTML = drivers.map(d => {
+          const total = d.count || 0;
+          const qualified = d.qualified_count || 0;
+          const fail = total - qualified;
+          const rate = d.avg_score || 0;
+
+          return `
+            <tr>
+              <td>${escapeHtml(d.driver_code)}</td>
+              <td>${total}</td>
+              <td>${qualified}</td>
+              <td>${fail}</td>
+              <td>
+                <span class="status-pill ${getRateClass(rate)}">${rate}%</span>
+              </td>
+            </tr>
+          `;
+        }).join("");
+      }
+
+      updateLastUpdateTime();
+    }
+
+    loadReport();
+  </script>
+</body>
+</html>
