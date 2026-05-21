@@ -25,7 +25,14 @@ SECRET_KEY = 'django-insecure-7w#+x@h&fyo2%x-7#u66hg0*4c%i)a%6k8_fyj2^-3@^11s+=7
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = ['*']
+ALLOWED_HOSTS = [
+    'dedicated-chargers-python-founder.trycloudflare.com',
+    'localhost',
+    '192.168.0.11',
+]
+CSRF_TRUSTED_ORIGINS = [
+    'https://dedicated-chargers-python-founder.trycloudflare.com',
+]
 
 
 # Application definition
