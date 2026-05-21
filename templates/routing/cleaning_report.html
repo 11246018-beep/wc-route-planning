@@ -178,7 +178,6 @@
 
     .summary-grid,
     .chart-grid,
-    .panel,
     .table-wrap {
       max-width: 1500px;
       margin: 0 auto 16px;
@@ -186,7 +185,7 @@
 
     .summary-grid {
       display: grid;
-      grid-template-columns: repeat(4, minmax(0, 1fr));
+      grid-template-columns: repeat(3, minmax(0, 1fr));
       gap: 14px;
     }
 
@@ -217,7 +216,7 @@
 
     .chart-grid {
       display: grid;
-      grid-template-columns: 0.95fr 1.05fr;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
       gap: 16px;
     }
 
@@ -314,10 +313,32 @@
       color: #991b1b;
     }
 
+    .status-warning {
+      background: #fef3c7;
+      color: #92400e;
+    }
+
     .empty-box {
       padding: 30px;
       text-align: center;
       color: #8392ab;
+    }
+
+    .btn {
+      border: none;
+      border-radius: 12px;
+      color: white;
+      font-weight: 700;
+      cursor: pointer;
+      padding: 10px 16px;
+      font-size: 14px;
+      text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      min-height: 44px;
+      background: var(--gray);
     }
 
     @media (max-width: 1200px) {
@@ -386,6 +407,9 @@
   <nav id="top-nav">
     <div class="nav-brand"><i data-lucide="bar-chart-3"></i> 清掃分析報表</div>
     <div class="nav-right">
+      <button class="btn" type="button" onclick="window.location.href='/cleaning-records/'">
+        <i data-lucide="arrow-left"></i> 返回清掃紀錄
+      </button>
       <span id="lastUpdateText">最後更新：--</span>
     </div>
   </nav>
@@ -393,77 +417,69 @@
   <main class="page-wrap">
     <section class="summary-grid">
       <div class="summary-card">
-        <div class="summary-label">總紀錄數</div>
-        <div class="summary-value" id="total">0</div>
+        <div class="summary-label">清掃總流程數</div>
+        <div class="summary-value" id="summaryFlowCount">0</div>
       </div>
       <div class="summary-card">
-        <div class="summary-label">平均風險分數</div>
-        <div class="summary-value" id="avg">0</div>
+        <div class="summary-label">清掃完成率</div>
+        <div class="summary-value" id="summaryCompleteRate">0%</div>
       </div>
       <div class="summary-card">
-        <div class="summary-label">清潔後合格</div>
-        <div class="summary-value" id="pass">0</div>
-      </div>
-      <div class="summary-card">
-        <div class="summary-label">清潔後不合格</div>
-        <div class="summary-value" id="fail">0</div>
+        <div class="summary-label">需重清次數</div>
+        <div class="summary-value" id="summaryRecleanCount">0</div>
       </div>
     </section>
 
     <section class="chart-grid">
       <div class="panel">
-        <h3>清掃後整體合格狀況</h3>
+        <h3>清掃結果統計</h3>
         <div class="panel-note">
-          這張圖只統計清潔後照片，讓管理者快速判斷目前清掃成果整體是偏穩定還是需要加強。
+          統計清潔結果的合格與不合格比例，用來觀察整體清掃完成品質。
         </div>
         <div class="chart-wrap">
-          <canvas id="pieChart"></canvas>
+          <canvas id="flowChart"></canvas>
         </div>
       </div>
 
       <div class="panel">
-        <h3>司機清掃後合格率</h3>
+        <h3>司機清掃完成品質</h3>
         <div class="panel-note">
-          依司機統計清潔後照片的合格率，適合用來觀察不同司機的清掃完成品質。
+          統計各司機清潔後照片的合格率，用來觀察清掃完成品質。
         </div>
         <div class="chart-wrap">
-          <canvas id="barChart"></canvas>
-        </div>
-      </div>
-    </section>
-
-    <section class="table-wrap">
-      <div class="table-header">
-        <div>
-          <h3 class="table-title">司機報表明細</h3>
-          <div class="small-text">
-            下表整理每位司機的清掃後紀錄數、合格數與合格率，搭配圖表一起看最清楚。
-          </div>
+          <canvas id="driverChart"></canvas>
         </div>
       </div>
 
-      <table>
-        <thead>
-          <tr>
-            <th>司機</th>
-            <th>清掃後總筆數</th>
-            <th>合格筆數</th>
-            <th>不合格筆數</th>
-            <th>合格率</th>
-          </tr>
-        </thead>
-        <tbody id="driverTable">
-          <tr><td colspan="5" class="empty-box">載入中...</td></tr>
-        </tbody>
-      </table>
+      <div class="panel">
+        <h3>每日使用量偏高趨勢</h3>
+        <div class="panel-note">
+          統計每天清潔前被判定為使用量偏高的次數，用來觀察需求變化。
+        </div>
+        <div class="chart-wrap">
+          <canvas id="trendChart"></canvas>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h3>縣市需求分布</h3>
+        <div class="panel-note">
+          統計各縣市清潔前使用量偏高次數，用來觀察不同區域的流動廁所需求分布情況
+        </div>
+        <div class="chart-wrap">
+          <canvas id="pointChart"></canvas>
+        </div>
+      </div>
     </section>
   </main>
 
   <script>
     lucide.createIcons();
 
-    let pieChartInstance = null;
-    let barChartInstance = null;
+    let flowChartInstance = null;
+    let driverChartInstance = null;
+    let trendChartInstance = null;
+    let pointChartInstance = null;
 
     function updateLastUpdateTime() {
       const now = new Date();
@@ -480,56 +496,296 @@
         .replaceAll("'", '&#039;');
     }
 
-    function getRateClass(rate) {
-      if (rate >= 80) return 'status-success';
-      return 'status-danger';
+    function formatDateTime(value) {
+      if (!value) return '-';
+      const d = new Date(value);
+      if (Number.isNaN(d.getTime())) return String(value);
+      return `${d.getFullYear()}/${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
     }
 
-    async function loadReport() {
-      const res = await fetch('/api/admin/cleaning-summary/');
-      const data = await res.json();
+    function getRecordTime(record) {
+      return record.created_at || record.uploaded_at || record.time || '-';
+    }
 
-      if (!data.ok) {
-        alert("讀取失敗");
-        return;
-      }
+    function getRecordAddress(record) {
+      return record.stop_address || record.address || record.point_key || '-';
+    }
 
-      const summary = data.summary || {};
-      const drivers = Array.isArray(data.drivers) ? data.drivers : [];
+    function getRecordStatus(record) {
+      return record.status || record.review_status || (record.is_qualified === true ? '合格' : record.is_qualified === false ? '不合格' : '-');
+    }
 
-      document.getElementById("total").textContent = summary.total_count ?? 0;
-      document.getElementById("avg").textContent = summary.avg_score ?? 0;
-      document.getElementById("pass").textContent = summary.pass_count ?? 0;
-      document.getElementById("fail").textContent = summary.fail_count ?? 0;
+    function normalizeRecord(raw) {
+      return {
+        driver_code: raw.driver_code ?? '-',
+        created_at: getRecordTime(raw),
+        stop_address: getRecordAddress(raw),
+        photo_type: raw.photo_type ?? '',
+        status: getRecordStatus(raw),
+        is_qualified: raw.is_qualified,
+        is_risk: raw.is_risk === true || raw.status === '高風險' || raw.review_status === '高風險'
+      };
+    }
 
-      if (pieChartInstance) pieChartInstance.destroy();
-      pieChartInstance = new Chart(document.getElementById("pieChart"), {
-        type: "doughnut",
+    function isBefore(record) {
+      return record.photo_type === 'before' || record.photo_type === '前';
+    }
+
+    function isAfter(record) {
+      return record.photo_type === 'after' || record.photo_type === '後';
+    }
+
+    function isUnqualified(record) {
+      return (
+        record &&
+        (
+          record.status === '不合格' ||
+          record.is_qualified === false ||
+          record.is_risk === true
+        )
+      );
+    }
+
+    function isQualified(record) {
+      return (
+        record &&
+        (
+          record.status === '合格' ||
+          record.is_qualified === true
+        )
+      );
+    }
+
+    function buildFlows(records) {
+      const grouped = {};
+
+      records.forEach(record => {
+        const dateOnly = String(record.created_at || '').split('T')[0].split(' ')[0];
+        const key = `${record.driver_code}__${record.stop_address}__${dateOnly}`;
+
+        if (!grouped[key]) {
+          grouped[key] = {
+            driver_code: record.driver_code || '-',
+            date: dateOnly || '-',
+            stop_address: record.stop_address || '-',
+            before: null,
+            after: null
+          };
+        }
+
+        if (isBefore(record)) {
+          grouped[key].before = record;
+        }
+
+        if (isAfter(record)) {
+          grouped[key].after = record;
+        }
+      });
+
+      return Object.values(grouped);
+    }
+
+    function renderSummary(flows, expansionItems) {
+      const totalFlows = flows.length;
+      const completedFlows = flows.filter(f => f.after).length;
+      const recleanCount = flows.filter(f => f.after && isUnqualified(f.after)).length;
+      const completeRate = totalFlows ? ((completedFlows / totalFlows) * 100).toFixed(1) : '0.0';
+
+      document.getElementById('summaryFlowCount').textContent = totalFlows;
+      document.getElementById('summaryCompleteRate').textContent = `${completeRate}%`;
+      document.getElementById('summaryRecleanCount').textContent = recleanCount;
+
+    }
+
+    function renderFlowChart(flows) {
+      const passCount = flows.filter(f => f.after && isQualified(f.after)).length;
+      const failCount = flows.filter(f => f.after && isUnqualified(f.after)).length;
+
+      if (flowChartInstance) flowChartInstance.destroy();
+
+      flowChartInstance = new Chart(document.getElementById('flowChart'), {
+        type: 'doughnut',
         data: {
-          labels: ["合格", "不合格"],
+          labels: ['合格', '不合格'],
           datasets: [{
-            data: [summary.pass_count || 0, summary.fail_count || 0]
+            data: [passCount, failCount]
           }]
         },
         options: {
           responsive: true,
           maintainAspectRatio: false,
           plugins: {
-            legend: {
-              position: "bottom"
-            }
+            legend: { position: 'bottom' }
+          }
+        }
+      });
+    }
+
+    function renderDriverChart(flows) {
+      const map = {};
+
+      flows.forEach(flow => {
+        const driver = flow.driver_code || '-';
+        if (!map[driver]) {
+          map[driver] = { totalAfter: 0, qualifiedAfter: 0 };
+        }
+
+        if (flow.after) {
+          map[driver].totalAfter += 1;
+          if (isQualified(flow.after)) {
+            map[driver].qualifiedAfter += 1;
           }
         }
       });
 
-      if (barChartInstance) barChartInstance.destroy();
-      barChartInstance = new Chart(document.getElementById("barChart"), {
-        type: "bar",
+      const rows = Object.entries(map)
+        .map(([driver, item]) => {
+
+          const fail = item.totalAfter - item.qualifiedAfter;
+
+          return {
+            driver,
+            pass: item.qualifiedAfter,
+            fail,
+            total: item.totalAfter,
+            rate: item.totalAfter
+              ? Number(((item.qualifiedAfter / item.totalAfter) * 100).toFixed(1))
+              : 0
+          };
+        })
+        .filter(item => item.total > 0)
+        .sort((a, b) => b.total - a.total);
+
+      if (driverChartInstance) driverChartInstance.destroy();
+
+      driverChartInstance = new Chart(document.getElementById('driverChart'), {
+        type: 'bar',
         data: {
-          labels: drivers.map(d => d.driver_code),
+          labels: rows.map(r => r.driver),
+          datasets: [
+            {
+              label: '合格筆數',
+              data: rows.map(r => r.pass),
+              borderWidth: 1
+            },
+            {
+              label: '不合格筆數',
+              data: rows.map(r => r.fail),
+              borderWidth: 1
+            }
+          ]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: {
+              position: 'bottom'
+            },
+            tooltip: {
+              callbacks: {
+                afterBody: function(items) {
+                  const index = items[0].dataIndex;
+                  const row = rows[index];
+                  return `合格率：${row.rate}%`;
+                }
+              }
+            }
+          },
+          scales: {
+            x: {
+              stacked: true
+            },
+            y: {
+              stacked: true,
+              beginAtZero: true,
+              ticks: {
+                precision: 0
+              }
+            }
+          }
+        }
+      });
+    }
+
+    function renderTrendChart(records) {
+      const map = {};
+
+      records
+        .filter(r => isBefore(r) && isUnqualified(r))
+        .forEach(record => {
+          const dateOnly = String(record.created_at || '').split('T')[0].split(' ')[0] || '-';
+          map[dateOnly] = (map[dateOnly] || 0) + 1;
+        });
+
+      const labels = Object.keys(map).sort();
+      const values = labels.map(label => map[label]);
+
+      if (trendChartInstance) trendChartInstance.destroy();
+      trendChartInstance = new Chart(document.getElementById('trendChart'), {
+        type: 'line',
+        data: {
+          labels,
           datasets: [{
-            label: "合格率 (%)",
-            data: drivers.map(d => d.avg_score || 0),
+            label: '使用量偏高次數',
+            data: values,
+            tension: 0.3,
+            borderWidth: 2
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: { display: false }
+          },
+          scales: {
+            y: { beginAtZero: true, ticks: { precision: 0 } }
+          }
+        }
+      });
+    }
+
+    function renderPointChart(records) {
+
+      const cityMap = {};
+
+      records
+        .filter(r => isBefore(r) && isUnqualified(r))
+        .forEach(record => {
+
+          const address = record.stop_address || '-';
+
+          // 抓縣市
+          let city = '其他';
+
+          if (address.includes('台北市')) city = '台北市';
+          else if (address.includes('新北市')) city = '新北市';
+          else if (address.includes('桃園市')) city = '桃園市';
+          else if (address.includes('台中市')) city = '台中市';
+          else if (address.includes('台南市')) city = '台南市';
+          else if (address.includes('高雄市')) city = '高雄市';
+          else if (address.includes('苗栗縣')) city = '苗栗縣';
+          else if (address.includes('新竹市')) city = '新竹市';
+          else if (address.includes('新竹縣')) city = '新竹縣';
+
+          cityMap[city] = (cityMap[city] || 0) + 1;
+        });
+
+      const rows = Object.entries(cityMap)
+        .map(([city, count]) => ({ city, count }))
+        .filter(item => item.city !== '其他')
+        .sort((a, b) => b.count - a.count);
+
+      if (pointChartInstance) pointChartInstance.destroy();
+
+      pointChartInstance = new Chart(document.getElementById('pointChart'), {
+        type: 'bar',
+        data: {
+          labels: rows.map(r => r.city),
+          datasets: [{
+            label: '使用量偏高次數',
+            data: rows.map(r => r.count),
             borderWidth: 1
           }]
         },
@@ -544,38 +800,51 @@
           scales: {
             y: {
               beginAtZero: true,
-              max: 100
+              ticks: {
+                precision: 0
+              }
             }
           }
         }
       });
+    }
+    
+          
+      
+    async function loadReport() {
+      try {
+        const [recordRes, expansionRes] = await Promise.all([
+          fetch('/api/admin/cleaning-records/'),
+          fetch('/api/toilet-demand-analysis/')
+        ]);
 
-      const tbody = document.getElementById("driverTable");
+        const recordData = await recordRes.json();
+        const expansionData = await expansionRes.json();
 
-      if (!drivers.length) {
-        tbody.innerHTML = `<tr><td colspan="5" class="empty-box">目前沒有司機統計資料</td></tr>`;
-      } else {
-        tbody.innerHTML = drivers.map(d => {
-          const total = d.count || 0;
-          const qualified = d.qualified_count || 0;
-          const fail = total - qualified;
-          const rate = d.avg_score || 0;
+        if (!recordRes.ok || !recordData.ok) {
+          alert('清掃紀錄讀取失敗');
+          return;
+        }
 
-          return `
-            <tr>
-              <td>${escapeHtml(d.driver_code)}</td>
-              <td>${total}</td>
-              <td>${qualified}</td>
-              <td>${fail}</td>
-              <td>
-                <span class="status-pill ${getRateClass(rate)}">${rate}%</span>
-              </td>
-            </tr>
-          `;
-        }).join("");
+        const records = Array.isArray(recordData.records)
+          ? recordData.records.map(normalizeRecord)
+          : [];
+
+        const expansionItems = expansionData.ok && Array.isArray(expansionData.records)
+          ? expansionData.records
+          : [];
+
+        const flows = buildFlows(records);
+
+        renderSummary(flows, expansionItems);
+        renderFlowChart(flows);
+        renderDriverChart(flows);
+        renderTrendChart(records);
+        renderPointChart(records);
+        updateLastUpdateTime();
+      } catch (err) {
+        alert(`連線失敗：${err}`);
       }
-
-      updateLastUpdateTime();
     }
 
     loadReport();
