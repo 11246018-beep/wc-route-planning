@@ -8,10 +8,95 @@ from django.db.models import Q
 from django.http import JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
+from django.views.decorators.csrf import csrf_exempt
+from django.contrib.auth import authenticate, login  # 這是驗證 manager1 的關鍵
+from django.contrib.auth.models import User
 
 import pandas as pd
 
-from .models import ServicePoint
+from .models import ServicePoint, Driver
+from .services.driver_roster import schedule_sort_key
+
+from collections import defaultdict
+from supabase import create_client
+
+SUPABASE_URL = "https://evwzonunmjvulzitxjmn.supabase.co"
+SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImV2d3pvbnVubWp2dWx6aXR4am1uIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI3OTAzOTUsImV4cCI6MjA4ODM2NjM5NX0.lWMaSu_B6q4AhzAxFykA6YBkwMN0QqNptAoUaraM2E4"
+
+supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+
+
+def toilet_demand_analysis_api(request):
+    try:
+        response = (
+            supabase.table("uploaded_photos")
+            .select("*")
+            .order("created_at", desc=True)
+            .execute()
+        )
+
+        records = response.data or []
+
+        # 只看清掃前
+        before_records = [
+            r for r in records
+            if str(r.get("photo_type")).lower() in ["前", "before"]
+        ]
+
+        grouped = defaultdict(list)
+
+        for record in before_records:
+            key = (
+                record.get("stop_address")
+                or record.get("point_key")
+                or "未知點位"
+            )
+
+            grouped[key].append(record)
+
+        result = []
+
+        for address, items in grouped.items():
+
+            # 最新排序
+            items.sort(
+                key=lambda x: x.get("created_at", ""),
+                reverse=True
+            )
+
+            # 最近三次
+            latest_three = items[:3]
+
+            # 必須滿三次
+            if len(latest_three) < 3:
+                continue
+
+            # 三次都不合格
+            all_failed = all(
+                (
+                    str(r.get("is_qualified")).lower() == "false"
+                    or str(r.get("review_status")) == "不合格"
+                )
+                for r in latest_three
+            )
+
+            if all_failed:
+                result.append({
+                    "address": address,
+                    "status": "需求量偏高",
+                    "latest_time": latest_three[0].get("created_at")
+                })
+
+        return JsonResponse({
+            "ok": True,
+            "records": result
+        })
+
+    except Exception as e:
+        return JsonResponse({
+            "ok": False,
+            "message": str(e)
+        }, status=500)
 
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -72,13 +157,8 @@ def clean_text(value):
     return text
 
 
-def driver_sort_key(code):
-    s = str(code or "").upper()
-    if s.startswith("P") and s[1:].isdigit():
-        return (0, int(s[1:]))
-    if s.startswith("W") and s[1:].isdigit():
-        return (1, int(s[1:]))
-    return (9, s)
+def driver_sort_key(code, schedule_slot=""):
+    return schedule_sort_key(schedule_slot, code)
 
 
 def driver_label(code):
@@ -89,6 +169,63 @@ def driver_label(code):
         return f"{s}｜五股{s[1:].lstrip('0') or '0'}"
     return s
 
+
+from django.views.decorators.csrf import csrf_exempt
+
+
+@csrf_exempt
+def driver_login_api(request):
+    if request.method == "OPTIONS":
+        response = JsonResponse({"ok": True})
+        response["Access-Control-Allow-Origin"] = "*"
+        response["Access-Control-Allow-Headers"] = "Content-Type"
+        response["Access-Control-Allow-Methods"] = "POST, OPTIONS"
+        return response
+
+    if request.method != "POST":
+        return JsonResponse(
+            {"success": False, "message": "只允許 POST"},
+            status=405
+        )
+
+    try:
+        data = json.loads(request.body)
+        driver_code = data.get("driver_code", "").strip()
+        password = data.get("password", "").strip()
+
+        if not driver_code or not password:
+            return JsonResponse(
+                {"success": False, "message": "請輸入司機編號與密碼"},
+                status=400
+            )
+
+        try:
+            driver = Driver.objects.get(driver_code=driver_code)
+        except Driver.DoesNotExist:
+            return JsonResponse(
+                {"success": False, "message": "找不到此司機帳號"},
+                status=401
+            )
+
+        if driver.password != password:
+            return JsonResponse(
+                {"success": False, "message": "密碼錯誤"},
+                status=401
+            )
+
+        return JsonResponse({
+            "success": True,
+            "driver_code": driver.driver_code,
+            "name": driver.driver_code,
+            "depot_id": driver.depot_id,
+            "max_minutes": driver.max_minutes,
+        })
+
+    except Exception as e:
+        return JsonResponse(
+            {"success": False, "message": f"伺服器錯誤：{str(e)}"},
+            status=500
+        )
 
 def load_json(path: Path):
     with path.open("r", encoding="utf-8") as f:
@@ -150,6 +287,78 @@ def load_old_payload():
     }
 
 
+def extract_variant_run_meta(variant):
+    payload = load_variant_payload(variant)
+    meta = payload.get("meta", {}) if isinstance(payload, dict) else {}
+    return {
+        "variant": variant,
+        "label": VARIANT_LABELS.get(variant, variant),
+        "scheduled_db_points": to_int(meta.get("scheduled_db_points"), 0),
+        "unassigned_db_points": to_int(meta.get("unassigned_db_points"), 0),
+        "total_db_points": to_int(meta.get("total_db_points"), 0),
+        "assigned_task_count": to_int(meta.get("assigned_task_count"), 0),
+        "unassigned_task_count": to_int(meta.get("unassigned_task_count"), 0),
+        "unassigned_node_count": to_int(meta.get("unassigned_node_count"), 0),
+        "download_key": clean_text(meta.get("unassigned_download_key")) or "",
+        "download_filename": clean_text(meta.get("unassigned_download_filename")) or "",
+        "message": clean_text(meta.get("summary_message")) or "",
+    }
+
+def login_view(request):
+    """
+    處理管理員(如 manager1)登入邏輯
+    """
+    if request.method == "POST":
+        try:
+            # 解析前端傳來的帳號密碼
+            data = json.loads(request.body)
+            u_name = data.get("userid", "").strip()
+            p_word = data.get("password", "").strip()
+
+            # 使用 Django 內建功能驗證你在 Terminal 建立的 manager1 帳號
+            user = authenticate(request, username=u_name, password=p_word)
+
+            if user is not None:
+                login(request, user)  # 正式建立登入會話 (Session)
+                return JsonResponse({"success": True})
+            else:
+                return JsonResponse({"success": False, "message": "管理員帳號或密碼錯誤"})
+        except Exception as e:
+            return JsonResponse({"success": False, "message": f"系統錯誤: {str(e)}"})
+
+    # 如果是 GET 請求，就顯示你原本設計的藍色漸層登入頁面
+    return render(request, "routing/login.html")
+
+# 註冊頁面
+def register_view(request):
+    """
+    處理管理員註冊邏輯
+    """
+    if request.method == "POST":
+        try:
+            data = json.loads(request.body)
+            u_name = data.get("username", "").strip()
+            p_word = data.get("password", "").strip()
+
+            if not u_name or not p_word:
+                return JsonResponse({"success": False, "message": "請填寫完整帳號與密碼"})
+
+            # 檢查帳號是否重複
+            if User.objects.filter(username=u_name).exists():
+                return JsonResponse({"success": False, "message": "此管理員帳號已存在"})
+
+            # 建立管理員帳號 (自動加密密碼)
+            user = User.objects.create_user(username=u_name, password=p_word)
+            user.is_staff = True  # 讓他可以進入 Django Admin 後台
+            user.save()
+
+            return JsonResponse({"success": True})
+        except Exception as e:
+            return JsonResponse({"success": False, "message": f"註冊失敗: {str(e)}"})
+
+    # GET 請求時顯示註冊頁面
+    return render(request, "routing/register.html")
+
 def home(request):
     initial_variant = request.GET.get("variant", "normal")
     if initial_variant not in VARIANT_LABELS:
@@ -190,6 +399,9 @@ def run_scheduler(request):
     if variant not in VARIANT_LABELS:
         variant = "normal"
 
+    response_format = (request.GET.get("format") or "").strip().lower()
+    wants_json = response_format == "json"
+
     try:
         result = subprocess.run(
             [sys.executable, "run_all.py"],
@@ -211,16 +423,47 @@ def run_scheduler(request):
         log_path.write_text("".join(log_text), encoding="utf-8")
 
         if result.returncode == 0:
-            return redirect(f"/?variant={variant}&run=success")
-        return redirect(f"/?variant={variant}&run=failed")
+            run_meta = extract_variant_run_meta(variant)
+            if wants_json:
+                return JsonResponse(
+                    {
+                        "ok": True,
+                        "variant": variant,
+                        "label": VARIANT_LABELS.get(variant, variant),
+                        "run_meta": run_meta,
+                        "message": run_meta.get("message") or "排程已重新執行完成。",
+                    }
+                )
+            return redirect(f"/home/?variant={variant}&run=success")
+
+        if wants_json:
+            return JsonResponse(
+                {
+                    "ok": False,
+                    "variant": variant,
+                    "label": VARIANT_LABELS.get(variant, variant),
+                    "message": "排程執行失敗，請檢查 output/run_all_last.log。",
+                },
+                status=500,
+            )
+        return redirect(f"/home/?variant={variant}&run=failed")
 
     except Exception as e:
         (OUTPUT_DIR / "run_all_last.log").write_text(
             f"Exception while running scheduler:\n{e}",
             encoding="utf-8",
         )
-        return redirect(f"/?variant={variant}&run=failed")
-
+        if wants_json:
+            return JsonResponse(
+                {
+                    "ok": False,
+                    "variant": variant,
+                    "label": VARIANT_LABELS.get(variant, variant),
+                    "message": f"排程執行失敗：{e}",
+                },
+                status=500,
+            )
+        return redirect(f"/home/?variant={variant}&run=failed")
 
 def api_route_options(request):
     variant = request.GET.get("variant", "normal")
@@ -230,8 +473,23 @@ def api_route_options(request):
         return JsonResponse(payload, status=404)
 
     routes = payload["routes"]
-    driver_codes = sorted({r["driver"] for r in routes}, key=driver_sort_key)
-    drivers = [{"value": code, "label": driver_label(code)} for code in driver_codes]
+    driver_index = {}
+    for route in routes:
+        code = clean_text(route.get("driver")) or ""
+        if not code:
+            continue
+        label = clean_text(route.get("driver_label")) or driver_label(code)
+        schedule_slot = clean_text(route.get("schedule_slot")) or code
+        current = driver_index.get(code)
+        if current is None or driver_sort_key(code, schedule_slot) < driver_sort_key(current.get("value"), current.get("schedule_slot")):
+            driver_index[code] = {
+                "value": code,
+                "label": label,
+                "schedule_slot": schedule_slot,
+            }
+
+    drivers = sorted(driver_index.values(), key=lambda item: driver_sort_key(item.get("value"), item.get("schedule_slot")))
+    driver_codes = [item["value"] for item in drivers]
 
     days_by_driver = {}
     for code in driver_codes:
@@ -303,15 +561,80 @@ def api_old_route_options(request):
     if not payload["ok"]:
         return JsonResponse(payload, status=404)
 
+    routes = payload["routes"]
+
+    # 同一位司機固定同一個顯示代號，不再因為第幾天而跳號
+    first_code_by_driver = {}
+
+    for route in routes:
+        raw_code = clean_text(route.get("driver")) or ""
+        prefix = raw_code[:1].upper() if raw_code else "X"
+        original_name = (
+            clean_text(route.get("original_driver_name"))
+            or clean_text(route.get("driver_label"))
+            or raw_code
+        )
+        key = (prefix, original_name)
+
+        saved_code = first_code_by_driver.get(key)
+        if saved_code is None or driver_sort_key(raw_code) < driver_sort_key(saved_code):
+            first_code_by_driver[key] = raw_code
+
+    display_label_by_driver = {}
+
+    # 先排平鎮 P，再排五股 W，和新路線的顯示習慣一致
+    for prefix in ["P", "W"]:
+        keys = [k for k in first_code_by_driver.keys() if k[0] == prefix]
+        keys.sort(key=lambda k: driver_sort_key(first_code_by_driver[k]))
+
+        for idx, key in enumerate(keys, start=1):
+            code = f"{prefix}{idx:02d}"
+            if prefix == "P":
+                base_label = f"{code}｜平鎮{idx}"
+            elif prefix == "W":
+                base_label = f"{code}｜五股{idx}"
+            else:
+                base_label = code
+            display_label_by_driver[key] = base_label
+
+    # 其他未知前綴保底
+    other_keys = [k for k in first_code_by_driver.keys() if k[0] not in ["P", "W"]]
+    other_keys.sort(key=lambda k: driver_sort_key(first_code_by_driver[k]))
+    for idx, key in enumerate(other_keys, start=1):
+        prefix = key[0] or "X"
+        display_label_by_driver[key] = f"{prefix}{idx:02d}"
+
     options = []
-    for route in payload["routes"]:
-        label = f"{route.get('driver_label') or route.get('driver')}｜第 {route.get('day')} 天｜{route.get('stop_count')} 站"
+    for route in routes:
+        raw_code = clean_text(route.get("driver")) or ""
+        prefix = raw_code[:1].upper() if raw_code else "X"
+        original_name = (
+            clean_text(route.get("original_driver_name"))
+            or clean_text(route.get("driver_label"))
+            or raw_code
+        )
+        key = (prefix, original_name)
+
+        display_driver_label = display_label_by_driver.get(
+            key,
+            route.get("driver_label") or raw_code,
+        )
+
         options.append(
             {
                 "route_id": route.get("route_id"),
-                "label": label,
+                "label": f"{display_driver_label}｜第{route.get('day')}天｜{route.get('stop_count')}站",
+                "_sort_code": display_driver_label.split("｜")[0],
+                "_sort_day": to_int(route.get("day")),
             }
         )
+
+    # 下拉順序：P01 第1天、第2天... → P02 ... → W01 ...
+    options.sort(key=lambda x: (driver_sort_key(x["_sort_code"]), x["_sort_day"]))
+
+    for item in options:
+        item.pop("_sort_code", None)
+        item.pop("_sort_day", None)
 
     return JsonResponse(
         {
@@ -664,3 +987,10 @@ def data_import(request):
         "routing/data_import.html",
         {"error_message": error_message, "summary": summary},
     )
+
+
+def cleaning_records_page(request):
+    return render(request, "routing/cleaning_records.html")
+
+def cleaning_report_page(request):
+    return render(request, "routing/cleaning_report.html")
