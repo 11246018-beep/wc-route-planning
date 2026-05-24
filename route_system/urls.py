@@ -15,7 +15,6 @@ urlpatterns = [
     path("driver-admin/", TemplateView.as_view(template_name="routing/driver_admin.html"), name="driver_admin_page"),
     path("live-monitor/", TemplateView.as_view(template_name="routing/live_monitor.html"), name="live_monitor_page"),
     path("run/", views.run_scheduler, name="run_scheduler"),
-    path("api/run/status/", views.api_run_status, name="api_run_status"),
     path("register/", views.register_view, name="register"),
     path("cleaning-records/", views.cleaning_records_page, name="cleaning_records_page"),
     path("cleaning-report/", views.cleaning_report_page),
