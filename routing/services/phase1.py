@@ -270,11 +270,22 @@ def load_and_process_data(raw_df):
 
     # 定義聚合規則 (Aggregation Rules)
     # 每個欄位的合併邏輯需仔細設計以保留關鍵資訊
+    def join_unique_text(values, sep=","):
+        cleaned = []
+        for value in values:
+            if pd.isna(value):
+                continue
+            text = str(value).strip()
+            if not text or text.lower() == "nan":
+                continue
+            cleaned.append(text)
+        return sep.join(sorted(set(cleaned)))
+
     agg_rules = {
         # 字串類欄位：保留所有唯一值並排序
-        'Original_ID': lambda x: ' | '.join(sorted(set(x))),  # 客戶ID用 | 分隔
-        'order_id': lambda x: ','.join(sorted(set(filter(None, x)))),  # 訂單號用逗號分隔
-        'floor': lambda x: ','.join(sorted(set(filter(None, x)))),  # 樓層資訊
+        'Original_ID': lambda x: join_unique_text(x, ' | '),  # 客戶ID用 | 分隔
+        'order_id': lambda x: join_unique_text(x, ','),       # 工單 ID
+        'floor': lambda x: join_unique_text(x, ','),          # 樓層資訊
 
         # 數值類欄位：加總
         'S_Time_Raw': 'sum',  # 同地點服務時間累加 (例如：3台設備各10分鐘 -> 30分鐘)
