@@ -3,6 +3,7 @@
     "display_name": "",
     "phone": "",
     "note": "",
-    "is_active": true
+    "is_active": true,
+    "schedule_slot": "P01"
   }
 }

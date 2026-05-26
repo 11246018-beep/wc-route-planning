@@ -3,14 +3,14 @@
     "driver_code": "P01",
     "day": 1,
     "route_id": "NORMAL-P01-D01",
-    "lat": 25.0428921,
-    "lon": 121.5249263,
-    "current_stop_seq": 7,
-    "completed_count": 6,
+    "lat": 25.0419717,
+    "lon": 121.5258054,
+    "current_stop_seq": 2,
+    "completed_count": 1,
     "total_count": 23,
-    "status": "navigating",
-    "updated_at": "2026-03-26 14:22:55",
-    "updated_at_iso": "2026-03-26T14:22:55.863381"
+    "status": "working",
+    "updated_at": "2026-05-15 11:34:34",
+    "updated_at_iso": "2026-05-15T11:34:34.078031"
   },
   "W01": {
     "driver_code": "W01",
