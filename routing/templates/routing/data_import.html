@@ -191,7 +191,12 @@
         <div class="menu-list">
             <a href="{% url 'home' %}" class="menu-item">
                 <div class="icon-box"><i data-lucide="home" size="18"></i></div>
-                <span>Dashboard</span>
+                <span>主要地圖</span>
+            </a>
+
+            <a href="{% url 'live_monitor_page' %}" class="menu-item">
+                <div class="icon-box"><i data-lucide="map-pinned" size="18"></i></div>
+                <span>即時監控</span>
             </a>
 
             <a href="{% url 'report_page' %}" class="menu-item">
@@ -209,6 +214,11 @@
                 <span>資料管理</span>
             </a>
 
+            <a href="{% url 'cleaning_records_page' %}" class="menu-item">
+                <div class="icon-box"><i data-lucide="file-box" size="18"></i></div>
+                <span>清掃紀錄</span>
+            </a>
+            
             <a href="{% url 'login' %}" class="menu-item">
                 <div class="icon-box"><i data-lucide="log-out" size="14"></i></div>
                 <span>登出</span>

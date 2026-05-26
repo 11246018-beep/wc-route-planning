@@ -4,174 +4,340 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Dispatch Nav | 智慧派工系統 - 登入</title>
+  {% load static %}
   <script src="https://unpkg.com/lucide@latest"></script>
   <link href="https://fonts.googleapis.com/css?family=Open+Sans:300,400,600,700" rel="stylesheet" />
   <style>
     :root {
       --primary: #4A90E2;
-      --primary-dark: #1a5ab5;
       --text-main: #344767;
-      --soft-shadow: 0 20px 27px 0 rgba(0, 0, 0, 0.1);
+      --text-soft: #67748e;
+      --soft-shadow: 0 20px 27px 0 rgba(0, 0, 0, 0.12);
+      --card-bg: rgba(255, 255, 255, 0.88);
+      --nav-bg: rgba(255, 255, 255, 0.82);
+      --white-line: rgba(255, 255, 255, 0.5);
     }
 
-    * { box-sizing: border-box; }
+    * {
+      box-sizing: border-box;
+    }
 
-    body, html {
-      margin: 0; padding: 0; height: 100%;
+    html, body {
+      margin: 0;
+      padding: 0;
+      min-height: 100%;
       font-family: "Open Sans", sans-serif;
-      /* --- 你的核心背景：由淺至深的藍色漸層 --- */
-      background: linear-gradient(180deg, #e3f2fd 0%, #4A90E2 50%, #669ae2 100%);
+      background: linear-gradient(180deg, #e3f2fd 0%, #4A90E2 52%, #669ae2 100%);
       background-attachment: fixed;
+      overflow-x: hidden;
     }
 
-    /* 裝飾性的大圓形 (保留) */
     body::before {
-      content: ""; position: absolute; top: -10%; right: -10%;
-      width: 400px; height: 400px; border-radius: 50%;
-      background: rgba(255, 255, 255, 0.2); filter: blur(80px); z-index: 0;
+      content: "";
+      position: fixed;
+      top: -90px;
+      left: -120px;
+      width: 520px;
+      height: 520px;
+      border-radius: 50%;
+      background: rgba(255, 255, 255, 0.12);
+      filter: blur(8px);
+      z-index: 0;
+      pointer-events: none;
     }
 
-    /* --- 新增：頂部導航列樣式 --- */
+    body::after {
+      content: "";
+      position: fixed;
+      right: -120px;
+      bottom: -120px;
+      width: 420px;
+      height: 420px;
+      border-radius: 50%;
+      background: rgba(255, 255, 255, 0.08);
+      filter: blur(10px);
+      z-index: 0;
+      pointer-events: none;
+    }
+
     #top-nav {
-      position: fixed; top: 20px; left: 50%; transform: translateX(-50%);
-      width: 90%; max-width: 1100px; height: 60px;
-      z-index: 1000; background: rgba(255, 255, 255, 0.8);
-      backdrop-filter: blur(15px); -webkit-backdrop-filter: blur(15px);
-      border-radius: 50px; box-shadow: var(--soft-shadow);
-      display: flex; align-items: center; padding: 0 30px;
-      justify-content: space-between; border: 1px solid rgba(255, 255, 255, 0.4);
+      position: fixed;
+      top: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: min(92%, 1100px);
+      height: 60px;
+      z-index: 1000;
+      background: var(--nav-bg);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      border-radius: 999px;
+      border: 1px solid var(--white-line);
+      box-shadow: 0 10px 30px rgba(29, 78, 137, 0.10);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 18px 0 24px;
     }
 
-    .nav-brand { font-weight: 700; color: var(--text-main); font-size: 16px; }
-    .nav-menu { display: flex; gap: 25px; }
-    .nav-link { 
-      display: flex; align-items: center; gap: 6px; 
-      color: var(--text-main); text-decoration: none; font-size: 13px; font-weight: 600;
-      transition: color 0.2s;
+    .nav-brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      font-size: 17px;
+      font-weight: 700;
+      color: var(--text-main);
+      letter-spacing: 0.2px;
     }
-    .nav-link:hover { color: var(--primary); }
-    .btn-download {
-      background: #344767; color: white; padding: 10px 22px;
-      border-radius: 30px; font-size: 12px; font-weight: 700; text-decoration: none;
-      text-transform: uppercase; transition: opacity 0.2s;
-    }
-    .btn-download:hover { opacity: 0.9; }
 
-    /* --- 頁面內容容器 --- */
+    .nav-brand-logo {
+      width: 36px;
+      height: 36px;
+      object-fit: contain;
+      display: block;
+      flex-shrink: 0;
+    }
+
+    .nav-brand-text {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .nav-divider {
+      color: #9aa7bd;
+      font-weight: 600;
+    }
+
+    .nav-action {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 18px;
+      border-radius: 999px;
+      text-decoration: none;
+      color: white;
+      font-size: 13px;
+      font-weight: 700;
+      background: #344767;
+      transition: transform 0.2s ease, opacity 0.2s ease;
+      box-shadow: 0 8px 18px rgba(52, 71, 103, 0.18);
+    }
+
+    .nav-action:hover {
+      transform: translateY(-1px);
+      opacity: 0.95;
+    }
+
     .content-wrapper {
-      height: 100%; width: 100%;
-      display: flex; align-items: center; justify-content: center;
-      padding-top: 80px; /* 避開導航列的高度 */
-      position: relative; z-index: 1;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 110px 20px 40px;
+      position: relative;
+      z-index: 1;
     }
 
     .login-card {
-      /* 半透明毛玻璃效果 (保留) */
-      background: rgba(255, 255, 255, 0.85);
-      backdrop-filter: blur(15px);
-      -webkit-backdrop-filter: blur(15px);
-      padding: 40px; border-radius: 24px;
+      width: 100%;
+      max-width: 440px;
+      background: var(--card-bg);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      border: 1px solid rgba(255, 255, 255, 0.58);
+      border-radius: 28px;
       box-shadow: var(--soft-shadow);
-      width: 100%; max-width: 420px;
-      border: 1px solid rgba(255, 255, 255, 0.6);
+      padding: 34px 38px 32px;
       text-align: center;
     }
 
-    .card-header h2 { color: var(--text-main); font-size: 28px; font-weight: 700; margin: 0 0 10px; }
-    .card-header p { color: #67748e; font-size: 15px; margin-bottom: 35px; }
+    .logo-wrap {
+      display: flex;
+      justify-content: center;
+      margin-bottom: 18px;
+    }
 
-    /* 讓提示文字靠左 */
+    .logo-wrap img {
+      width: 104px;
+      height: 104px;
+      object-fit: contain;
+      display: block;
+    }
+
+    .card-header h2 {
+      color: var(--text-main);
+      font-size: 28px;
+      font-weight: 700;
+      margin: 0 0 10px;
+    }
+
+    .card-header p {
+      color: var(--text-soft);
+      font-size: 15px;
+      margin: 0 0 30px;
+    }
+
     .form-group {
-    margin-bottom: 20px;
-    display: flex;
-    flex-direction: column;
-    align-items: flex-start; /* 確保 label 靠左 */
+      margin-bottom: 20px;
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      text-align: left;
     }
 
     .form-group label {
-    font-weight: 700;
-    color: var(--text-main);
-    margin-bottom: 8px;
-    font-size: 14px;
+      font-weight: 700;
+      color: var(--text-main);
+      margin-bottom: 8px;
+      font-size: 14px;
     }
 
-    /* 核心：將圖示與格子水平排列 */
     .input-wrapper {
-    display: flex;
-    align-items: center; /* 垂直方向置中對齊 */
-    width: 100%;
-    gap: 15px; /* 圖示與格子之間的距離 */
+      display: flex;
+      align-items: center;
+      width: 100%;
+      gap: 14px;
     }
 
-    /* 圖示樣式 */
     .input-wrapper i {
-    color: #344767;
-    flex-shrink: 0; /* 防止圖示被壓縮 */
+      color: #344767;
+      flex-shrink: 0;
     }
 
-    /* 輸入框格子樣式 */
     input {
-    flex: 1; /* 讓格子佔滿剩餘空間 */
-    padding: 12px 15px;
-    border: 1px solid #d2d6da;
-    border-radius: 12px;
-    font-size: 15px;
-    background: rgba(255, 255, 255, 0.9);
-    outline: none;
-    transition: all 0.2s ease;
+      flex: 1;
+      padding: 13px 15px;
+      border: 1px solid #d2d6da;
+      border-radius: 14px;
+      font-size: 15px;
+      background: rgba(255, 255, 255, 0.96);
+      outline: none;
+      transition: all 0.2s ease;
+      color: var(--text-main);
     }
 
     input:focus {
-    border-color: var(--primary);
-    box-shadow: 0 0 0 3px rgba(74, 144, 226, 0.15);
+      border-color: var(--primary);
+      box-shadow: 0 0 0 3px rgba(74, 144, 226, 0.15);
     }
+
     .btn-login {
-      width: 100%; padding: 14px; border: none; border-radius: 12px;
+      width: 100%;
+      padding: 15px;
+      border: none;
+      border-radius: 14px;
       background: linear-gradient(310deg, #21d4fd 0%, #2178dd 100%);
-      color: white; font-weight: 700; font-size: 16px;
-      cursor: pointer; margin-top: 15px;
-      box-shadow: 0 4px 15px rgba(33, 212, 253, 0.3);
-      transition: 0.3s;
+      color: white;
+      font-weight: 700;
+      font-size: 16px;
+      cursor: pointer;
+      margin-top: 10px;
+      box-shadow: 0 8px 20px rgba(33, 120, 221, 0.28);
+      transition: transform 0.2s ease, box-shadow 0.2s ease;
     }
+
     .btn-login:hover {
       transform: translateY(-2px);
-      box-shadow: 0 7px 20px rgba(33, 212, 253, 0.4);
+      box-shadow: 0 12px 24px rgba(33, 120, 221, 0.33);
     }
-    .btn-login:active { transform: translateY(0); }
 
-    .footer-link { font-size: 14px; color: #67748e; margin-top: 25px; }
-    .footer-link a { color: var(--primary); text-decoration: none; font-weight: 600; }
+    .footer-link {
+      font-size: 14px;
+      color: var(--text-soft);
+      margin-top: 22px;
+    }
+
+    .footer-link a {
+      color: var(--primary);
+      text-decoration: none;
+      font-weight: 700;
+    }
+
+    @media (max-width: 640px) {
+      #top-nav {
+        width: calc(100% - 24px);
+        padding: 0 12px 0 16px;
+      }
+
+      .nav-brand {
+        gap: 10px;
+      }
+
+      .nav-brand-logo {
+        width: 32px;
+        height: 32px;
+      }
+
+      .nav-brand-text {
+        gap: 6px;
+        font-size: 15px;
+      }
+
+      .nav-brand-text .system-subtitle {
+        display: none;
+      }
+
+      .nav-action {
+        padding: 9px 14px;
+        font-size: 12px;
+      }
+
+      .login-card {
+        padding: 28px 22px 24px;
+        border-radius: 24px;
+      }
+
+      .logo-wrap img {
+        width: 88px;
+        height: 88px;
+      }
+
+      .card-header h2 {
+        font-size: 24px;
+      }
+    }
   </style>
 </head>
 <body>
 
   <nav id="top-nav">
-    <div class="nav-brand">軟UI儀表板</div>
-    <div class="nav-menu">
-      <a href="#" class="nav-link"><i data-lucide="layout-dashboard" size="16"></i> 儀表板</a>
-      <a href="#" class="nav-link"><i data-lucide="user" size="16"></i> 輪廓</a>
-     <a href="{% url 'register' %}" class="nav-link"><i data-lucide="user-plus" size="16"></i> 註冊</a>
-      <a href="#" class="nav-link"><i data-lucide="key" size="16"></i> 登入</a>
+    <div class="nav-brand">
+      <img src="{% static 'images/dispatch_nav_logo.png' %}" alt="Dispatch Nav Logo" class="nav-brand-logo">
+      <div class="nav-brand-text">
+        <span>Dispatch Nav</span>
+        <span class="nav-divider">|</span>
+        <span class="system-subtitle">智慧派工系統</span>
+      </div>
     </div>
-    <a href="#" class="btn-download">下載</a>
+
+    <a href="{% url 'register' %}" class="nav-action">
+      <i data-lucide="user-plus" size="16"></i>
+      註冊
+    </a>
   </nav>
 
   <div class="content-wrapper">
     <div class="login-card">
+      <div class="logo-wrap">
+        <img src="{% static 'images/dispatch_nav_logo.png' %}" alt="Dispatch Nav Logo">
+      </div>
+
       <div class="card-header">
         <h2>歡迎回來</h2>
         <p>請輸入您的管理員代號登入系統</p>
       </div>
-      
+
       <form id="loginForm">
         <div class="form-group">
-          <label>管理員帳號 ＭanagerID</label>
+          <label>管理員帳號 Manager ID</label>
           <div class="input-wrapper">
             <i data-lucide="user" size="20"></i>
             <input type="text" id="userid" placeholder="請輸入管理員帳號" required>
           </div>
         </div>
-        
+
         <div class="form-group">
           <label>密碼 Password</label>
           <div class="input-wrapper">
@@ -179,47 +345,42 @@
             <input type="password" id="password" placeholder="請輸入密碼" required>
           </div>
         </div>
-        
-        <button type="submit" class="btn-login">Sing in</button>
+
+        <button type="submit" class="btn-login">登入系統</button>
       </form>
-      
+
       <div class="footer-link">
-        還沒有帳號？ <a href="{% url 'register' %}" class="text-info">聯絡管理員註冊</a>
+        還沒有帳號？ <a href="{% url 'register' %}">前往註冊頁</a>
       </div>
-      
     </div>
   </div>
 
-  <script src="https://unpkg.com/lucide@latest"></script>
   <script>
-  lucide.createIcons();
+    lucide.createIcons();
 
-  document.getElementById('loginForm').onsubmit = async function(e) {
-    e.preventDefault();
-    
-    const userid = document.getElementById('userid').value;
-    const password = document.getElementById('password').value;
+    document.getElementById('loginForm').onsubmit = async function(e) {
+      e.preventDefault();
 
-    // 發送資料給 views.py 中的 login_view
-    const response = await fetch("{% url 'login' %}", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-CSRFToken": "{{ csrf_token }}" // 必須包含這行，否則 Django 會擋掉
-      },
-      body: JSON.stringify({ userid: userid, password: password })
-    });
+      const userid = document.getElementById('userid').value;
+      const password = document.getElementById('password').value;
 
-    const result = await response.json();
+      const response = await fetch("{% url 'login' %}", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-CSRFToken": "{{ csrf_token }}"
+        },
+        body: JSON.stringify({ userid: userid, password: password })
+      });
 
-    if (result.success) {
-      // 驗證成功，跳轉到首頁 (home/)
-      window.location.href = "{% url 'home' %}";
-    } else {
-      // 驗證失敗，彈出錯誤訊息
-      alert(result.message);
-    }
-  };
-</script>
+      const result = await response.json();
+
+      if (result.success) {
+        window.location.href = "{% url 'home' %}";
+      } else {
+        alert(result.message);
+      }
+    };
+  </script>
 </body>
 </html>

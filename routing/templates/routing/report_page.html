@@ -321,7 +321,12 @@
     <div class="menu-list">
       <a href="{% url 'home' %}" class="menu-item">
         <div class="icon-box"><i data-lucide="home" size="18"></i></div>
-        <span>Dashboard</span>
+        <span>主要地圖</span>
+      </a>
+
+      <a href="{% url 'live_monitor_page' %}" class="menu-item">
+        <div class="icon-box"><i data-lucide="map-pinned" size="18"></i></div>
+        <span>即時監控</span>
       </a>
 
       <a href="{% url 'report_page' %}" class="menu-item active">
@@ -329,9 +334,19 @@
         <span>問題回報</span>
       </a>
 
+      <a href="{% url 'driver_admin_page' %}" class="menu-item">
+        <div class="icon-box"><i data-lucide="users-round" size="18"></i></div>
+        <span>帳號管理</span>
+      </a>
+
       <a href="{% url 'data_list' %}" class="menu-item">
         <div class="icon-box"><i data-lucide="table" size="18"></i></div>
         <span>資料管理</span>
+      </a>
+
+      <a href="{% url 'cleaning_records_page' %}" class="menu-item">
+        <div class="icon-box"><i data-lucide="file-box" size="18"></i></div>
+        <span>清掃紀錄</span>
       </a>
 
       <a href="{% url 'login' %}" class="menu-item">
@@ -359,8 +374,7 @@
         <label for="typeFilter">回報類型篩選</label>
         <select id="typeFilter">
           <option value="">全部類型</option>
-          <option value="客戶不在">客戶不在</option>
-          <option value="地址有誤">地址有誤</option>
+                    <option value="地址有誤">地址有誤</option>
           <option value="無法進入">無法進入</option>
           <option value="設備異常">設備異常</option>
           <option value="臨時取消">臨時取消</option>
@@ -378,8 +392,8 @@
         <div class="summary-value" id="summaryTotal">0</div>
       </div>
       <div class="summary-card">
-        <div class="summary-label">客戶不在</div>
-        <div class="summary-value" id="summaryAbsent">0</div>
+        <div class="summary-label">地址有誤</div>
+        <div class="summary-value" id="summaryAddress">0</div>
       </div>
       <div class="summary-card">
         <div class="summary-label">設備異常</div>
@@ -398,8 +412,7 @@
         <div class="field" style="padding:0; box-shadow:none; border:none; background:transparent;">
           <label for="editType">回報類型</label>
           <select id="editType">
-            <option value="客戶不在">客戶不在</option>
-            <option value="地址有誤">地址有誤</option>
+                        <option value="地址有誤">地址有誤</option>
             <option value="無法進入">無法進入</option>
             <option value="設備異常">設備異常</option>
             <option value="臨時取消">臨時取消</option>
@@ -485,7 +498,7 @@
 
     function renderSummary(reports) {
       document.getElementById('summaryTotal').textContent = reports.length;
-      document.getElementById('summaryAbsent').textContent = reports.filter(r => r.report_type === '客戶不在').length;
+      document.getElementById('summaryAddress').textContent = reports.filter(r => r.report_type === '地址有誤').length;
       document.getElementById('summaryDevice').textContent = reports.filter(r => r.report_type === '設備異常').length;
       document.getElementById('summaryTraffic').textContent = reports.filter(r => r.report_type === '交通延誤').length;
     }
@@ -536,7 +549,7 @@
     function openEdit(report) {
       const panel = document.getElementById('editPanel');
       document.getElementById('editId').value = report.id || '';
-      document.getElementById('editType').value = report.report_type || '其他';
+      document.getElementById('editType').value = Array.from(document.getElementById('editType').options).some(opt => opt.value === (report.report_type || '')) ? report.report_type : '其他';
       document.getElementById('editStopSeq').value = report.stop_seq || 0;
       document.getElementById('editContent').value = report.content || '';
       panel.style.display = 'block';
@@ -546,7 +559,7 @@
     function cancelEdit() {
       document.getElementById('editPanel').style.display = 'none';
       document.getElementById('editId').value = '';
-      document.getElementById('editType').value = '客戶不在';
+      document.getElementById('editType').value = '地址有誤';
       document.getElementById('editStopSeq').value = '';
       document.getElementById('editContent').value = '';
     }
