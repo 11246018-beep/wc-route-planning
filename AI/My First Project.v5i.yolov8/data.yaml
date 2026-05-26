@@ -1,0 +1,13 @@
+train: ../train/images
+val: ../valid/images
+test: ../test/images
+
+nc: 3
+names: ['dirty_area', 'garbage', 'overflow_bin']
+
+roboflow:
+  workspace: s-workspace-aqcsv
+  project: my-first-project-bewda
+  version: 5
+  license: CC BY 4.0
+  url: https://universe.roboflow.com/s-workspace-aqcsv/my-first-project-bewda/dataset/5
