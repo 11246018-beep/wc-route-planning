@@ -2,6 +2,8 @@ from pathlib import Path
 import json
 import subprocess
 import sys
+import threading
+from datetime import datetime
 
 from django.core.paginator import Paginator
 from django.db.models import Q
@@ -113,6 +115,29 @@ VARIANT_FILES = {
     "cross": "routes_cross.json",
     "compact": "routes_compact.json",
 }
+
+# 背景排程狀態：home.html 會輪詢 /api/run/status/
+RUN_STATUS = {
+    "running": False,
+    "finished": True,
+    "success": True,
+    "variant": None,
+    "message": "尚未開始排程",
+    "started_at": None,
+    "finished_at": None,
+    "run_meta": None,
+}
+RUN_LOCK = threading.Lock()
+
+
+def set_run_status(**kwargs):
+    with RUN_LOCK:
+        RUN_STATUS.update(kwargs)
+
+
+def get_run_status_snapshot():
+    with RUN_LOCK:
+        return dict(RUN_STATUS)
 
 
 def to_float(value):
@@ -394,13 +419,21 @@ def home(request):
     )
 
 
-def run_scheduler(request):
-    variant = request.GET.get("variant", "normal")
-    if variant not in VARIANT_LABELS:
-        variant = "normal"
+def _run_scheduler_background(variant):
+    """在背景執行 run_all.py，避免 Cloudflare / 瀏覽器等到逾時。"""
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    log_path = OUTPUT_DIR / "run_all_last.log"
 
-    response_format = (request.GET.get("format") or "").strip().lower()
-    wants_json = response_format == "json"
+    set_run_status(
+        running=True,
+        finished=False,
+        success=False,
+        variant=variant,
+        message="正在重新計算最佳路徑...",
+        started_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        finished_at=None,
+        run_meta=None,
+    )
 
     try:
         result = subprocess.run(
@@ -413,7 +446,6 @@ def run_scheduler(request):
             timeout=600,
         )
 
-        log_path = OUTPUT_DIR / "run_all_last.log"
         log_text = []
         log_text.append(f"Return code: {result.returncode}\n")
         log_text.append("\n=== STDOUT ===\n")
@@ -424,46 +456,106 @@ def run_scheduler(request):
 
         if result.returncode == 0:
             run_meta = extract_variant_run_meta(variant)
-            if wants_json:
-                return JsonResponse(
-                    {
-                        "ok": True,
-                        "variant": variant,
-                        "label": VARIANT_LABELS.get(variant, variant),
-                        "run_meta": run_meta,
-                        "message": run_meta.get("message") or "排程已重新執行完成。",
-                    }
-                )
-            return redirect(f"/home/?variant={variant}&run=success")
-
-        if wants_json:
-            return JsonResponse(
-                {
-                    "ok": False,
-                    "variant": variant,
-                    "label": VARIANT_LABELS.get(variant, variant),
-                    "message": "排程執行失敗，請檢查 output/run_all_last.log。",
-                },
-                status=500,
+            set_run_status(
+                running=False,
+                finished=True,
+                success=True,
+                variant=variant,
+                message=run_meta.get("message") or "排程已重新執行完成。",
+                finished_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                run_meta=run_meta,
             )
-        return redirect(f"/home/?variant={variant}&run=failed")
+        else:
+            set_run_status(
+                running=False,
+                finished=True,
+                success=False,
+                variant=variant,
+                message="排程執行失敗，請檢查 output/run_all_last.log。",
+                finished_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                run_meta=None,
+            )
 
     except Exception as e:
-        (OUTPUT_DIR / "run_all_last.log").write_text(
+        log_path.write_text(
             f"Exception while running scheduler:\n{e}",
             encoding="utf-8",
         )
-        if wants_json:
-            return JsonResponse(
-                {
-                    "ok": False,
-                    "variant": variant,
-                    "label": VARIANT_LABELS.get(variant, variant),
-                    "message": f"排程執行失敗：{e}",
-                },
-                status=500,
-            )
-        return redirect(f"/home/?variant={variant}&run=failed")
+        set_run_status(
+            running=False,
+            finished=True,
+            success=False,
+            variant=variant,
+            message=f"排程執行失敗：{e}",
+            finished_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            run_meta=None,
+        )
+
+
+def run_scheduler(request):
+    variant = request.GET.get("variant", "normal")
+    if variant not in VARIANT_LABELS:
+        variant = "normal"
+
+    response_format = (request.GET.get("format") or "").strip().lower()
+    wants_json = response_format == "json"
+
+    # JSON 模式：給前端按鈕使用，只啟動背景工作，不在這個 request 內等 10 分鐘。
+    if wants_json:
+        status = get_run_status_snapshot()
+        if status.get("running"):
+            return JsonResponse({
+                "ok": True,
+                "started": False,
+                "running": True,
+                "variant": status.get("variant") or variant,
+                "label": VARIANT_LABELS.get(status.get("variant") or variant, variant),
+                "message": "排程已在背景執行中，請稍候...",
+            })
+
+        worker = threading.Thread(
+            target=_run_scheduler_background,
+            args=(variant,),
+            daemon=True,
+        )
+        worker.start()
+
+        return JsonResponse({
+            "ok": True,
+            "started": True,
+            "running": True,
+            "variant": variant,
+            "label": VARIANT_LABELS.get(variant, variant),
+            "message": "已開始背景重新計算。",
+        })
+
+    # 非 JSON 模式：保留原本 /run/ 直接導頁行為，避免舊連結壞掉。
+    _run_scheduler_background(variant)
+    status = get_run_status_snapshot()
+    if status.get("success"):
+        return redirect(f"/home/?variant={variant}&run=success")
+    return redirect(f"/home/?variant={variant}&run=failed")
+
+
+def api_run_status(request):
+    variant = request.GET.get("variant", "normal")
+    if variant not in VARIANT_LABELS:
+        variant = "normal"
+
+    status = get_run_status_snapshot()
+
+    return JsonResponse({
+        "ok": True,
+        "running": bool(status.get("running")),
+        "finished": bool(status.get("finished")),
+        "success": bool(status.get("success")),
+        "variant": status.get("variant") or variant,
+        "label": VARIANT_LABELS.get(status.get("variant") or variant, variant),
+        "message": status.get("message") or "",
+        "started_at": status.get("started_at"),
+        "finished_at": status.get("finished_at"),
+        "run_meta": status.get("run_meta"),
+    })
 
 def api_route_options(request):
     variant = request.GET.get("variant", "normal")

@@ -41,3 +41,19 @@ class Driver(models.Model):
 
     def __str__(self):
         return self.driver_code
+
+class CleaningRecord(models.Model):
+    id = models.BigAutoField(primary_key=True)
+    driver = models.ForeignKey(Driver, on_delete=models.CASCADE)
+
+    image = models.ImageField(upload_to="cleaning_images/")
+    score = models.IntegerField(null=True, blank=True)
+    status = models.CharField(max_length=50, null=True, blank=True)
+
+    created_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        db_table = "cleaning_records"
+
+    def __str__(self):
+        return f"{self.driver.driver_code} - {self.created_at}"
