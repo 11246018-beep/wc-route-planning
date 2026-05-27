@@ -515,6 +515,66 @@
       word-break: break-word;
     }
 
+
+
+    .mini-table-scroll {
+      max-height: 260px;
+      overflow-y: auto;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: white;
+    }
+
+    .mini-table-scroll .mini-table {
+      border-radius: 0;
+    }
+
+    .mini-table-scroll .mini-table thead th {
+      position: sticky;
+      top: 0;
+      z-index: 1;
+    }
+
+    .records-table-scroll {
+      max-height: 520px;
+      overflow: auto;
+      border-top: 1px solid #e5e7eb;
+      background: white;
+    }
+
+    .records-table-scroll .records-table thead th {
+      position: sticky;
+      top: 0;
+      z-index: 2;
+    }
+
+    .table-actions {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+
+    .delete-btn {
+      border: none;
+      background: #fee2e2;
+      color: #b91c1c;
+      border-radius: 10px;
+      padding: 8px 12px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    .delete-btn:hover {
+      background: #fecaca;
+    }
+
+    .delete-btn:disabled,
+    .thumbnail-btn:disabled {
+      cursor: not-allowed;
+      opacity: 0.55;
+    }
+
     @media (max-width: 1350px) {
       .summary-grid {
         grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -647,17 +707,20 @@
         <div class="card-note">
           系統分析各點位最近三次清潔前紀錄，若連續三次皆判定為使用量偏高，則列入以下建議增設名單。
         </div>
-        <table class="mini-table">
-          <thead>
-          <tr>
-            <th>點位</th>
-            <th>最近觀測時間</th>
-          </tr>
-        </thead>
-          <tbody id="riskAreaBody">
-            <tr><td colspan="2" class="empty-box">載入中...</td></tr>
-          </tbody>
-        </table>
+        <div class="mini-table-scroll">
+          <table class="mini-table">
+            <thead>
+            <tr>
+              <th>點位</th>
+              <th>最近觀測時間</th>
+              <th>操作</th>
+            </tr>
+          </thead>
+            <tbody id="riskAreaBody">
+              <tr><td colspan="3" class="empty-box">載入中...</td></tr>
+            </tbody>
+          </table>
+        </div>
       </div>
 
       <div class="analysis-card">
@@ -665,19 +728,21 @@
         <div class="card-note">
           統計清潔後照片，快速看出每位司機清掃完成後的整體合格表現。
         </div>
-        <table class="mini-table">
-          <thead>
-            <tr>
-              <th>司機</th>
-              <th>清潔後筆數</th>
-              <th>合格筆數</th>
-              <th>合格率</th>
-            </tr>
-          </thead>
-          <tbody id="driverRateBody">
-            <tr><td colspan="4" class="empty-box">載入中...</td></tr>
-          </tbody>
-        </table>
+        <div class="mini-table-scroll">
+          <table class="mini-table">
+            <thead>
+              <tr>
+                <th>司機</th>
+                <th>清潔後筆數</th>
+                <th>合格筆數</th>
+                <th>合格率</th>
+              </tr>
+            </thead>
+            <tbody id="driverRateBody">
+              <tr><td colspan="4" class="empty-box">載入中...</td></tr>
+            </tbody>
+          </table>
+        </div>
       </div>
     </section>
 
@@ -694,21 +759,24 @@
         </button>
       </div>
 
-      <table class="records-table">
-        <thead>
-          <tr>
-            <th>司機</th>
-            <th>日期</th>
-            <th>點位</th>
-            <th>清潔前狀況</th>
-            <th>清潔後判定</th>
-            <th>詳細</th>
-          </tr>
-        </thead>
-        <tbody id="tableBody">
-          <tr><td colspan="6" class="empty-box">載入中...</td></tr>
-        </tbody>
-      </table>
+      <div class="records-table-scroll">
+        <table class="records-table">
+          <thead>
+            <tr>
+              <th>司機</th>
+              <th>日期</th>
+              <th>點位</th>
+              <th>清潔前狀況</th>
+              <th>清潔後判定</th>
+              <th>詳細</th>
+              <th>操作</th>
+            </tr>
+          </thead>
+          <tbody id="tableBody">
+            <tr><td colspan="7" class="empty-box">載入中...</td></tr>
+          </tbody>
+        </table>
+      </div>
     </section>
   </main>
 
@@ -813,6 +881,7 @@
 
     function normalizeRecord(raw) {
       return {
+        id: raw.id ?? raw.photo_id ?? raw.record_id ?? '',
         driver_code: raw.driver_code ?? '-',
         created_at: getRecordTime(raw),
         stop_address: getRecordAddress(raw),
@@ -868,7 +937,7 @@
 
       tbody.innerHTML = `
         <tr>
-          <td colspan="2" class="empty-box">
+          <td colspan="3" class="empty-box">
             載入中...
           </td>
         </tr>
@@ -882,7 +951,7 @@
         if (!res.ok || !data.ok) {
           tbody.innerHTML = `
             <tr>
-              <td colspan="2" class="empty-box">
+              <td colspan="3" class="empty-box">
                 讀取失敗
               </td>
             </tr>
@@ -895,7 +964,7 @@
         if (!records.length) {
           tbody.innerHTML = `
             <tr>
-              <td colspan="2" class="empty-box">
+              <td colspan="3" class="empty-box">
                 目前沒有需新增點位的區域
               </td>
             </tr>
@@ -903,19 +972,30 @@
           return;
         }
 
-        tbody.innerHTML = records.map(item => `
-          <tr>
-            <td>${escapeHtml(item.address)}</td>
-
-            <td>${escapeHtml(item.latest_time || '-')}</td>
-          </tr>
-        `).join('');
+        tbody.innerHTML = records.map(item => {
+          const ids = Array.isArray(item.ids) ? item.ids.join(',') : '';
+          return `
+            <tr>
+              <td>${escapeHtml(item.address)}</td>
+              <td>${escapeHtml(item.latest_time || '-')}</td>
+              <td>
+                <button
+                  type="button"
+                  class="delete-btn"
+                  data-delete-risk="1"
+                  data-risk-address="${escapeHtml(item.address)}"
+                  data-risk-ids="${escapeHtml(ids)}"
+                >刪除</button>
+              </td>
+            </tr>
+          `;
+        }).join('');
 
       } catch (err) {
 
         tbody.innerHTML = `
           <tr>
-            <td colspan="2" class="empty-box">
+            <td colspan="3" class="empty-box">
               連線失敗
             </td>
           </tr>
@@ -1087,7 +1167,7 @@ function renderTable(records) {
   const tbody = document.getElementById('tableBody');
 
   if (!records.length) {
-    tbody.innerHTML = `<tr><td colspan="6" class="empty-box">查無資料</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="7" class="empty-box">查無資料</td></tr>`;
     return;
   }
 
@@ -1104,7 +1184,12 @@ function renderTable(records) {
         stop_address: record.stop_address || '-',
         before: null,
         after: null,
+        record_ids: [],
       };
+    }
+
+    if (record.id) {
+      grouped[key].record_ids.push(record.id);
     }
 
     if (record.photo_type === 'before' || record.photo_type === '前') {
@@ -1117,7 +1202,7 @@ function renderTable(records) {
   const rows = Object.values(grouped);
 
   if (!rows.length) {
-    tbody.innerHTML = `<tr><td colspan="6" class="empty-box">查無可整理的流程資料</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="7" class="empty-box">查無可整理的流程資料</td></tr>`;
     return;
   }
 
@@ -1139,6 +1224,16 @@ function renderTable(records) {
             onclick="showFlowModal('${row.driver_code}', '${row.date}', '${row.stop_address}')"
           >
             查看
+          </button>
+        </td>
+        <td>
+          <button
+            type="button"
+            class="delete-btn"
+            data-delete-records="1"
+            data-record-ids="${escapeHtml(row.record_ids.join(','))}"
+          >
+            刪除
           </button>
         </td>
       </tr>
@@ -1229,8 +1324,8 @@ function renderTable(records) {
       const riskAreaBody = document.getElementById('riskAreaBody');
       const driverRateBody = document.getElementById('driverRateBody');
 
-      tbody.innerHTML = `<tr><td colspan="6" class="empty-box">載入中...</td></tr>`;
-      riskAreaBody.innerHTML = `<tr><td colspan="2" class="empty-box">載入中...</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="7" class="empty-box">載入中...</td></tr>`;
+      riskAreaBody.innerHTML = `<tr><td colspan="3" class="empty-box">載入中...</td></tr>`;
       driverRateBody.innerHTML = `<tr><td colspan="4" class="empty-box">載入中...</td></tr>`;
 
       try {
@@ -1238,8 +1333,8 @@ function renderTable(records) {
         const data = await res.json();
 
         if (!res.ok || !data.ok) {
-          tbody.innerHTML = `<tr><td colspan="6" class="empty-box">讀取失敗：${escapeHtml(data.message || '未知錯誤')}</td></tr>`;
-          riskAreaBody.innerHTML = `<tr><td colspan="2" class="empty-box">讀取失敗</td></tr>`;
+          tbody.innerHTML = `<tr><td colspan="7" class="empty-box">讀取失敗：${escapeHtml(data.message || '未知錯誤')}</td></tr>`;
+          riskAreaBody.innerHTML = `<tr><td colspan="3" class="empty-box">讀取失敗</td></tr>`;
           driverRateBody.innerHTML = `<tr><td colspan="4" class="empty-box">讀取失敗</td></tr>`;
           return;
         }
@@ -1253,11 +1348,88 @@ function renderTable(records) {
         renderTable(records);
         updateLastUpdateTime();
       } catch (err) {
-        tbody.innerHTML = `<tr><td colspan="6" class="empty-box">連線失敗：${escapeHtml(err)}</td></tr>`;
-        riskAreaBody.innerHTML = `<tr><td colspan="2" class="empty-box">連線失敗</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="7" class="empty-box">連線失敗：${escapeHtml(err)}</td></tr>`;
+        riskAreaBody.innerHTML = `<tr><td colspan="3" class="empty-box">連線失敗</td></tr>`;
         driverRateBody.innerHTML = `<tr><td colspan="4" class="empty-box">連線失敗</td></tr>`;
       }
     }
+
+
+
+    async function postJson(url, payload) {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(payload || {})
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data.ok === false) {
+        throw new Error(data.message || '刪除失敗');
+      }
+      return data;
+    }
+
+    async function deleteCleaningRecords(idsText) {
+      const ids = String(idsText || '')
+        .split(',')
+        .map(v => v.trim())
+        .filter(Boolean);
+
+      if (!ids.length) {
+        alert('這筆資料缺少紀錄 ID，無法刪除。');
+        return;
+      }
+
+      if (!confirm(`確定要刪除這組清掃紀錄嗎？共 ${ids.length} 筆照片紀錄。`)) {
+        return;
+      }
+
+      try {
+        await postJson('/api/admin/cleaning-record/delete/', { ids });
+        await loadRecords();
+      } catch (err) {
+        alert(err.message || err);
+      }
+    }
+
+    async function deleteRiskArea(address, idsText) {
+      const ids = String(idsText || '')
+        .split(',')
+        .map(v => v.trim())
+        .filter(Boolean);
+
+      if (!address && !ids.length) {
+        alert('這筆分析資料缺少點位資訊，無法刪除。');
+        return;
+      }
+
+      const label = address || ids.join(', ');
+      if (!confirm(`確定要刪除「${label}」的新增點位分析紀錄嗎？\n系統會移除造成此分析結果的清潔前觀測紀錄。`)) {
+        return;
+      }
+
+      try {
+        await postJson('/api/toilet-demand-analysis/delete/', { address, ids });
+        await loadRecords();
+      } catch (err) {
+        alert(err.message || err);
+      }
+    }
+
+    document.addEventListener('click', function(event) {
+      const riskButton = event.target.closest('[data-delete-risk]');
+      if (riskButton) {
+        deleteRiskArea(riskButton.dataset.riskAddress || '', riskButton.dataset.riskIds || '');
+        return;
+      }
+
+      const recordButton = event.target.closest('[data-delete-records]');
+      if (recordButton) {
+        deleteCleaningRecords(recordButton.dataset.recordIds || '');
+      }
+    });
 
     document.getElementById('driverCodeInput').addEventListener('keydown', function(event) {
       if (event.key === 'Enter') {

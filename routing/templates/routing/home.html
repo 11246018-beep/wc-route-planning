@@ -338,6 +338,76 @@
       max-height: 300px;
     }
 
+    .progress-wrap {
+      margin-top: 10px;
+      display: none;
+    }
+    .progress-track {
+      width: 100%;
+      height: 10px;
+      background: #e5e7eb;
+      border-radius: 999px;
+      overflow: hidden;
+      border: 1px solid #dbeafe;
+    }
+    .progress-bar {
+      width: 0%;
+      height: 100%;
+      background: linear-gradient(90deg, #2563eb, #22c55e);
+      border-radius: 999px;
+      transition: width 0.35s ease;
+    }
+    .progress-meta {
+      margin-top: 6px;
+      font-size: 12px;
+      color: #64748b;
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+    }
+    .point-search-row {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+    .point-search-input {
+      flex: 1;
+      min-width: 0;
+      border: 1px solid #cbd5e1;
+      border-radius: 10px;
+      padding: 9px 10px;
+      font-size: 13px;
+      outline: none;
+      background: white;
+    }
+    .point-search-results {
+      margin-top: 10px;
+      max-height: 230px;
+      overflow-y: auto;
+      overflow-x: hidden;
+      padding-right: 4px;
+    }
+    .point-result-card {
+      background: #ffffff;
+      border: 1px solid #dbeafe;
+      border-radius: 12px;
+      padding: 10px;
+      margin-bottom: 8px;
+      word-break: break-word;
+      box-shadow: 0 4px 12px rgba(15, 23, 42, 0.06);
+    }
+    .route-switch-btn {
+      margin-top: 8px;
+      width: 100%;
+      border: none;
+      border-radius: 10px;
+      padding: 8px 10px;
+      font-weight: 800;
+      cursor: pointer;
+      background: #2563eb;
+      color: white;
+    }
+
     .mini-text {
       color: #64748b;
       font-size: 13px;
@@ -603,6 +673,22 @@
       <div class="mini-text" style="margin-top:8px;">
         修改點位資料後，按這顆按鈕重新計算最新路線。
       </div>
+      <div id="runProgressWrap" class="progress-wrap">
+        <div class="progress-track"><div id="runProgressBar" class="progress-bar"></div></div>
+        <div class="progress-meta">
+          <span id="runProgressText">準備中...</span>
+          <span id="runElapsedText">0 秒</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="float-block">
+      <div style="font-weight:800; color:#0f172a; margin-bottom:8px;">搜尋點位排在哪裡</div>
+      <div class="point-search-row">
+        <input id="pointSearchInput" class="point-search-input" type="text" placeholder="輸入 ID / 名稱 / 地址 / N_0001" />
+        <button id="btnPointSearch" class="action-btn gray" type="button" style="width:auto; padding:9px 12px;">查詢</button>
+      </div>
+      <div id="pointSearchResults" class="point-search-results mini-text">輸入點位資訊後，可查詢它排在哪位司機、哪一天、第幾站。</div>
     </div>
 
     <div class="float-block">
@@ -666,6 +752,13 @@ const currentDayTextEl = document.getElementById("currentDayText");
 const prevDayEl = document.getElementById("prevDay");
 const nextDayEl = document.getElementById("nextDay");
 const btnRunSchedulerEl = document.getElementById("btnRunScheduler");
+const runProgressWrapEl = document.getElementById("runProgressWrap");
+const runProgressBarEl = document.getElementById("runProgressBar");
+const runProgressTextEl = document.getElementById("runProgressText");
+const runElapsedTextEl = document.getElementById("runElapsedText");
+const pointSearchInputEl = document.getElementById("pointSearchInput");
+const btnPointSearchEl = document.getElementById("btnPointSearch");
+const pointSearchResultsEl = document.getElementById("pointSearchResults");
 const toggleAllPointsEl = document.getElementById("toggleAllPoints");
 const allPointsStatusEl = document.getElementById("allPointsStatus");
 const noticeEl = document.getElementById("jsNotice");
@@ -1158,8 +1251,8 @@ async function loadVariant(variant, preservedDriver=null, preservedDay=null) {
     populateSelect(driverSelEl, driverItems, selectedDriver);
 
     const days = data.days_by_driver?.[selectedDriver] || [];
-    if (preservedDay && days.includes(preservedDay)) {
-      state.currentDayIndex = days.indexOf(preservedDay);
+    if (preservedDay && days.some(d => String(d) === String(preservedDay))) {
+      state.currentDayIndex = days.findIndex(d => String(d) === String(preservedDay));
     } else {
       state.currentDayIndex = 0;
     }
@@ -1175,6 +1268,71 @@ async function loadVariant(variant, preservedDriver=null, preservedDay=null) {
     clearMapAndSummary();
     setNotice(err.warning || err.message || "載入路線清單失敗。", "err");
   }
+}
+
+function setRunProgress(progress=0, text="", elapsedSec=0, visible=true) {
+  if (!runProgressWrapEl) return;
+  runProgressWrapEl.style.display = visible ? "block" : "none";
+  const pct = Math.max(0, Math.min(100, Number(progress) || 0));
+  if (runProgressBarEl) runProgressBarEl.style.width = `${pct}%`;
+  if (runProgressTextEl) runProgressTextEl.textContent = text || `${pct}%`;
+  if (runElapsedTextEl) runElapsedTextEl.textContent = `${Math.max(0, Number(elapsedSec) || 0)} 秒`;
+}
+
+function renderPointSearchResults(data) {
+  if (!pointSearchResultsEl) return;
+  const results = data.results || [];
+  if (!results.length) {
+    const msg = data.message || "目前路線檔中查不到這個點位。";
+    const db = data.database_point;
+    pointSearchResultsEl.innerHTML = `
+      <div class="point-result-card">
+        <div style="font-weight:800; color:#b45309; margin-bottom:4px;">查不到排程位置</div>
+        <div>${escapeHtml(msg)}</div>
+        ${db ? `<div style="margin-top:6px;">資料庫點位：${escapeHtml(db.id)}｜${escapeHtml(db.client_name || "未命名")}</div><div>${escapeHtml(db.address || "")}</div>` : ""}
+      </div>
+    `;
+    return;
+  }
+
+  pointSearchResultsEl.innerHTML = results.map(item => `
+    <div class="point-result-card">
+      <div style="font-weight:900; color:#0f172a; margin-bottom:4px;">${escapeHtml(item.driver_label || item.driver || "-")}</div>
+      <div>天數 / 站序：<strong>第 ${escapeHtml(item.day)} 天，第 ${escapeHtml(item.seq)} 站</strong></div>
+      <div>任務 / 節點：${escapeHtml(item.task_id || "-")} / ${escapeHtml(item.node_id || "-")}</div>
+      <div>地址：${escapeHtml(item.address || "-")}</div>
+      <button type="button" class="route-switch-btn" data-driver="${escapeHtml(item.driver || "")}" data-day="${escapeHtml(item.day || "")}">切到這條路線</button>
+    </div>
+  `).join("");
+}
+
+async function searchPointRoute() {
+  const q = (pointSearchInputEl?.value || "").trim();
+  if (!q) {
+    pointSearchResultsEl.innerHTML = "請先輸入點位 ID、名稱、地址、task_id 或 node_id。";
+    return;
+  }
+  btnPointSearchEl.disabled = true;
+  pointSearchResultsEl.innerHTML = "查詢中...";
+  try {
+    const data = await fetchJsonSafe(`/api/routes/search-point/?variant=${encodeURIComponent(state.variant)}&q=${encodeURIComponent(q)}`);
+    renderPointSearchResults(data);
+  } catch (err) {
+    pointSearchResultsEl.innerHTML = `<div class="point-result-card" style="border-color:#fecaca;color:#991b1b;">查詢失敗：${escapeHtml(err.message || err)}</div>`;
+  } finally {
+    btnPointSearchEl.disabled = false;
+  }
+}
+
+async function switchToSearchedRoute(driver, day) {
+  if (!driver || !day) return;
+  driverSelEl.value = driver;
+  const days = getCurrentDays();
+  const idx = days.findIndex(d => String(d) === String(day));
+  state.currentDayIndex = idx >= 0 ? idx : 0;
+  updateDayUI();
+  await renderRoute();
+  showToast(`已切到 ${driver} 第 ${day} 天`, 1800);
 }
 
 function delay(ms) {
@@ -1208,11 +1366,14 @@ async function pollSchedulerUntilFinished(preservedDriver, preservedDay) {
       credentials: "same-origin"
     });
 
+    setRunProgress(status.progress || 0, status.message || "正在重新計算...", status.elapsed_sec || 0, true);
+
     if (status.finished) {
       if (!status.success) {
         throw new Error(status.message || "排程執行失敗，請檢查 run_all_last.log");
       }
 
+      setRunProgress(100, "排程完成，正在更新地圖...", status.elapsed_sec || 0, true);
       state.latestRunMeta = status.run_meta || null;
       await loadVariant(state.variant, preservedDriver, preservedDay);
 
@@ -1251,6 +1412,7 @@ async function recalculateRoutes() {
   btnRunSchedulerEl.innerHTML = '<i data-lucide="loader-circle"></i> 背景排程中，請稍候...';
   lucide.createIcons();
   setNotice("正在重新計算最佳路徑，系統會在背景執行並自動更新畫面。", "warn");
+  setRunProgress(3, "準備啟動排程...", 0, true);
 
   try {
     const startData = await fetchJsonSafe(`/run/?variant=${encodeURIComponent(state.variant)}&format=json`, {
@@ -1316,6 +1478,19 @@ function bindEvents() {
   });
 
   btnRunSchedulerEl.addEventListener("click", recalculateRoutes);
+  if (btnPointSearchEl) btnPointSearchEl.addEventListener("click", searchPointRoute);
+  if (pointSearchInputEl) {
+    pointSearchInputEl.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") searchPointRoute();
+    });
+  }
+  if (pointSearchResultsEl) {
+    pointSearchResultsEl.addEventListener("click", async (e) => {
+      const btn = e.target.closest(".route-switch-btn");
+      if (!btn) return;
+      await switchToSearchedRoute(btn.dataset.driver, btn.dataset.day);
+    });
+  }
 
   btnDownloadUnassignedEl.addEventListener("click", () => {
     const exportKey = btnDownloadUnassignedEl.dataset.exportKey || "";
