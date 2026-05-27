@@ -43,6 +43,8 @@ import re  # 正則表達式處理
 from dataclasses import dataclass  # 資料類別定義
 from typing import List  # 型別標註
 from scipy.spatial import distance  # 空間距離計算
+from openpyxl import Workbook
+
 
 # ==========================================
 # 1. 全域參數設定 (Configuration)
@@ -174,6 +176,34 @@ REAL_ANCHORS = REAL_ANCHORS.rename(columns={'name': 'IC_Name', 'lat': 'Lat', 'lo
 # ==========================================
 # 2. 資料處理核心函式 (Data Processing Core)
 # ==========================================
+
+def generate_excel_tables(input_file, output_file="maintenance_output.xlsx"):
+
+    raw = pd.read_excel(input_file)
+    raw.columns = raw.columns.str.strip()
+
+    addr_col = EXCEL_COL_MAPPING["Address"]
+    floor_col = EXCEL_COL_MAPPING["floor"]
+
+    room_cols = [addr_col, floor_col]
+
+    raw["間數"] = raw.groupby(room_cols)[floor_col].transform("count")
+
+    merged_df = raw.copy()
+
+    week2_col = EXCEL_COL_MAPPING["Freq_2x"]
+
+    week2_df = merged_df[merged_df[week2_col].astype(str).isin(["1", "1.0"])]
+
+    with pd.ExcelWriter(output_file, engine="openpyxl") as writer:
+        merged_df.to_excel(writer, sheet_name="合併後資料", index=False)
+        week2_df.to_excel(writer, sheet_name="週清2", index=False)
+
+    print(f"✓ Excel 已產生：{output_file}")
+
+
+
+
 def load_and_process_data(file_path):
     """
     資料載入與處理主函式
@@ -297,13 +327,7 @@ def load_and_process_data(file_path):
         # 清理資料：
         # - replace('.0', '') 處理 Excel 常見的浮點數格式 (例如：1.0 -> 1)
         # - strip() 移除前後空白
-        f2_clean = (
-    raw_df.loc[df.index, EXCEL_COL_MAPPING['Freq_2x']]
-    .fillna('')
-    .astype(str)
-    .str.replace('.0', '', regex=False)
-    .str.strip()
-    )
+        f2_clean = f2_series.apply(lambda x: x.replace('.0', '').strip())
 
         # 定義無效值清單 (這些值代表「非 2x」)
         invalid_values = ['0', '', 'nan', 'NaN', 'None']
@@ -722,6 +746,7 @@ if __name__ == "__main__":
     # ═══════════════════════════════════════
     # 步驟 1：資料處理
     # ═══════════════════════════════════════
+    generate_excel_tables(input_path)
     df_nodes = load_and_process_data(input_path)
 
     # 驗證處理結果
