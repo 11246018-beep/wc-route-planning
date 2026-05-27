@@ -3,10 +3,11 @@ import json
 import subprocess
 import sys
 import threading
-from datetime import datetime
+import time
 
 from django.core.paginator import Paginator
 from django.db.models import Q
+from django.db import connection
 from django.http import JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
@@ -86,7 +87,9 @@ def toilet_demand_analysis_api(request):
                 result.append({
                     "address": address,
                     "status": "需求量偏高",
-                    "latest_time": latest_three[0].get("created_at")
+                    "latest_time": latest_three[0].get("created_at"),
+                    "ids": [str(r.get("id")) for r in latest_three if r.get("id") is not None],
+                    "count": len(latest_three)
                 })
 
         return JsonResponse({
@@ -99,6 +102,63 @@ def toilet_demand_analysis_api(request):
             "ok": False,
             "message": str(e)
         }, status=500)
+
+
+@csrf_exempt
+def toilet_demand_analysis_delete_api(request):
+    if request.method == "OPTIONS":
+        return JsonResponse({"ok": True})
+
+    if request.method != "POST":
+        return JsonResponse({"ok": False, "message": "只允許 POST"}, status=405)
+
+    try:
+        payload = json.loads(request.body.decode("utf-8") or "{}")
+    except Exception:
+        payload = {}
+
+    raw_ids = payload.get("ids") or []
+    if isinstance(raw_ids, str):
+        raw_ids = [raw_ids]
+    ids = [str(v).strip() for v in raw_ids if str(v).strip()]
+
+    address = str(payload.get("address") or "").strip()
+
+    if not ids and not address:
+        return JsonResponse({"ok": False, "message": "缺少要刪除的點位或紀錄 ID"}, status=400)
+
+    try:
+        with connection.cursor() as cursor:
+            if ids:
+                cursor.execute(
+                    "DELETE FROM uploaded_photos WHERE id::text = ANY(%s) RETURNING id",
+                    [ids],
+                )
+            else:
+                cursor.execute(
+                    """
+                    DELETE FROM uploaded_photos
+                    WHERE (stop_address = %s OR point_key = %s)
+                      AND (photo_type = 'before' OR photo_type = '前')
+                      AND (
+                        is_qualified = false
+                        OR review_status = '不合格'
+                        OR is_risk = true
+                      )
+                    RETURNING id
+                    """,
+                    [address, address],
+                )
+
+            deleted_rows = cursor.fetchall()
+
+        return JsonResponse({
+            "ok": True,
+            "deleted_count": len(deleted_rows),
+            "deleted_ids": [str(row[0]) for row in deleted_rows],
+        })
+    except Exception as e:
+        return JsonResponse({"ok": False, "message": str(e)}, status=500)
 
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -116,28 +176,119 @@ VARIANT_FILES = {
     "compact": "routes_compact.json",
 }
 
-# 背景排程狀態：home.html 會輪詢 /api/run/status/
-RUN_STATUS = {
+RUN_LOCK = threading.Lock()
+RUN_STATE = {
     "running": False,
-    "finished": True,
-    "success": True,
-    "variant": None,
-    "message": "尚未開始排程",
+    "finished": False,
+    "success": False,
+    "variant": "normal",
+    "message": "尚未開始重新計算。",
     "started_at": None,
-    "finished_at": None,
+    "ended_at": None,
+    "elapsed_sec": 0,
+    "progress": 0,
     "run_meta": None,
 }
-RUN_LOCK = threading.Lock()
 
 
-def set_run_status(**kwargs):
+def _safe_elapsed(started_at):
+    if not started_at:
+        return 0
+    return max(0, int(time.time() - started_at))
+
+
+def _set_run_state(**kwargs):
     with RUN_LOCK:
-        RUN_STATUS.update(kwargs)
+        RUN_STATE.update(kwargs)
 
 
-def get_run_status_snapshot():
+def _snapshot_run_state(variant="normal"):
     with RUN_LOCK:
-        return dict(RUN_STATUS)
+        data = dict(RUN_STATE)
+    elapsed = _safe_elapsed(data.get("started_at")) if data.get("running") else int(data.get("elapsed_sec") or 0)
+    if data.get("running"):
+        # run_all.py 目前沒有逐站回報，這裡用時間推估讓使用者知道系統仍在執行。
+        estimated = min(95, 8 + int(elapsed / 6))
+        progress = max(int(data.get("progress") or 0), estimated)
+    else:
+        progress = 100 if data.get("finished") and data.get("success") else int(data.get("progress") or 0)
+    data["elapsed_sec"] = elapsed
+    data["progress"] = progress
+    data["variant"] = data.get("variant") or variant
+    return data
+
+
+def _run_scheduler_background(variant):
+    _set_run_state(
+        running=True,
+        finished=False,
+        success=False,
+        variant=variant,
+        message="正在執行 run_all.py，請稍候。",
+        started_at=time.time(),
+        ended_at=None,
+        elapsed_sec=0,
+        progress=5,
+        run_meta=None,
+    )
+    try:
+        result = subprocess.run(
+            [sys.executable, "run_all.py"],
+            cwd=str(BASE_DIR),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="ignore",
+            timeout=3600,
+        )
+
+        log_path = OUTPUT_DIR / "run_all_last.log"
+        log_text = []
+        log_text.append(f"Return code: {result.returncode}\n")
+        log_text.append("\n=== STDOUT ===\n")
+        log_text.append(result.stdout or "")
+        log_text.append("\n\n=== STDERR ===\n")
+        log_text.append(result.stderr or "")
+        log_path.write_text("".join(log_text), encoding="utf-8")
+
+        if result.returncode == 0:
+            run_meta = extract_variant_run_meta(variant)
+            _set_run_state(
+                running=False,
+                finished=True,
+                success=True,
+                message=run_meta.get("message") or "排程已重新執行完成。",
+                ended_at=time.time(),
+                elapsed_sec=_safe_elapsed(RUN_STATE.get("started_at")),
+                progress=100,
+                run_meta=run_meta,
+            )
+        else:
+            _set_run_state(
+                running=False,
+                finished=True,
+                success=False,
+                message="排程執行失敗，請檢查 output/run_all_last.log。",
+                ended_at=time.time(),
+                elapsed_sec=_safe_elapsed(RUN_STATE.get("started_at")),
+                progress=100,
+                run_meta=None,
+            )
+    except Exception as e:
+        (OUTPUT_DIR / "run_all_last.log").write_text(
+            f"Exception while running scheduler:\n{e}",
+            encoding="utf-8",
+        )
+        _set_run_state(
+            running=False,
+            finished=True,
+            success=False,
+            message=f"排程執行失敗：{e}",
+            ended_at=time.time(),
+            elapsed_sec=_safe_elapsed(RUN_STATE.get("started_at")),
+            progress=100,
+            run_meta=None,
+        )
 
 
 def to_float(value):
@@ -257,6 +408,35 @@ def load_json(path: Path):
         return json.load(f)
 
 
+def get_current_service_point_count():
+    """回傳目前資料庫 service_points 的即時筆數，避免畫面沿用舊 JSON meta 的歷史最大值。"""
+    try:
+        return int(ServicePoint.objects.count())
+    except Exception:
+        return 0
+
+
+def normalize_route_meta(meta):
+    """把路線 JSON 的 meta 與目前資料庫點位數同步。
+
+    排程路線本身仍讀 JSON，不動演算法；這裡只修正首頁顯示的
+    total_db_points / scheduled_db_points，避免刪除點位後仍顯示曾經的最大筆數。
+    """
+    data = dict(meta or {})
+    current_total = get_current_service_point_count()
+    if current_total <= 0:
+        return data
+
+    unassigned = to_int(data.get("unassigned_db_points"), 0)
+    if unassigned < 0 or unassigned > current_total:
+        unassigned = 0
+
+    data["total_db_points"] = current_total
+    data["unassigned_db_points"] = unassigned
+    data["scheduled_db_points"] = max(current_total - unassigned, 0)
+    return data
+
+
 def load_variant_payload(variant):
     if variant not in VARIANT_LABELS:
         variant = "normal"
@@ -276,6 +456,7 @@ def load_variant_payload(variant):
     raw = load_json(file_path)
     routes = raw.get("routes", []) if isinstance(raw, dict) else []
     meta = raw.get("meta", {}) if isinstance(raw, dict) else {}
+    meta = normalize_route_meta(meta)
 
     return {
         "ok": True,
@@ -419,79 +600,6 @@ def home(request):
     )
 
 
-def _run_scheduler_background(variant):
-    """在背景執行 run_all.py，避免 Cloudflare / 瀏覽器等到逾時。"""
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    log_path = OUTPUT_DIR / "run_all_last.log"
-
-    set_run_status(
-        running=True,
-        finished=False,
-        success=False,
-        variant=variant,
-        message="正在重新計算最佳路徑...",
-        started_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        finished_at=None,
-        run_meta=None,
-    )
-
-    try:
-        result = subprocess.run(
-            [sys.executable, "run_all.py"],
-            cwd=str(BASE_DIR),
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="ignore",
-            timeout=600,
-        )
-
-        log_text = []
-        log_text.append(f"Return code: {result.returncode}\n")
-        log_text.append("\n=== STDOUT ===\n")
-        log_text.append(result.stdout or "")
-        log_text.append("\n\n=== STDERR ===\n")
-        log_text.append(result.stderr or "")
-        log_path.write_text("".join(log_text), encoding="utf-8")
-
-        if result.returncode == 0:
-            run_meta = extract_variant_run_meta(variant)
-            set_run_status(
-                running=False,
-                finished=True,
-                success=True,
-                variant=variant,
-                message=run_meta.get("message") or "排程已重新執行完成。",
-                finished_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                run_meta=run_meta,
-            )
-        else:
-            set_run_status(
-                running=False,
-                finished=True,
-                success=False,
-                variant=variant,
-                message="排程執行失敗，請檢查 output/run_all_last.log。",
-                finished_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                run_meta=None,
-            )
-
-    except Exception as e:
-        log_path.write_text(
-            f"Exception while running scheduler:\n{e}",
-            encoding="utf-8",
-        )
-        set_run_status(
-            running=False,
-            finished=True,
-            success=False,
-            variant=variant,
-            message=f"排程執行失敗：{e}",
-            finished_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            run_meta=None,
-        )
-
-
 def run_scheduler(request):
     variant = request.GET.get("variant", "normal")
     if variant not in VARIANT_LABELS:
@@ -500,61 +608,70 @@ def run_scheduler(request):
     response_format = (request.GET.get("format") or "").strip().lower()
     wants_json = response_format == "json"
 
-    # JSON 模式：給前端按鈕使用，只啟動背景工作，不在這個 request 內等 10 分鐘。
     if wants_json:
-        status = get_run_status_snapshot()
-        if status.get("running"):
+        snapshot = _snapshot_run_state(variant)
+        if snapshot.get("running"):
             return JsonResponse({
                 "ok": True,
                 "started": False,
                 "running": True,
-                "variant": status.get("variant") or variant,
-                "label": VARIANT_LABELS.get(status.get("variant") or variant, variant),
-                "message": "排程已在背景執行中，請稍候...",
+                "variant": snapshot.get("variant"),
+                "message": "排程已在執行中，請等待目前這次完成。",
             })
 
-        worker = threading.Thread(
-            target=_run_scheduler_background,
-            args=(variant,),
-            daemon=True,
-        )
-        worker.start()
-
+        thread = threading.Thread(target=_run_scheduler_background, args=(variant,), daemon=True)
+        thread.start()
         return JsonResponse({
             "ok": True,
             "started": True,
             "running": True,
             "variant": variant,
             "label": VARIANT_LABELS.get(variant, variant),
-            "message": "已開始背景重新計算。",
+            "message": "已開始背景重新計算，完成後會自動更新地圖。",
         })
 
-    # 非 JSON 模式：保留原本 /run/ 直接導頁行為，避免舊連結壞掉。
-    _run_scheduler_background(variant)
-    status = get_run_status_snapshot()
-    if status.get("success"):
-        return redirect(f"/home/?variant={variant}&run=success")
-    return redirect(f"/home/?variant={variant}&run=failed")
+    # 保留原本非 JSON 的按鈕/網址行為：同步執行後導回首頁。
+    try:
+        result = subprocess.run(
+            [sys.executable, "run_all.py"],
+            cwd=str(BASE_DIR),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="ignore",
+            timeout=3600,
+        )
+        log_path = OUTPUT_DIR / "run_all_last.log"
+        log_path.write_text(
+            f"Return code: {result.returncode}\n\n=== STDOUT ===\n{result.stdout or ''}\n\n=== STDERR ===\n{result.stderr or ''}",
+            encoding="utf-8",
+        )
+        if result.returncode == 0:
+            return redirect(f"/home/?variant={variant}&run=success")
+        return redirect(f"/home/?variant={variant}&run=failed")
+    except Exception as e:
+        (OUTPUT_DIR / "run_all_last.log").write_text(
+            f"Exception while running scheduler:\n{e}",
+            encoding="utf-8",
+        )
+        return redirect(f"/home/?variant={variant}&run=failed")
 
 
 def api_run_status(request):
     variant = request.GET.get("variant", "normal")
     if variant not in VARIANT_LABELS:
         variant = "normal"
-
-    status = get_run_status_snapshot()
-
+    data = _snapshot_run_state(variant)
     return JsonResponse({
         "ok": True,
-        "running": bool(status.get("running")),
-        "finished": bool(status.get("finished")),
-        "success": bool(status.get("success")),
-        "variant": status.get("variant") or variant,
-        "label": VARIANT_LABELS.get(status.get("variant") or variant, variant),
-        "message": status.get("message") or "",
-        "started_at": status.get("started_at"),
-        "finished_at": status.get("finished_at"),
-        "run_meta": status.get("run_meta"),
+        "variant": data.get("variant") or variant,
+        "running": bool(data.get("running")),
+        "finished": bool(data.get("finished")),
+        "success": bool(data.get("success")),
+        "message": data.get("message") or "",
+        "elapsed_sec": int(data.get("elapsed_sec") or 0),
+        "progress": int(data.get("progress") or 0),
+        "run_meta": data.get("run_meta"),
     })
 
 def api_route_options(request):
@@ -773,6 +890,136 @@ def api_old_route_detail(request):
             "route": route,
         }
     )
+
+
+def _norm_for_search(value):
+    return str(value or "").strip().lower()
+
+
+def _rough_same_coord(a, b):
+    try:
+        return abs(float(a) - float(b)) < 0.00008
+    except Exception:
+        return False
+
+
+def api_search_point_route(request):
+    variant = request.GET.get("variant", "normal")
+    q = clean_text(request.GET.get("q")) or ""
+    if not q:
+        return JsonResponse({"ok": False, "message": "請輸入點位 ID、名稱或地址。"}, status=400)
+
+    payload = load_variant_payload(variant)
+    if not payload.get("ok"):
+        return JsonResponse(payload, status=404)
+
+    q_norm = _norm_for_search(q)
+    db_point = None
+    db_candidates = []
+
+    if q.isdigit():
+        try:
+            db_point = ServicePoint.objects.filter(id=int(q)).first()
+        except Exception:
+            db_point = None
+
+    if db_point is None:
+        db_candidates = list(ServicePoint.objects.filter(
+            Q(client_name__icontains=q) | Q(address__icontains=q) | Q(order_id__icontains=q)
+        )[:5])
+    else:
+        db_candidates = [db_point]
+
+    results = []
+    seen = set()
+
+    def add_result(route, stop, matched_by="route"):
+        key = (route.get("driver"), route.get("day"), stop.get("seq"), stop.get("task_id"), stop.get("node_id"))
+        if key in seen:
+            return
+        seen.add(key)
+        results.append({
+            "driver": route.get("driver"),
+            "driver_label": route.get("driver_label") or driver_label(route.get("driver")),
+            "day": to_int(route.get("day"), 0),
+            "seq": to_int(stop.get("seq"), 0),
+            "task_id": stop.get("task_id"),
+            "node_id": stop.get("node_id"),
+            "address": stop.get("address"),
+            "county": stop.get("county"),
+            "lat": stop.get("lat"),
+            "lon": stop.get("lon"),
+            "service_min": stop.get("service_min"),
+            "matched_by": matched_by,
+        })
+
+    # 1) 直接查路線檔中的 task/node/address
+    for route in payload.get("routes", []):
+        for stop in route.get("stops", []) or []:
+            fields = [
+                stop.get("task_id"), stop.get("node_id"), stop.get("id"), stop.get("db_id"),
+                stop.get("original_id"), stop.get("order_id"), stop.get("address"), stop.get("county"),
+            ]
+            hay = " ".join(_norm_for_search(x) for x in fields if x is not None)
+            if q_norm and q_norm in hay:
+                add_result(route, stop, "route_text")
+
+    # 2) 如果輸入的是資料庫 ID / 名稱 / 地址，用 DB 內容對照地址或座標
+    for point in db_candidates:
+        p_address = _norm_for_search(getattr(point, "address", ""))
+        p_name = _norm_for_search(getattr(point, "client_name", ""))
+        p_order = _norm_for_search(getattr(point, "order_id", ""))
+        p_lat = getattr(point, "lat", None)
+        p_lon = getattr(point, "lon", None)
+
+        for route in payload.get("routes", []):
+            for stop in route.get("stops", []) or []:
+                s_address = _norm_for_search(stop.get("address"))
+                same_addr = bool(p_address and s_address and (p_address == s_address or p_address in s_address or s_address in p_address))
+                same_coord = _rough_same_coord(p_lat, stop.get("lat")) and _rough_same_coord(p_lon, stop.get("lon"))
+                text_hit = (p_name and p_name in _norm_for_search(stop.get("node_id"))) or (p_order and p_order in _norm_for_search(stop.get("task_id")))
+                if same_addr or same_coord or text_hit:
+                    add_result(route, stop, "database_match")
+
+    if results:
+        results.sort(key=lambda r: (str(r.get("driver") or ""), int(r.get("day") or 0), int(r.get("seq") or 0)))
+        return JsonResponse({
+            "ok": True,
+            "query": q,
+            "variant": payload.get("variant"),
+            "label": payload.get("label"),
+            "count": len(results),
+            "results": results[:50],
+        })
+
+    if db_candidates:
+        p = db_candidates[0]
+        return JsonResponse({
+            "ok": True,
+            "query": q,
+            "variant": payload.get("variant"),
+            "label": payload.get("label"),
+            "count": 0,
+            "results": [],
+            "message": f"資料庫有此點位，但目前 {payload.get('file_used') or '路線檔'} 找不到它的排程位置。請確認已重新計算，且排程演算法有排入此點。",
+            "database_point": {
+                "id": getattr(p, "id", None),
+                "client_name": getattr(p, "client_name", ""),
+                "address": getattr(p, "address", ""),
+                "lat": getattr(p, "lat", None),
+                "lon": getattr(p, "lon", None),
+            }
+        })
+
+    return JsonResponse({
+        "ok": True,
+        "query": q,
+        "variant": payload.get("variant"),
+        "label": payload.get("label"),
+        "count": 0,
+        "results": [],
+        "message": "找不到符合的點位。可以輸入資料庫 ID、點位名稱、地址、task_id 或 node_id。",
+    })
 
 
 def api_points_page(request):

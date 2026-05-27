@@ -412,6 +412,7 @@ def admin_cleaning_records_api(request):
 
     sql = """
         SELECT
+            id,
             driver_code,
             photo_type,
             public_url,
@@ -456,12 +457,13 @@ def admin_cleaning_records_api(request):
     records = []
 
     for row in rows:
-        driver_code = row[0]
-        photo_type = row[1]
-        public_url = row[2]
-        is_qualified = row[3]
-        review_status = row[4]
-        is_risk = row[5]
+        record_id = row[0]
+        driver_code = row[1]
+        photo_type = row[2]
+        public_url = row[3]
+        is_qualified = row[4]
+        review_status = row[5]
+        is_risk = row[6]
 
         # 狀態統一
         if photo_type == "after":
@@ -475,6 +477,7 @@ def admin_cleaning_records_api(request):
             status_text = review_status or "-"
 
         records.append({
+            "id": str(record_id) if record_id is not None else "",
             "driver_code": driver_code,
             "photo_type": photo_type,
             "public_url": public_url,
@@ -483,16 +486,55 @@ def admin_cleaning_records_api(request):
             "status": status_text,
             "review_status": review_status,
             "is_risk": is_risk,
-            "risk_score": row[6],
-            "risk_reason": row[7],
-            "stop_address": row[8],
-            "created_at": row[9].strftime("%Y-%m-%d %H:%M:%S") if row[9] else "",
+            "risk_score": row[7],
+            "risk_reason": row[8],
+            "stop_address": row[9],
+            "created_at": row[10].strftime("%Y-%m-%d %H:%M:%S") if row[10] else "",
         })
 
     return cors_json({
         "ok": True,
         "records": records
     })
+
+
+@csrf_exempt
+def admin_cleaning_record_delete_api(request):
+    if request.method == "OPTIONS":
+        return cors_json({"ok": True})
+
+    if request.method != "POST":
+        return cors_json({"ok": False, "message": "只允許 POST"}, status=405)
+
+    try:
+        payload = json.loads(request.body.decode("utf-8") or "{}")
+    except Exception:
+        payload = {}
+
+    raw_ids = payload.get("ids") or []
+    if isinstance(raw_ids, str):
+        raw_ids = [raw_ids]
+
+    ids = [str(v).strip() for v in raw_ids if str(v).strip()]
+    if not ids:
+        return cors_json({"ok": False, "message": "缺少要刪除的紀錄 ID"}, status=400)
+
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "DELETE FROM uploaded_photos WHERE id::text = ANY(%s) RETURNING id",
+                [ids],
+            )
+            deleted_rows = cursor.fetchall()
+
+        return cors_json({
+            "ok": True,
+            "deleted_count": len(deleted_rows),
+            "deleted_ids": [str(row[0]) for row in deleted_rows],
+        })
+    except Exception as e:
+        return cors_json({"ok": False, "message": str(e)}, status=500)
+
 
 def admin_cleaning_summary_api(request):
     if request.method != "GET":
