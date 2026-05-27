@@ -1,13 +1,13 @@
 {
   "variant": "normal",
   "label": "不跨縣市",
-  "total_db_points": 3317,
-  "scheduled_db_points": 3317,
+  "total_db_points": 3312,
+  "scheduled_db_points": 3312,
   "unassigned_db_points": 0,
   "unassigned_node_count": 0,
-  "assigned_task_count": 2236,
+  "assigned_task_count": 2231,
   "unassigned_task_count": 0,
   "unassigned_download_key": "unassigned_normal",
   "unassigned_download_filename": "Unassigned_Points_normal.xlsx",
-  "summary_message": "重排完成：已排入 3317 個點位，未排入 0 個點位。"
+  "summary_message": "重排完成：已排入 3312 個點位，未排入 0 個點位。"
 }

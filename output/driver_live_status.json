@@ -3,14 +3,14 @@
     "driver_code": "P01",
     "day": 1,
     "route_id": "NORMAL-P01-D01",
-    "lat": 25.0419717,
-    "lon": 121.5258054,
-    "current_stop_seq": 2,
-    "completed_count": 1,
+    "lat": 25.0429043,
+    "lon": 121.5249133,
+    "current_stop_seq": 1,
+    "completed_count": 0,
     "total_count": 23,
-    "status": "working",
-    "updated_at": "2026-05-15 11:34:34",
-    "updated_at_iso": "2026-05-15T11:34:34.078031"
+    "status": "navigating",
+    "updated_at": "2026-05-21 15:46:46",
+    "updated_at_iso": "2026-05-21T15:46:46.283162"
   },
   "W01": {
     "driver_code": "W01",
@@ -24,5 +24,18 @@
     "status": "working",
     "updated_at": "2026-03-26 08:57:59",
     "updated_at_iso": "2026-03-26T08:57:59.814853"
+  },
+  "P07": {
+    "driver_code": "P07",
+    "day": 1,
+    "route_id": "NORMAL-P07-D01",
+    "lat": 25.0429028,
+    "lon": 121.5249118,
+    "current_stop_seq": 3,
+    "completed_count": 2,
+    "total_count": 38,
+    "status": "working",
+    "updated_at": "2026-05-21 15:51:00",
+    "updated_at_iso": "2026-05-21T15:51:00.325748"
   }
 }
