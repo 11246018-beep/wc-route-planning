@@ -43,10 +43,6 @@ import re  # 正則表達式處理
 from dataclasses import dataclass  # 資料類別定義
 from typing import List  # 型別標註
 from scipy.spatial import distance  # 空間距離計算
-from sklearn.cluster import KMeans  # K-means 分群演算法
-
-from kmeans_constrained import capacity_constrained_kmeans # [NEW] 引入容量限制 K-Means
-from osrm_client import get_travel_times  # [NEW] 引入 OSRM 客戶端
 
 # ==========================================
 # 1. 全域參數設定 (Configuration)
@@ -93,10 +89,6 @@ DEPOTS = {
     }
 }
 
-# --- K-Means 分群設定 ---
-# 依據：總部司機總數 (五股2 + 平鎮12 = 14)
-NUM_CLUSTERS = 14
-
 
 # --- 錨點資料結構定義 ---
 # 用途：定義交流道錨點的資料格式
@@ -118,58 +110,58 @@ ANCHORS: List[Anchor] = [
     # ═══════════════════════════════════════
     # 國道一號 (中山高速公路) - 南北主幹線
     # ═══════════════════════════════════════
-    Anchor("國1-基隆", "N1", 25.123167, 121.735917),  # 最北端
-    Anchor("國1-八堵", "N1", 25.103573, 121.721098),
-    Anchor("國1-五堵", "N1", 25.086706, 121.687157),
-    Anchor("國1-汐止", "N1", 25.074103, 121.653576),
-    Anchor("國1-內湖", "N1", 25.064839, 121.590659),
-    Anchor("國1-圓山", "N1", 25.072622, 121.533299),
-    Anchor("國1-台北", "N1", 25.077920, 121.513700),
-    Anchor("國1-三重", "N1", 25.075833, 121.494444),
-    Anchor("國1-五股", "N1", 25.068800, 121.437300),  # 五股總部鄰近
-    Anchor("國1-林口", "N1", 25.064972, 121.361722),
-    Anchor("國1-南崁", "N1", 25.049584, 121.323046),
-    Anchor("國1-桃園", "N1", 25.037800, 121.297700),
-    Anchor("國1-中壢", "N1", 24.983241, 121.232046),
-    Anchor("國1-平鎮系統", "N1", 24.935556, 121.189722),  # 平鎮總部鄰近
-    Anchor("國1-楊梅", "N1", 24.911369, 121.165250),
-    Anchor("國1-湖口", "N1", 24.875866, 121.029529),
-    Anchor("國1-竹北", "N1", 24.823611, 121.017222),
-    Anchor("國1-新竹", "N1", 24.790288, 121.005609),
-    Anchor("國1-竹南", "N1", 24.757500, 120.987500),
-    Anchor("國1-頭份", "N1", 24.691500, 120.918200),
-    Anchor("國1-苗栗", "N1", 24.524200, 120.820300),  # 最南端
+    Anchor("國1-基隆", "N1", 25.1210, 121.7400),  # 最北端
+    Anchor("國1-八堵", "N1", 25.1034, 121.7215),
+    Anchor("國1-五堵", "N1", 25.0820, 121.6900),
+    Anchor("國1-汐止", "N1", 25.0660, 121.6500),
+    Anchor("國1-內湖", "N1", 25.0780, 121.5900),
+    Anchor("國1-圓山", "N1", 25.0730, 121.5200),
+    Anchor("國1-台北", "N1", 25.0580, 121.5100),
+    Anchor("國1-三重", "N1", 25.0620, 121.4700),
+    Anchor("國1-五股", "N1", 25.0900, 121.4400),  # 五股總部鄰近
+    Anchor("國1-林口", "N1", 25.0700, 121.3600),
+    Anchor("國1-南崁", "N1", 25.0550, 121.2900),
+    Anchor("國1-桃園", "N1", 25.0200, 121.2500),
+    Anchor("國1-中壢", "N1", 24.9800, 121.2300),
+    Anchor("國1-平鎮系統", "N1", 24.9400, 121.2100),  # 平鎮總部鄰近
+    Anchor("國1-楊梅", "N1", 24.9100, 121.1500),
+    Anchor("國1-湖口", "N1", 24.8800, 121.0500),
+    Anchor("國1-竹北", "N1", 24.8300, 121.0100),
+    Anchor("國1-新竹", "N1", 24.8000, 120.9800),
+    Anchor("國1-竹南", "N1", 24.7000, 120.8800),
+    Anchor("國1-頭份", "N1", 24.6800, 120.9000),
+    Anchor("國1-苗栗", "N1", 24.5700, 120.8200),  # 最南端
 
     # ═══════════════════════════════════════
     # 國道三號 (福爾摩沙高速公路) - 替代路線
     # ═══════════════════════════════════════
-    Anchor("國3-汐止系統", "N3", 25.072500, 121.645556),
-    Anchor("國3-深坑", "N3", 25.001993, 121.599491),
-    Anchor("國3-樹林", "N3", 24.951834, 121.387446),
-    Anchor("國3-三鶯", "N3", 24.938056, 121.359167),
-    Anchor("國3-大溪", "N3", 24.891907, 121.264368),
-    Anchor("國3-龍潭", "N3", 24.861713, 121.223162),
-    Anchor("國3-關西", "N3", 24.801604, 121.171350),
-    Anchor("國3-竹南", "N3", 24.675714, 120.847308),
-    Anchor("國3-通霄", "N3", 24.497151, 120.705202),
+    Anchor("國3-汐止系統", "N3", 25.0700, 121.6200),
+    Anchor("國3-深坑", "N3", 25.0000, 121.6200),
+    Anchor("國3-樹林", "N3", 24.9900, 121.4000),
+    Anchor("國3-三鶯", "N3", 24.9400, 121.3200),
+    Anchor("國3-大溪", "N3", 24.8800, 121.2900),
+    Anchor("國3-龍潭", "N3", 24.8400, 121.2100),
+    Anchor("國3-關西", "N3", 24.7800, 121.1800),
+    Anchor("國3-竹南", "N3", 24.6900, 120.8900),
+    Anchor("國3-通霄", "N3", 24.4900, 120.6900),
 
     # ═══════════════════════════════════════
     # 台61線 (西部濱海快速公路) - 沿海走廊
     # ═══════════════════════════════════════
-    Anchor("台61-八里", "TH61", 25.165230, 121.410990),
-    Anchor("台61-林口", "TH61", 25.120500, 121.295900),
-    Anchor("台61-觀音", "TH61", 25.029413, 121.053397),
-    Anchor("台61-新豐", "TH61", 24.917806, 120.972000),
-    Anchor("台61-新竹", "TH61", 24.701389, 120.866389),
-    Anchor("台61-竹南", "TH61", 24.677573, 120.843567),
+    Anchor("台61-八里", "TH61", 25.1500, 121.4000),
+    Anchor("台61-林口", "TH61", 25.0800, 121.3300),
+    Anchor("台61-觀音", "TH61", 25.0400, 121.0800),
+    Anchor("台61-新豐", "TH61", 24.8800, 120.9900),
+    Anchor("台61-新竹", "TH61", 24.8100, 120.9300),
+    Anchor("台61-竹南", "TH61", 24.6900, 120.8500),
 
     # ═══════════════════════════════════════
     # 快速道路 (橫向連結) - 東西向聯絡道
     # ═══════════════════════════════════════
-    Anchor("台64-板橋", "TH64", 25.023000, 121.468100),  # 板橋-八里快速道路
-    Anchor("台65-新莊", "TH65", 25.049606, 121.442264),  # 新莊-林口快速道路
-    Anchor("台66-平鎮", "TH66", 24.954767, 121.154188),  # 東西向快速道路-觀音大溪線
-    Anchor("台68-竹東", "TH68", 24.782625, 121.021045),  # 東西向快速道路-南寮竹東線
+    Anchor("台64-板橋", "TH64", 25.0100, 121.4600),  # 板橋-八里快速道路
+    Anchor("台65-新莊", "TH65", 25.0600, 121.4300),  # 新莊-林口快速道路
+    Anchor("台66-平鎮", "TH66", 24.9000, 121.2000),  # 東西向快速道路-觀音大溪線
+    Anchor("台68-竹東", "TH68", 24.7400, 121.0700),  # 東西向快速道路-南寮竹東線
 ]
 
 # --- 轉換錨點清單為 DataFrame ---
@@ -213,27 +205,27 @@ def load_and_process_data(file_path):
         if file_path.lower().endswith(('.xlsx', '.xls')):
             # Excel 格式：使用 openpyxl 引擎
             raw_df = pd.read_excel(file_path)
-            print(f"    [OK] 成功讀取 Excel 檔案")
+            print(f"    ✓ 成功讀取 Excel 檔案")
         else:
             # CSV 格式：先嘗試 UTF-8，失敗則嘗試 UTF-8-BOM (Excel 輸出常見格式)
             try:
                 raw_df = pd.read_csv(file_path, encoding='utf-8')
-                print(f"    [OK] 成功讀取 CSV 檔案 (UTF-8)")
+                print(f"    ✓ 成功讀取 CSV 檔案 (UTF-8)")
             except UnicodeDecodeError:
                 try:
                     raw_df = pd.read_csv(file_path, encoding='utf-8-sig')  # UTF-8 with BOM
-                    print(f"    [OK] 成功讀取 CSV 檔案 (UTF-8-BOM)")
+                    print(f"    ✓ 成功讀取 CSV 檔案 (UTF-8-BOM)")
                 except UnicodeDecodeError:
                     raw_df = pd.read_csv(file_path, encoding='big5') # Fallback to Big5
-                    print(f"    [OK] 成功讀取 CSV 檔案 (Big5)")
+                    print(f"    ✓ 成功讀取 CSV 檔案 (Big5)")
     except Exception as e:
         # 錯誤處理：捕捉所有讀取異常
-        print(f"    [Error] 檔案讀取失敗: {e}")
+        print(f"    ✗ [Error] 檔案讀取失敗: {e}")
         return pd.DataFrame()  # 回傳空 DataFrame
 
     # 清理欄位名稱：移除前後空白 (Excel 常見問題)
     raw_df.columns = raw_df.columns.str.strip()
-    print(f"    [OK] 原始資料筆數: {len(raw_df)}")
+    print(f"    ✓ 原始資料筆數: {len(raw_df)}")
 
     # 初始化處理後的 DataFrame
     df = pd.DataFrame()
@@ -285,11 +277,11 @@ def load_and_process_data(file_path):
 
     removed_count = initial_len - len(df)
     if removed_count > 0:
-        print(f"    [OK] 已剔除 {removed_count} 筆無效座標資料")
+        print(f"    ✓ 已剔除 {removed_count} 筆無效座標資料")
 
     # 若清洗後已無有效座標，提早結束避免後續除以 0
     if len(df) == 0:
-        print("    [!] 清洗後沒有可用資料，請檢查經緯度欄位或欄位對應設定")
+        print("    ⚠︎ 清洗後沒有可用資料，請檢查經緯度欄位或欄位對應設定")
         return pd.DataFrame()
 
     # ─────────────────────────────────────
@@ -305,7 +297,13 @@ def load_and_process_data(file_path):
         # 清理資料：
         # - replace('.0', '') 處理 Excel 常見的浮點數格式 (例如：1.0 -> 1)
         # - strip() 移除前後空白
-        f2_clean = f2_series.apply(lambda x: str(x).replace('.0', '').strip())
+        f2_clean = (
+    raw_df.loc[df.index, EXCEL_COL_MAPPING['Freq_2x']]
+    .fillna('')
+    .astype(str)
+    .str.replace('.0', '', regex=False)
+    .str.strip()
+    )
 
         # 定義無效值清單 (這些值代表「非 2x」)
         invalid_values = ['0', '', 'nan', 'NaN', 'None']
@@ -315,11 +313,11 @@ def load_and_process_data(file_path):
     else:
         # 若檔案中沒有「週清2」欄位，則全部視為 1x
         is_2x = pd.Series([False] * len(df))
-        print(f"    [!] 警告：找不到 '{EXCEL_COL_MAPPING['Freq_2x']}' 欄位，所有節點將標記為 1x")
+        print(f"    ⚠ 警告：找不到 '{EXCEL_COL_MAPPING['Freq_2x']}' 欄位，所有節點將標記為 1x")
 
     # 建立頻率欄位
     df['Freq'] = np.where(is_2x, '2x', '1x')
-    print(f"    [OK] 頻率分類完成: 2x={is_2x.sum()} 筆, 1x={len(df) - is_2x.sum()} 筆")
+    print(f"    ✓ 頻率分類完成: 2x={is_2x.sum()} 筆, 1x={len(df) - is_2x.sum()} 筆")
 
     # ═══════════════════════════════════════════════════════
     # 【核心演算法 I】：節點濃縮 (Node Condensation)
@@ -367,7 +365,7 @@ def load_and_process_data(file_path):
     df_agg.rename(columns={'S_Time_Raw': 'Service_Time'}, inplace=True)
 
     # 輸出統計資訊
-    print(f"    [OK] 濃縮完成:")
+    print(f"    ✓ 濃縮完成:")
     print(f"      - 原始工單數: {len(df)} 筆")
     print(f"      - 濃縮後節點數: {len(df_agg)} 個")
     print(f"      - 壓縮率: {(1 - len(df_agg) / len(df)) * 100:.1f}%")
@@ -407,151 +405,14 @@ def load_and_process_data(file_path):
     df_agg['Anchor_Distance_km'] = dist_matrix.min(axis=1) * 111  # 粗略估計
 
     # 輸出統計資訊
-    print(f"    [OK] 錨點吸附完成:")
+    print(f"    ✓ 錨點吸附完成:")
     anchor_stats = df_agg['Anchor_Type'].value_counts()
     for anchor_type, count in anchor_stats.items():
         print(f"      - {anchor_type}: {count} 個節點")
 
-    # ═══════════════════════════════════════════════════════
-    # 【核心演算法 III & IV】：容量限制 K-Means (Capacity-Constrained K-Means)
-    # ═══════════════════════════════════════════════════════
-    # 目的：將節點分為 k=14 群，同時保證每群總工時 (服務+行車) <= 3240 分鐘
-    
-    MAX_CAPACITY = 3240   # 容量上限 (分鐘)
-    AVG_SPEED_KMH = 40.0  # 平均行車速度 (km/h)
-
-    print(f"\n    {'─' * 60}")
-    print(f"    執行容量限制 K-Means (k={NUM_CLUSTERS}, Max={MAX_CAPACITY}min)...")
-    print(f"    {'─' * 60}")
-
-    # 呼叫新演算法
-    # 注意：capacity_constrained_kmeans 回傳 labels (N,) 和 centers (K, 2)
-    labels, centers = capacity_constrained_kmeans(
-        df_agg[['Lat', 'Lon']].values,
-        df_agg['Service_Time'].values,
-        n_clusters=NUM_CLUSTERS, 
-        max_cap=MAX_CAPACITY, 
-        avg_speed_kmh=AVG_SPEED_KMH,
-        max_iter=50
-    )
-
-    #將結果寫回 DataFrame
-    df_agg['Cluster_ID'] = labels
-
-    # -------------------------------------------------------
-    # 計算最終統計 (含行車時間)
-    # -------------------------------------------------------
-    print(f"    [OK] 分群完成 (含行車時間計算):")
-    
-    # 計算每個點到其群集重心的距離與行車時間
-    # 1. 取得每個點對應的中心座標
-    assigned_centers = centers[labels]
-    node_coords = df_agg[['Lat', 'Lon']].values
-    
-    # 2. 計算距離 (公里)
-    # dist_deg = np.linalg.norm(node_coords - assigned_centers, axis=1) # 這是歐式距離(度)
-    # 改用 scipy cdist 對應比較準確，或是直接手算 array operation
-    # 這裡沿用 kmeans_constrained 裡面的邏輯: degree distance * 111
-
-
-    # 4. 對每個群集，取得中心點並呼叫 OSRM 計算真實行車時間
-    # -------------------------------------------------------
-    # 先保留幾何距離作為備案 (Fallback)
-    dists_deg = np.sqrt(np.sum((node_coords - assigned_centers)**2, axis=1))
-    dists_km = dists_deg * 111
-    
-    # 初始化 Travel_Time 欄位 (預設為幾何估算值)
-    df_agg['Travel_Time'] = (dists_km / AVG_SPEED_KMH) * 60
-    
-    print("\n    [OSRM] 正在透過 API 更新真實行車時間...")
-    
-    unique_clusters = sorted(df_agg['Cluster_ID'].unique())
-    
-    for cid in unique_clusters:
-        # 取得該群集的中心點 (1, 2)
-        # centers 是 (K, 2) 陣列，cid 是索引
-        center_loc = centers[cid] # [Lat, Lon]
-        center_tuple = (center_loc[0], center_loc[1])
-        
-        # 取得該群集的所有節點索引與座標
-        mask = df_agg['Cluster_ID'] == cid
-        cluster_nodes = df_agg[mask]
-        
-        if cluster_nodes.empty:
-            continue
-            
-        # 準備來源座標列表
-        sources_list = list(zip(cluster_nodes['Lat'], cluster_nodes['Lon']))
-        
-        # 呼叫 OSRM
-        try:
-            # 取得秒數
-            osrm_seconds = get_travel_times(sources_list, center_tuple)
-            
-            # 轉換為分鐘並更新 DataFrame
-            osrm_minutes = []
-            for sec in osrm_seconds:
-                if sec is not None:
-                    osrm_minutes.append(sec / 60.0)
-                else:
-                    osrm_minutes.append(None) # 將由原本的幾何估算值遞補
-            
-            # 更新有成功取回值的欄位
-            # 使用 pd.Series 確保索引對齊
-            original_indices = cluster_nodes.index
-            
-            # 建立更新用的 Series
-            update_series = pd.Series(data=osrm_minutes, index=original_indices)
-            
-            # 僅更新非 None 的值
-            df_agg.loc[original_indices, 'Travel_Time'] = df_agg.loc[original_indices, 'Travel_Time'].where(update_series.isna(), update_series)
-            
-            # 顯示進度
-            print(f"      - Cluster {cid:02d}: 更新 {len(sources_list)} 筆資料 (Center: {center_tuple[0]:.5f}, {center_tuple[1]:.5f})")
-            
-        except Exception as e:
-            print(f"      [!] Cluster {cid:02d} OSRM 更新失敗: {e}，維持幾何估算值")
-
-    # 重新計算總時間
-    df_agg['Total_Time'] = df_agg['Service_Time'] + df_agg['Travel_Time']
-    
-    # 5. 群集匯總統計
-    cluster_stats = df_agg['Cluster_ID'].value_counts().sort_index()
-    cluster_service_time = df_agg.groupby('Cluster_ID')['Service_Time'].sum()
-    cluster_travel_time = df_agg.groupby('Cluster_ID')['Travel_Time'].sum()
-    cluster_total_time = df_agg.groupby('Cluster_ID')['Total_Time'].sum()
-    
-    for cid in sorted(df_agg['Cluster_ID'].unique()):
-        count = cluster_stats.get(cid, 0)
-        s_time = cluster_service_time.get(cid, 0)
-        t_time = cluster_travel_time.get(cid, 0)
-        total_time = cluster_total_time.get(cid, 0)
-        
-        status = "(OK)" if total_time <= MAX_CAPACITY else f"(Overload! +{total_time - MAX_CAPACITY:.1f})"
-        print(f"      - Cluster {cid:02d}: {count:3d} 節點 | 服務: {s_time:6.1f} + 行車: {t_time:6.1f} = 總時: {total_time:6.1f} min {status}")
-
-    # [NEW] 匯出分群統計表
-    summary_df = pd.DataFrame({
-        'Cluster_ID': sorted(df_agg['Cluster_ID'].unique()),
-        'Node_Count': [cluster_stats.get(c, 0) for c in sorted(df_agg['Cluster_ID'].unique())],
-        'Service_Time_Sum': [cluster_service_time.get(c, 0) for c in sorted(df_agg['Cluster_ID'].unique())],
-        'Travel_Time_Sum': [cluster_travel_time.get(c, 0) for c in sorted(df_agg['Cluster_ID'].unique())],
-        'Total_Time_Sum': [cluster_total_time.get(c, 0) for c in sorted(df_agg['Cluster_ID'].unique())]
-    })
-    
-    # 標記是否超載
-    summary_df['Overload'] = summary_df['Total_Time_Sum'] > MAX_CAPACITY
-    
-    summary_csv_path = os.path.join(os.path.dirname(file_path), 'cluster_summary_phase1.csv')
-    try:
-        summary_df.to_csv(summary_csv_path, index=False, encoding='utf-8-sig')
-        print(f"    [OK] 分群統計已匯出至: {summary_csv_path}")
-    except PermissionError:
-        print(f"    [!] 無法寫入分群統計表 (檔案可能被開啟): {summary_csv_path}")
-
     print(f"\n{'=' * 80}")
     print(f">>> 資料處理完成: {len(df)} 筆原始資料 -> {len(df_agg)} 個超級節點")
-    print(f"{'=' * 80}\n")    
+    print(f"{'=' * 80}\n")
 
     return df_agg
 
@@ -583,7 +444,7 @@ def generate_html_map(df, output_file=OUTPUT_MAP_NAME):
 
     # 資料驗證
     if df.empty:
-        print("    [X] [Error] 無資料可繪圖，請檢查資料處理結果")
+        print("    ✗ [Error] 無資料可繪圖，請檢查資料處理結果")
         return
 
     # ─────────────────────────────────────
@@ -608,7 +469,7 @@ def generate_html_map(df, output_file=OUTPUT_MAP_NAME):
         zoom_start=10,
         tiles='OpenStreetMap'
     )
-    print(f"    [OK] 地圖中心點: ({center_lat:.5f}, {center_lon:.5f})")
+    print(f"    ✓ 地圖中心點: ({center_lat:.5f}, {center_lon:.5f})")
 
     # ─────────────────────────────────────
     # 建立多圖層結構
@@ -647,12 +508,6 @@ def generate_html_map(df, output_file=OUTPUT_MAP_NAME):
         show=True  # 預設顯示
     ).add_to(m)
 
-    # 圖層 6：K-Means 分群 - 地理分群結果
-    cluster_layer = folium.FeatureGroup(
-        name="K-Means 分群 (多色區分)",
-        show=True
-    ).add_to(m)
-
     # ─────────────────────────────────────
     # 準備序號顏色對應表
     # ─────────────────────────────────────
@@ -672,7 +527,7 @@ def generate_html_map(df, output_file=OUTPUT_MAP_NAME):
         for i, s in enumerate(unique_serials)
     }
 
-    print(f"    [OK] 序號顏色對應: {len(unique_serials)} 種序號")
+    print(f"    ✓ 序號顏色對應: {len(unique_serials)} 種序號")
 
     # ─────────────────────────────────────
     # 繪製交流道錨點 (黑色旗幟)
@@ -752,10 +607,6 @@ def generate_html_map(df, output_file=OUTPUT_MAP_NAME):
                     <td style="font-weight: bold;">原始倉庫:</td>
                     <td>{clean(row['Depot_Raw'])}</td>
                 </tr>
-                <tr>
-                    <td style="font-weight: bold;">分群 ID:</td>
-                    <td>Cluster {row['Cluster_ID']}</td>
-                </tr>
             </table>
 
             <hr style="margin: 5px 0; border: none; border-top: 1px solid #ecf0f1;">
@@ -788,10 +639,6 @@ def generate_html_map(df, output_file=OUTPUT_MAP_NAME):
         # (C) 序號顏色
         serial_val = str(row['serialno']) if str(row['serialno']) else 'Unknown'
         serial_color = serial_color_map.get(serial_val, 'gray')
-
-        # (D) 分群顏色
-        # 使用相同的調色盤，依 Cluster_ID 取餘數
-        cluster_color = color_palette[row['Cluster_ID'] % len(color_palette)]
 
         # ═══════════════════════════════════════
         # 加入各圖層 (Layer Assignment)
@@ -834,14 +681,6 @@ def generate_html_map(df, output_file=OUTPUT_MAP_NAME):
             tooltip=f"Serial: {row['serialno']}"
         ).add_to(serial_layer)
 
-        # 圖層 6：K-Means 分群
-        folium.Marker(
-            location=[lat, lon],
-            icon=folium.Icon(color=cluster_color, icon=icon_symbol),
-            popup=create_popup(),
-            tooltip=f"Cluster: {row['Cluster_ID']}"
-        ).add_to(cluster_layer)
-
     # ─────────────────────────────────────
     # 加入圖層控制器
     # ─────────────────────────────────────
@@ -854,7 +693,7 @@ def generate_html_map(df, output_file=OUTPUT_MAP_NAME):
     # 儲存地圖
     # ─────────────────────────────────────
     m.save(output_file)
-    print(f"    [OK] 地圖已成功生成: {output_file}")
+    print(f"    ✓ 地圖已成功生成: {output_file}")
     print(f"{'=' * 80}\n")
 
 
@@ -873,7 +712,7 @@ if __name__ == "__main__":
 
     # 檢查檔案是否存在
     if not os.path.exists(input_path):
-        print(f"[X] [錯誤] 找不到檔案: {input_path}")
+        print(f"✗ [錯誤] 找不到檔案: {input_path}")
         print(f"請確認以下事項：")
         print(f"  1. 檔案名稱是否為: {INPUT_FILENAME}")
         print(f"  2. 檔案是否與程式位於同一目錄")
@@ -887,7 +726,7 @@ if __name__ == "__main__":
 
     # 驗證處理結果
     if df_nodes.empty:
-        print("[X] [失敗] 資料處理後為空，請檢查：")
+        print("✗ [失敗] 資料處理後為空，請檢查：")
         print("  1. 原始檔案是否包含有效資料")
         print("  2. 欄位名稱對應是否正確 (參考 EXCEL_COL_MAPPING)")
         print("  3. 經緯度欄位是否包含有效數值")
@@ -919,7 +758,7 @@ if __name__ == "__main__":
     # ═══════════════════════════════════════
     output_csv_path = os.path.join(current_dir, OUTPUT_CSV_NAME)
     df_nodes.to_csv(output_csv_path, index=False, encoding='utf-8-sig')
-    print(f"[OK] CSV 已匯出: {output_csv_path}")
+    print(f"✓ CSV 已匯出: {output_csv_path}")
 
     # ═══════════════════════════════════════
     # 步驟 4：生成互動地圖

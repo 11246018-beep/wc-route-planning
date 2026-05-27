@@ -1,0 +1,18 @@
+Zone Travel Time Estimates (Based on Lat/Lon Distance, Speed: 40.0 km/h)
+============================================================
+Zone 0: 558.23 minutes (372.15 km) - 139 locations
+Zone 1: 377.19 minutes (251.46 km) - 110 locations
+Zone 2: 244.23 minutes (162.82 km) - 78 locations
+Zone 3: 603.21 minutes (402.14 km) - 173 locations
+Zone 4: 1239.04 minutes (826.02 km) - 242 locations
+Zone 5: 646.69 minutes (431.12 km) - 158 locations
+Zone 6: 185.59 minutes (123.73 km) - 38 locations
+Zone 7: 541.40 minutes (360.94 km) - 214 locations
+Zone 8: 476.24 minutes (317.50 km) - 142 locations
+Zone 9: 730.69 minutes (487.13 km) - 141 locations
+Zone 10: 831.62 minutes (554.41 km) - 260 locations
+Zone 11: 583.49 minutes (389.00 km) - 140 locations
+Zone 12: 392.65 minutes (261.77 km) - 99 locations
+Zone 13: 588.70 minutes (392.47 km) - 156 locations
+============================================================
+Total Travel Time (All Zones): 7998.97 minutes
