@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <title>刪除資料</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 30px;
+            background: #f6f8fb;
+        }
+        .card {
+            background: white;
+            padding: 24px;
+            border-radius: 14px;
+            box-shadow: 0 4px 14px rgba(0,0,0,0.08);
+            max-width: 700px;
+        }
+        .btn {
+            display: inline-block;
+            padding: 10px 16px;
+            border-radius: 8px;
+            text-decoration: none;
+            color: white;
+            background: #dc2626;
+            border: none;
+            cursor: pointer;
+        }
+        .btn.gray {
+            background: #64748b;
+        }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <h1>確認刪除</h1>
+        <p>你確定要刪除這筆資料嗎？</p>
+        <p><strong>ID：</strong>{{ row.id }}</p>
+        <p><strong>客戶名稱：</strong>{{ row.client_name }}</p>
+        <p><strong>地址：</strong>{{ row.address }}</p>
+
+        <form method="post">
+            {% csrf_token %}
+            <button class="btn" type="submit">確認刪除</button>
+            <a class="btn gray" href="/data/">取消</a>
+        </form>
+    </div>
+</body>
+</html>
