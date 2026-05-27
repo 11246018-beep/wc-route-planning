@@ -26,12 +26,13 @@ SECRET_KEY = 'django-insecure-7w#+x@h&fyo2%x-7#u66hg0*4c%i)a%6k8_fyj2^-3@^11s+=7
 DEBUG = True
 
 ALLOWED_HOSTS = [
-    'dedicated-chargers-python-founder.trycloudflare.com',
+    'tourist-provide-pro-libs.trycloudflare.com',
     'localhost',
+    '172.16.32.129',
     '192.168.0.11',
 ]
 CSRF_TRUSTED_ORIGINS = [
-    'https://dedicated-chargers-python-founder.trycloudflare.com',
+    'https://tourist-provide-pro-libs.trycloudflare.com',
 ]
 
 

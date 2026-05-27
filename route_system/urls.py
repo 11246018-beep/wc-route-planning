@@ -22,6 +22,7 @@ urlpatterns = [
 
     path("api/routes/options/", views.api_route_options, name="api_route_options"),
     path("api/routes/detail/", views.api_route_detail, name="api_route_detail"),
+    path("api/routes/search-point/", views.api_search_point_route, name="api_search_point_route"),
     path("api/routes/old-options/", views.api_old_route_options, name="api_old_route_options"),
     path("api/routes/old-detail/", views.api_old_route_detail, name="api_old_route_detail"),
     path("api/points/page/", views.api_points_page, name="api_points_page"),
@@ -42,8 +43,10 @@ urlpatterns = [
     path("api/admin/driver/delete/", account_api.admin_driver_delete_api, name="admin_driver_delete_api"),
     path("api/admin/live/overview/", live_api.admin_live_overview_api, name="admin_live_overview_api"),
     path("api/admin/cleaning-records/", mobile_api.admin_cleaning_records_api, name="admin_cleaning_records_api"),
+    path("api/admin/cleaning-record/delete/", mobile_api.admin_cleaning_record_delete_api, name="admin_cleaning_record_delete_api"),
     path("api/admin/cleaning-summary/", mobile_api.admin_cleaning_summary_api, name="admin_cleaning_summary_api"),
-    path("api/toilet-demand-analysis/",views.toilet_demand_analysis_api),
+    path("api/toilet-demand-analysis/", views.toilet_demand_analysis_api),
+    path("api/toilet-demand-analysis/delete/", views.toilet_demand_analysis_delete_api),
 
     path("api/export/excel/", mobile_api.export_excel_api, name="export_excel_api"),
 
