@@ -12,13 +12,15 @@ from django.http import JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
-from django.contrib.auth import authenticate, login  # 這是驗證 manager1 的關鍵
+from django.contrib.auth import authenticate, login, logout
 from django.contrib.auth.models import User
+from django.contrib.auth.decorators import login_required, user_passes_test
+from django.views.decorators.http import require_POST
 
 import pandas as pd
 
 from .models import ServicePoint, Driver
-from .services.driver_roster import schedule_sort_key
+from .services.driver_roster import get_driver_assignment, normalize_schedule_slot, schedule_sort_key
 
 from collections import defaultdict
 from supabase import create_client
@@ -54,18 +56,13 @@ def toilet_demand_analysis_api(request):
                 or record.get("point_key")
                 or "未知點位"
             )
-
             grouped[key].append(record)
 
         result = []
 
         for address, items in grouped.items():
-
             # 最新排序
-            items.sort(
-                key=lambda x: x.get("created_at", ""),
-                reverse=True
-            )
+            items.sort(key=lambda x: x.get("created_at", ""), reverse=True)
 
             # 最近三次
             latest_three = items[:3]
@@ -79,6 +76,7 @@ def toilet_demand_analysis_api(request):
                 (
                     str(r.get("is_qualified")).lower() == "false"
                     or str(r.get("review_status")) == "不合格"
+                    or str(r.get("is_risk")).lower() == "true"
                 )
                 for r in latest_three
             )
@@ -89,19 +87,13 @@ def toilet_demand_analysis_api(request):
                     "status": "需求量偏高",
                     "latest_time": latest_three[0].get("created_at"),
                     "ids": [str(r.get("id")) for r in latest_three if r.get("id") is not None],
-                    "count": len(latest_three)
+                    "count": len(latest_three),
                 })
 
-        return JsonResponse({
-            "ok": True,
-            "records": result
-        })
+        return JsonResponse({"ok": True, "records": result})
 
     except Exception as e:
-        return JsonResponse({
-            "ok": False,
-            "message": str(e)
-        }, status=500)
+        return JsonResponse({"ok": False, "message": str(e)}, status=500)
 
 
 @csrf_exempt
@@ -111,6 +103,12 @@ def toilet_demand_analysis_delete_api(request):
 
     if request.method != "POST":
         return JsonResponse({"ok": False, "message": "只允許 POST"}, status=405)
+
+    # 只讀帳號不能刪除分析來源紀錄。這裡回 JSON，不做 redirect，避免前端拿到 HTML 後解析失敗。
+    if not getattr(request, "user", None) or not request.user.is_authenticated:
+        return JsonResponse({"ok": False, "message": "請先登入管理者帳號。"}, status=403)
+    if not is_manager(request.user):
+        return JsonResponse({"ok": False, "message": "權限不足：只讀人員不能刪除清掃分析紀錄。"}, status=403)
 
     try:
         payload = json.loads(request.body.decode("utf-8") or "{}")
@@ -152,10 +150,18 @@ def toilet_demand_analysis_delete_api(request):
 
             deleted_rows = cursor.fetchall()
 
+        deleted_ids = [str(row[0]) for row in deleted_rows]
+        write_admin_log(
+            request,
+            "刪除可能需新增點位分析紀錄",
+            address or ",".join(ids),
+            {"requested_ids": ids, "deleted_ids": deleted_ids, "deleted_count": len(deleted_ids)},
+        )
+
         return JsonResponse({
             "ok": True,
             "deleted_count": len(deleted_rows),
-            "deleted_ids": [str(row[0]) for row in deleted_rows],
+            "deleted_ids": deleted_ids,
         })
     except Exception as e:
         return JsonResponse({"ok": False, "message": str(e)}, status=500)
@@ -163,6 +169,83 @@ def toilet_demand_analysis_delete_api(request):
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 OUTPUT_DIR = BASE_DIR / "output"
+
+ACTION_LOG_PATH = OUTPUT_DIR / "admin_action_logs.jsonl"
+
+
+def is_super_admin(user):
+    return bool(user and user.is_authenticated and user.is_superuser)
+
+
+def is_manager(user):
+    return bool(user and user.is_authenticated and (user.is_staff or user.is_superuser))
+
+
+def role_label(user):
+    if not getattr(user, "is_active", False):
+        return "待審核 / 已停用"
+    if getattr(user, "is_superuser", False):
+        return "高階管理者"
+    if getattr(user, "is_staff", False):
+        return "管理者"
+    return "只讀人員"
+
+
+def ensure_admin_superuser(username="admin"):
+    """讓既有 admin 帳號固定成高階管理者，避免門禁把自己鎖在外面。"""
+    try:
+        user = User.objects.filter(username=username).first()
+        if user and (not user.is_active or not user.is_staff or not user.is_superuser):
+            user.is_active = True
+            user.is_staff = True
+            user.is_superuser = True
+            user.save(update_fields=["is_active", "is_staff", "is_superuser"])
+        return user
+    except Exception:
+        return None
+
+
+def get_client_ip(request):
+    xff = request.META.get("HTTP_X_FORWARDED_FOR")
+    if xff:
+        return xff.split(",")[0].strip()
+    return request.META.get("REMOTE_ADDR", "")
+
+
+def write_admin_log(request, action, target="", extra=None):
+    """用 JSONL 檔紀錄管理端重要操作，不新增資料表，降低破壞既有功能風險。"""
+    try:
+        OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+        user = getattr(request, "user", None)
+        row = {
+            "time": timezone.localtime(timezone.now()).strftime("%Y-%m-%d %H:%M:%S"),
+            "username": user.username if user and user.is_authenticated else "anonymous",
+            "role": role_label(user) if user and user.is_authenticated else "未登入",
+            "action": action,
+            "target": str(target or ""),
+            "ip": get_client_ip(request),
+            "extra": extra or {},
+        }
+        with ACTION_LOG_PATH.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(row, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+
+
+def read_admin_logs(limit=300):
+    if not ACTION_LOG_PATH.exists():
+        return []
+    try:
+        lines = ACTION_LOG_PATH.read_text(encoding="utf-8").splitlines()
+        logs = []
+        for line in lines[-limit:]:
+            try:
+                logs.append(json.loads(line))
+            except Exception:
+                pass
+        return list(reversed(logs))
+    except Exception:
+        return []
 
 VARIANT_LABELS = {
     "normal": "不跨縣市",
@@ -511,60 +594,168 @@ def extract_variant_run_meta(variant):
     }
 
 def login_view(request):
-    """
-    處理管理員(如 manager1)登入邏輯
-    """
+    """管理者登入。未審核帳號不能登入，admin 帳號固定視為高階管理者。"""
     if request.method == "POST":
         try:
-            # 解析前端傳來的帳號密碼
-            data = json.loads(request.body)
+            data = json.loads(request.body or "{}")
             u_name = data.get("userid", "").strip()
             p_word = data.get("password", "").strip()
 
-            # 使用 Django 內建功能驗證你在 Terminal 建立的 manager1 帳號
+            if not u_name or not p_word:
+                return JsonResponse({"success": False, "message": "請輸入管理員帳號與密碼"})
+
+            if u_name == "admin":
+                ensure_admin_superuser("admin")
+
             user = authenticate(request, username=u_name, password=p_word)
 
             if user is not None:
-                login(request, user)  # 正式建立登入會話 (Session)
+                if not user.is_active:
+                    return JsonResponse({
+                        "success": False,
+                        "message": "此帳號尚未審核或已停用，請聯絡高階管理者。",
+                    })
+                login(request, user)
+                write_admin_log(request, "管理者登入", user.username)
                 return JsonResponse({"success": True})
-            else:
-                return JsonResponse({"success": False, "message": "管理員帳號或密碼錯誤"})
+
+            # authenticate 對 is_active=False 會直接失敗，所以額外判斷提示更清楚。
+            pending_user = User.objects.filter(username=u_name).first()
+            if pending_user and not pending_user.is_active:
+                return JsonResponse({
+                    "success": False,
+                    "message": "此帳號尚未審核或已停用，請等待高階管理者開通。",
+                })
+
+            return JsonResponse({"success": False, "message": "管理員帳號或密碼錯誤"})
         except Exception as e:
             return JsonResponse({"success": False, "message": f"系統錯誤: {str(e)}"})
 
-    # 如果是 GET 請求，就顯示你原本設計的藍色漸層登入頁面
     return render(request, "routing/login.html")
+
+
+def logout_view(request):
+    if request.user.is_authenticated:
+        write_admin_log(request, "管理者登出", request.user.username)
+    logout(request)
+    return redirect("login")
+
 
 # 註冊頁面
 def register_view(request):
-    """
-    處理管理員註冊邏輯
-    """
+    """管理者帳號申請。新帳號預設待審核，不能直接登入。"""
     if request.method == "POST":
         try:
-            data = json.loads(request.body)
+            data = json.loads(request.body or "{}")
             u_name = data.get("username", "").strip()
             p_word = data.get("password", "").strip()
 
             if not u_name or not p_word:
                 return JsonResponse({"success": False, "message": "請填寫完整帳號與密碼"})
 
-            # 檢查帳號是否重複
             if User.objects.filter(username=u_name).exists():
                 return JsonResponse({"success": False, "message": "此管理員帳號已存在"})
 
-            # 建立管理員帳號 (自動加密密碼)
             user = User.objects.create_user(username=u_name, password=p_word)
-            user.is_staff = True  # 讓他可以進入 Django Admin 後台
-            user.save()
+            user.is_active = False
+            user.is_staff = False
+            user.is_superuser = False
+            user.save(update_fields=["is_active", "is_staff", "is_superuser"])
 
-            return JsonResponse({"success": True})
+            # 若系統還沒有 admin，仍不自動開通申請者，避免公開註冊直接變管理員。
+            return JsonResponse({
+                "success": True,
+                "pending": True,
+                "message": "帳號申請已送出，請等待高階管理者審核後再登入。",
+            })
         except Exception as e:
-            return JsonResponse({"success": False, "message": f"註冊失敗: {str(e)}"})
+            return JsonResponse({"success": False, "message": f"申請失敗: {str(e)}"})
 
-    # GET 請求時顯示註冊頁面
     return render(request, "routing/register.html")
 
+
+@login_required(login_url="login")
+@user_passes_test(is_super_admin, login_url="home")
+def account_management(request):
+    ensure_admin_superuser("admin")
+    users = User.objects.all().order_by("-date_joined")
+    user_rows = []
+    for u in users:
+        user_rows.append({
+            "obj": u,
+            "role": role_label(u),
+            "status": "已啟用" if u.is_active else "待審核 / 已停用",
+            "last_login_text": timezone.localtime(u.last_login).strftime("%Y-%m-%d %H:%M") if u.last_login else "-",
+            "date_joined_text": timezone.localtime(u.date_joined).strftime("%Y-%m-%d %H:%M") if u.date_joined else "-",
+        })
+    return render(
+        request,
+        "routing/account_management.html",
+        {
+            "user_rows": user_rows,
+        },
+    )
+
+
+@csrf_exempt
+@login_required(login_url="login")
+@user_passes_test(is_super_admin, login_url="home")
+@require_POST
+def account_management_action(request, user_id):
+    ensure_admin_superuser("admin")
+    target = get_object_or_404(User, pk=user_id)
+    action = request.POST.get("action", "").strip()
+
+    if target.username == "admin" and action in ["disable", "delete", "viewer", "manager"]:
+        return redirect("account_management")
+
+    if action == "approve":
+        target.is_active = True
+        target.is_staff = True
+        target.is_superuser = False
+        target.save(update_fields=["is_active", "is_staff", "is_superuser"])
+        write_admin_log(request, "核准管理者帳號", target.username)
+    elif action == "disable":
+        target.is_active = False
+        target.save(update_fields=["is_active"])
+        write_admin_log(request, "停用管理者帳號", target.username)
+    elif action == "enable":
+        target.is_active = True
+        target.save(update_fields=["is_active"])
+        write_admin_log(request, "啟用管理者帳號", target.username)
+    elif action == "viewer":
+        target.is_active = True
+        target.is_staff = False
+        target.is_superuser = False
+        target.save(update_fields=["is_active", "is_staff", "is_superuser"])
+        write_admin_log(request, "設定為只讀人員", target.username)
+    elif action == "manager":
+        target.is_active = True
+        target.is_staff = True
+        target.is_superuser = False
+        target.save(update_fields=["is_active", "is_staff", "is_superuser"])
+        write_admin_log(request, "設定為管理者", target.username)
+    elif action == "super":
+        target.is_active = True
+        target.is_staff = True
+        target.is_superuser = True
+        target.save(update_fields=["is_active", "is_staff", "is_superuser"])
+        write_admin_log(request, "設定為高階管理者", target.username)
+    elif action == "delete":
+        username = target.username
+        target.delete()
+        write_admin_log(request, "刪除管理者帳號", username)
+
+    return redirect("account_management")
+
+
+@login_required(login_url="login")
+@user_passes_test(is_super_admin, login_url="home")
+def admin_action_logs_page(request):
+    return render(request, "routing/admin_action_logs.html", {"logs": read_admin_logs()})
+
+
+@login_required(login_url="login")
 def home(request):
     initial_variant = request.GET.get("variant", "normal")
     if initial_variant not in VARIANT_LABELS:
@@ -608,6 +799,12 @@ def run_scheduler(request):
     response_format = (request.GET.get("format") or "").strip().lower()
     wants_json = response_format == "json"
 
+    if not is_manager(request.user):
+        message = "權限不足：只有管理者可以重新計算最佳路徑。"
+        if wants_json:
+            return JsonResponse({"ok": False, "message": message}, status=403)
+        return redirect("home")
+
     if wants_json:
         snapshot = _snapshot_run_state(variant)
         if snapshot.get("running"):
@@ -619,6 +816,7 @@ def run_scheduler(request):
                 "message": "排程已在執行中，請等待目前這次完成。",
             })
 
+        write_admin_log(request, "重新計算最佳路徑", variant, {"mode": "background"})
         thread = threading.Thread(target=_run_scheduler_background, args=(variant,), daemon=True)
         thread.start()
         return JsonResponse({
@@ -631,6 +829,7 @@ def run_scheduler(request):
         })
 
     # 保留原本非 JSON 的按鈕/網址行為：同步執行後導回首頁。
+    write_admin_log(request, "重新計算最佳路徑", variant, {"mode": "sync"})
     try:
         result = subprocess.run(
             [sys.executable, "run_all.py"],
@@ -737,9 +936,40 @@ def api_route_detail(request):
             status=404,
         )
 
-    driver = clean_text(request.GET.get("driver")) or routes[0]["driver"]
-    candidate_routes = [r for r in routes if r["driver"] == driver]
+    requested_driver_param = clean_text(request.GET.get("driver"))
+    requested_driver = requested_driver_param or routes[0]["driver"]
+    driver = requested_driver
+    assignment = get_driver_assignment(driver)
+    assigned_slot = normalize_schedule_slot((assignment or {}).get("schedule_slot"))
+    direct_routes = [r for r in routes if r["driver"] == driver]
+    direct_matches_slot = any(
+        normalize_schedule_slot(r.get("schedule_slot")) == assigned_slot for r in direct_routes
+    )
+    use_direct_routes = (
+        not assigned_slot
+        or assigned_slot == driver
+        or direct_matches_slot
+    )
+    candidate_routes = direct_routes if use_direct_routes else []
     if not candidate_routes:
+        if assigned_slot:
+            candidate_routes = [r for r in routes if r["driver"] == assigned_slot]
+            if candidate_routes:
+                driver = assigned_slot
+    if not candidate_routes and direct_routes:
+        candidate_routes = direct_routes
+    if not candidate_routes:
+        if requested_driver_param:
+            return JsonResponse(
+                {
+                    "ok": False,
+                    "variant": payload["variant"],
+                    "label": payload["label"],
+                    "message": f"找不到 {requested_driver} 的排程路線，請確認已指定固定排程席位。",
+                    "requested_driver": requested_driver,
+                },
+                status=404,
+            )
         candidate_routes = [r for r in routes if r["driver"] == routes[0]["driver"]]
         driver = candidate_routes[0]["driver"]
 
@@ -759,6 +989,8 @@ def api_route_detail(request):
             "warning": payload["warning"],
             "file_used": payload["file_used"],
             "meta": payload["meta"],
+            "requested_driver": requested_driver,
+            "schedule_slot": driver if driver != requested_driver else "",
             "route": route,
         }
     )
@@ -1075,6 +1307,7 @@ def api_points_page(request):
     )
 
 
+@login_required(login_url="login")
 def data_list(request):
     q = request.GET.get("q", "").strip()
     selected_depot = request.GET.get("depot", "").strip()
@@ -1130,9 +1363,11 @@ def data_list(request):
     )
 
 
+@login_required(login_url="login")
+@user_passes_test(is_manager, login_url="data_list")
 def data_add(request):
     if request.method == "POST":
-        ServicePoint.objects.create(
+        obj = ServicePoint.objects.create(
             created_at=timezone.now(),
             depot=request.POST.get("depot") or None,
             client_name=request.POST.get("client_name") or None,
@@ -1145,11 +1380,14 @@ def data_add(request):
             lat=to_float(request.POST.get("lat")),
             lon=to_float(request.POST.get("lon")),
         )
+        write_admin_log(request, "新增點位", getattr(obj, "id", ""), {"address": getattr(obj, "address", "")})
         return redirect("data_list")
 
     return render(request, "routing/data_form.html", {"mode": "add", "row": None})
 
 
+@login_required(login_url="login")
+@user_passes_test(is_manager, login_url="data_list")
 def data_edit(request, pk):
     row = get_object_or_404(ServicePoint, pk=pk)
 
@@ -1165,21 +1403,28 @@ def data_edit(request, pk):
         row.lat = to_float(request.POST.get("lat"))
         row.lon = to_float(request.POST.get("lon"))
         row.save()
+        write_admin_log(request, "修改點位", row.id, {"address": row.address or ""})
         return redirect("data_list")
 
     return render(request, "routing/data_form.html", {"mode": "edit", "row": row})
 
 
+@login_required(login_url="login")
+@user_passes_test(is_manager, login_url="data_list")
 def data_delete(request, pk):
     row = get_object_or_404(ServicePoint, pk=pk)
 
     if request.method == "POST":
+        target_info = {"id": row.id, "address": row.address or "", "client_name": row.client_name or ""}
         row.delete()
+        write_admin_log(request, "刪除點位", target_info.get("id"), target_info)
         return redirect("data_list")
 
     return render(request, "routing/data_delete.html", {"row": row})
 
 
+@login_required(login_url="login")
+@user_passes_test(is_manager, login_url="data_list")
 def data_import(request):
     error_message = ""
     summary = None
@@ -1314,6 +1559,12 @@ def data_import(request):
                     except Exception:
                         skipped_count += 1
 
+                write_admin_log(request, "匯入點位 Excel/CSV", upload_file.name, {
+                    "created_count": created_count,
+                    "updated_count": updated_count,
+                    "skipped_count": skipped_count,
+                })
+
                 summary = {
                     "created_count": created_count,
                     "updated_count": updated_count,
@@ -1328,8 +1579,10 @@ def data_import(request):
     )
 
 
+@login_required(login_url="login")
 def cleaning_records_page(request):
     return render(request, "routing/cleaning_records.html")
 
+@login_required(login_url="login")
 def cleaning_report_page(request):
     return render(request, "routing/cleaning_report.html")
