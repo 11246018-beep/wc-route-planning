@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="zh-Hant">
 <head>
   <meta charset="utf-8" />
@@ -501,7 +501,7 @@
 
     .driver-head {
       display: flex;
-      align-items: center;
+      align-items: flex-start;
       justify-content: space-between;
       gap: 10px;
       margin-bottom: 8px;
@@ -512,6 +512,15 @@
       font-weight: 800;
       color: #0f172a;
       line-height: 1.35;
+    }
+
+    .driver-head-actions {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 8px;
+      flex-wrap: wrap;
+      flex: 0 0 auto;
     }
 
     .status-pill {
@@ -544,6 +553,28 @@
     .progress-wrap {
       margin-top: auto;
       padding-top: 6px;
+    }
+
+    .reset-progress-btn {
+      border: 1px solid #fecaca;
+      background: #fff1f2;
+      color: #b91c1c;
+      border-radius: 999px;
+      padding: 7px 10px;
+      font-size: 12px;
+      font-weight: 800;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+
+    .reset-progress-btn:hover {
+      background: #fee2e2;
+      border-color: #fca5a5;
+    }
+
+    .reset-progress-btn:disabled {
+      opacity: 0.65;
+      cursor: wait;
     }
 
     .progress-head {
@@ -617,6 +648,10 @@
       color: #fff;
       border-color: rgba(37,99,235,0.15);
       box-shadow: 0 0 0 3px rgba(37,99,235,0.12);
+    }
+    .step-item.skipped {
+      background: #f59e0b;
+      color: #fff;
     }
 
     .empty-box {
@@ -745,7 +780,7 @@
     <div class="nav-brand"><i data-lucide="radar"></i> 即時監控 4.1</div>
     <div class="nav-right">
       <span id="serverTimeText">伺服器時間：--</span>
-      <span id="refreshText">下次更新：--</span>
+      <span id="refreshText">下次更新：-</span>
       <button type="button" id="refreshBtn" class="small-btn">重新整理</button>
     </div>
   </nav>
@@ -755,16 +790,16 @@
       <div class="map-shell">
         <div class="map-toolbar">
           <i data-lucide="map"></i>
-          <span>下方司機區保留在底部區塊，並預留安全距離避免貼到底部</span>
+          <span>即時司機位置與路線預覽</span>
         </div>
 
         <div class="summary-drawer" id="summaryDrawer">
           <div class="summary-drawer-header">
             <div class="summary-drawer-title">
               <i data-lucide="layout-dashboard"></i>
-              <span>監控摘要</span>
+              <span>監控總覽</span>
             </div>
-            <button type="button" class="icon-toggle" id="summaryToggle" aria-expanded="true" title="收合摘要">
+            <button type="button" class="icon-toggle" id="summaryToggle" aria-expanded="true" title="收合狀態面板">
               <i data-lucide="panel-right-close"></i>
             </button>
           </div>
@@ -776,22 +811,22 @@
                 <div class="summary-value" id="summaryTotal">0</div>
               </div>
               <div class="summary-box">
-                <div class="summary-label">在線中</div>
+                <div class="summary-label">在線</div>
                 <div class="summary-value" id="summaryOnline">0</div>
               </div>
               <div class="summary-box">
-                <div class="summary-label">離線中</div>
+                <div class="summary-label">離線</div>
                 <div class="summary-value" id="summaryOffline">0</div>
               </div>
               <div class="summary-box">
-                <div class="summary-label">執行中</div>
+                <div class="summary-label">工作中</div>
                 <div class="summary-value" id="summaryWorking">0</div>
               </div>
             </div>
 
             <div class="selected-box">
-              <div class="selected-title">目前地圖高亮路線</div>
-              <div class="selected-text" id="selectedDriverText">尚未選取司機，請點下方司機卡片。</div>
+              <div class="selected-title">選取司機路線</div>
+              <div class="selected-text" id="selectedDriverText">請點選司機卡片或地圖標記查看目前路線</div>
             </div>
 
             <div class="legend">
@@ -816,7 +851,7 @@
         <div class="filter-row">
           <button class="filter-chip active" data-filter="all">全部</button>
           <button class="filter-chip" data-filter="online">只看在線</button>
-          <button class="filter-chip" data-filter="working">只看執行中</button>
+          <button class="filter-chip" data-filter="working">只看工作中</button>
           <button class="filter-chip" data-filter="offline">只看離線</button>
         </div>
       </div>
@@ -907,8 +942,8 @@
       const label = String(driver?.driver_label || driver?.display_name || '').trim();
       let areaText = label;
 
-      if (areaText.includes('｜')) {
-        areaText = areaText.split('｜').slice(1).join('｜').trim();
+      if (areaText.includes('|')) {
+        areaText = areaText.split('|').slice(1).join('|').trim();
       } else if (areaText === code || !areaText) {
         areaText = String(driver?.display_name || '').trim();
       }
@@ -917,7 +952,7 @@
         areaText = String(driver?.route_id || '-');
       }
 
-      return `${code}｜${areaText}｜Day${driver?.day || '-'}`;
+      return `${code} | ${areaText} | Day${driver?.day || '-'}`;
     }
 
     async function resolveDriverMapPoint(driver) {
@@ -983,7 +1018,7 @@
           drawSelectedDriverRoute();
         });
 
-        const positionText = point.source === 'depot' ? '倉庫位置' : '即時回傳位置';
+        const positionText = point.source === 'depot' ? '場站預設位置' : '司機即時位置';
 
         marker.bindPopup(`
           <div>
@@ -992,7 +1027,7 @@
             <div>第 ${escapeHtml(driver.day || "-")} 天</div>
             <div>路線：${escapeHtml(driver.route_id || "-")}</div>
             <div>位置來源：${positionText}</div>
-            <div>進度：${escapeHtml(driver.completed_count || 0)} / ${escapeHtml(driver.total_count || 0)}</div>
+            <div>完成：${escapeHtml(driver.completed_count || 0)} / ${escapeHtml(driver.total_count || 0)}</div>
             <div>最後更新：${escapeHtml(driver.updated_at || "-")}</div>
           </div>
         `);
@@ -1008,8 +1043,13 @@
 
     function buildStepStrip(driver) {
       const total = Number(driver.total_count || 0);
-      const completed = Number(driver.completed_count || 0);
       const currentStop = Number(driver.current_stop_seq || 0);
+      const completedSeqs = new Set((Array.isArray(driver.completed_stop_seqs) ? driver.completed_stop_seqs : [])
+        .map(seq => Number(seq))
+        .filter(seq => Number.isFinite(seq) && seq > 0));
+      const skippedSeqs = new Set((Array.isArray(driver.skipped_stop_seqs) ? driver.skipped_stop_seqs : [])
+        .map(seq => Number(seq))
+        .filter(seq => Number.isFinite(seq) && seq > 0));
 
       if (!Number.isFinite(total) || total <= 0) {
         return '<div class="empty-box" style="padding:10px;">尚無站點進度資料</div>';
@@ -1020,12 +1060,13 @@
       for (let i = 1; i <= total; i += 1) {
         let cls = 'step-item';
 
-        if (i <= completed) {
+        if (completedSeqs.has(i)) {
           cls += ' done';
-        } else if (i === currentStop && currentStop > completed) {
+        } else if (i === currentStop) {
           cls += ' current';
+        } else if (skippedSeqs.has(i)) {
+          cls += ' skipped';
         }
-
         html += `<div class="${cls}" title="第 ${i} 站">${i}</div>`;
       }
 
@@ -1038,7 +1079,7 @@
       const filtered = applyFilter(drivers);
 
       if (!filtered.length) {
-        container.innerHTML = '<div class="empty-box">目前沒有符合條件的司機資料</div>';
+        container.innerHTML = '<div class="empty-box">目前沒有司機即時資料</div>';
         return;
       }
 
@@ -1060,7 +1101,12 @@
           <div class="driver-card ${activeClass}" data-driver-code="${escapeHtml(driver.driver_code)}">
             <div class="driver-head">
               <div class="driver-name">${escapeHtml(titleText)}</div>
-              <div class="status-pill ${onlineClass}">${onlineText}</div>
+              <div class="driver-head-actions">
+                <div class="status-pill ${onlineClass}">${onlineText}</div>
+                <button type="button" class="reset-progress-btn" data-driver-code="${escapeHtml(driver.driver_code)}">
+                  清除目前進度
+                </button>
+              </div>
             </div>
 
             <div class="driver-meta">
@@ -1080,6 +1126,41 @@
           </div>
         `;
       }).join("");
+
+      container.querySelectorAll('.reset-progress-btn').forEach(button => {
+        button.addEventListener('click', async (event) => {
+          event.stopPropagation();
+          const driverCode = button.dataset.driverCode;
+          if (!driverCode) return;
+
+          const driver = currentDrivers.find(d => d.driver_code === driverCode);
+          const label = driver?.driver_label || driverCode;
+          const confirmed = window.confirm(`確定要清除 ${label} 的目前進度嗎？已完成與跳過的站點會歸零。`);
+          if (!confirmed) return;
+
+          const originalText = button.textContent;
+          button.disabled = true;
+          button.textContent = '清除中...';
+
+          try {
+            const response = await fetch('/api/admin/live/reset-progress/', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ driver_code: driverCode }),
+            });
+            const data = await response.json();
+            if (!response.ok || !data.ok) {
+              throw new Error(data.message || '清除失敗');
+            }
+            await loadOverview();
+          } catch (err) {
+            alert(`清除失敗：${err.message || err}`);
+          } finally {
+            button.disabled = false;
+            button.textContent = originalText;
+          }
+        });
+      });
 
       container.querySelectorAll('.driver-card').forEach(card => {
         card.addEventListener('click', () => {
@@ -1116,13 +1197,13 @@
       const driver = getSelectedDriver();
 
       if (!driver) {
-        textEl.textContent = '尚未選取司機，請點下方司機卡片。';
+        textEl.textContent = '請點選司機卡片或地圖標記查看目前路線';
         return;
       }
 
       textEl.innerHTML =
-        `目前選取：<strong>${escapeHtml(driver.driver_label || driver.driver_code)}</strong><br>` +
-        `第 ${escapeHtml(driver.day || 0)} 天 ｜ 路線：${escapeHtml(driver.route_id || "-")} ｜ 狀態：${escapeHtml(driver.status || "-")}`;
+        `選取司機：<strong>${escapeHtml(driver.driver_label || driver.driver_code)}</strong><br>` +
+        `第 ${escapeHtml(driver.day || 0)} 天，路線：${escapeHtml(driver.route_id || "-")}，狀態：${escapeHtml(driver.status || "-")}`;
     }
 
     async function fetchRouteDetail(driver) {
@@ -1270,7 +1351,7 @@
 
         countdown = 5;
       } catch (err) {
-        document.getElementById("driverList").innerHTML = `<div class="empty-box">連線失敗：${escapeHtml(err)}</div>`;
+        document.getElementById("driverList").innerHTML = `<div class="empty-box">讀取失敗：${escapeHtml(err)}</div>`;
       }
     }
 
@@ -1291,7 +1372,7 @@
       function updateState() {
         const collapsed = drawer.classList.contains('collapsed');
         btn.setAttribute('aria-expanded', String(!collapsed));
-        btn.title = collapsed ? '展開摘要' : '收合摘要';
+        btn.title = collapsed ? '展開狀態面板' : '收合狀態面板';
         btn.innerHTML = collapsed
           ? '<i data-lucide="panel-right-open"></i>'
           : '<i data-lucide="panel-right-close"></i>';

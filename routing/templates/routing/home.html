@@ -602,8 +602,20 @@
 
     <a href="{% url 'driver_admin_page' %}" class="menu-item">
       <div class="icon-box"><i data-lucide="users-round" size="18"></i></div>
-      <span>帳號管理</span>
+      <span>司機帳號</span>
     </a>
+
+    {% if user.is_superuser %}
+    <a href="{% url 'account_management' %}" class="menu-item">
+      <div class="icon-box"><i data-lucide="shield-check" size="18"></i></div>
+      <span>管理者帳號</span>
+    </a>
+
+    <a href="{% url 'admin_action_logs' %}" class="menu-item">
+      <div class="icon-box"><i data-lucide="clipboard-list" size="18"></i></div>
+      <span>操作紀錄</span>
+    </a>
+    {% endif %}
 
     <a href="{% url 'data_list' %}" class="menu-item">
       <div class="icon-box"><i data-lucide="table" size="18"></i></div>
@@ -615,7 +627,7 @@
       <span>清掃紀錄</span>
     </a>
 
-    <a href="{% url 'login' %}" class="menu-item">
+    <a href="{% url 'logout' %}" class="menu-item">
       <div class="icon-box"><i data-lucide="log-out" size="14"></i></div>
       <span>登出</span>
     </a>
@@ -666,9 +678,15 @@
 
     <div class="float-block">
       <div class="btn-row">
+        {% if user.is_staff or user.is_superuser %}
         <button id="btnRunScheduler" class="action-btn success" type="button">
           <i data-lucide="route"></i> 重新計算最佳路徑
         </button>
+        {% else %}
+        <button id="btnRunScheduler" class="action-btn" type="button" disabled style="background:#94a3b8; cursor:not-allowed;">
+          <i data-lucide="lock"></i> 只讀權限不可重新計算
+        </button>
+        {% endif %}
       </div>
       <div class="mini-text" style="margin-top:8px;">
         修改點位資料後，按這顆按鈕重新計算最新路線。

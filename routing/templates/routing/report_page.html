@@ -405,6 +405,7 @@
       </div>
     </section>
 
+    {% if user.is_staff or user.is_superuser %}
     <section class="edit-panel" id="editPanel">
       <h3 style="margin-top:0;">編輯問題回報</h3>
       <input type="hidden" id="editId" />
@@ -437,6 +438,7 @@
         <button type="button" class="small-btn save" onclick="saveEdit()">儲存修改</button>
       </div>
     </section>
+    {% endif %}
 
     <section class="report-list" id="reportList">
       <div class="empty-box">載入中...</div>
@@ -446,6 +448,7 @@
   <script>
     lucide.createIcons();
 
+    const CAN_EDIT_REPORTS = {% if user.is_staff or user.is_superuser %}true{% else %}false{% endif %};
     let allReports = [];
 
     function updateLastUpdateTime() {
@@ -534,12 +537,16 @@
             <div class="meta-chip">狀態：${escapeHtml(report.status || '-')}</div>
           </div>
 
+          ${CAN_EDIT_REPORTS ? `
           <div class="card-actions">
             <button type="button" class="small-btn edit"
               onclick='openEdit(${JSON.stringify(report)})'>編輯</button>
             <button type="button" class="small-btn delete"
               onclick="deleteReport(${report.id})">刪除</button>
-          </div>
+          </div>` : `
+          <div class="card-actions">
+            <span class="meta-chip">只讀模式：不可編輯或刪除</span>
+          </div>`}
         </article>
       `).join('');
 
@@ -547,6 +554,7 @@
     }
 
     function openEdit(report) {
+      if (!CAN_EDIT_REPORTS) { alert('權限不足：只讀人員不能編輯問題回報。'); return; }
       const panel = document.getElementById('editPanel');
       document.getElementById('editId').value = report.id || '';
       document.getElementById('editType').value = Array.from(document.getElementById('editType').options).some(opt => opt.value === (report.report_type || '')) ? report.report_type : '其他';
@@ -565,6 +573,7 @@
     }
 
     async function saveEdit() {
+      if (!CAN_EDIT_REPORTS) { alert('權限不足：只讀人員不能儲存修改。'); return; }
       const id = Number(document.getElementById('editId').value || 0);
       const report_type = document.getElementById('editType').value;
       const stop_seq = Number(document.getElementById('editStopSeq').value || 0);
@@ -608,6 +617,7 @@
     }
 
     async function deleteReport(id) {
+      if (!CAN_EDIT_REPORTS) { alert('權限不足：只讀人員不能刪除問題回報。'); return; }
       if (!confirm(`確定要刪除這筆回報嗎？\nID：${id}`)) {
         return;
       }

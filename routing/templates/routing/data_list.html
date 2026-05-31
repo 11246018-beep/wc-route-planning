@@ -327,8 +327,10 @@
                 <h1>資料管理中心</h1>
 
                 <div class="btn-group">
+                    {% if user.is_staff or user.is_superuser %}
                     <a class="btn green" href="/data/add/">新增資料</a>
                     <a class="btn orange" href="/data/import/">匯入 Excel / CSV</a>
+                    {% endif %}
                     <a class="btn purple" href="/api/export/excel/?key=dispatch_latest">下載總排程 Excel</a>
                 </div>
             </div>
@@ -397,7 +399,7 @@
                         <th class="nowrap">週次1</th>
                         <th class="nowrap">週次2</th>
                         <th>座標</th>
-                        <th class="nowrap">操作</th>
+                        {% if user.is_staff or user.is_superuser %}<th class="nowrap">操作</th>{% endif %}
                     </tr>
                 </thead>
                 <tbody>
@@ -411,16 +413,18 @@
                         <td>{{ row.weekly_1 }}</td>
                         <td>{{ row.weekly_2 }}</td>
                         <td>{{ row.lat }}, {{ row.lon }}</td>
+                        {% if user.is_staff or user.is_superuser %}
                         <td>
                             <div class="actions">
                                 <a class="btn" href="/data/edit/{{ row.id }}/">編輯</a>
                                 <a class="btn red" href="/data/delete/{{ row.id }}/">刪除</a>
                             </div>
                         </td>
+                        {% endif %}
                     </tr>
                     {% empty %}
                     <tr>
-                        <td colspan="9">沒有符合條件的資料</td>
+                        <td colspan="{% if user.is_staff or user.is_superuser %}9{% else %}8{% endif %}">沒有符合條件的資料</td>
                     </tr>
                     {% endfor %}
                 </tbody>

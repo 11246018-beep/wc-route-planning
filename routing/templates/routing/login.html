@@ -206,6 +206,41 @@
       flex-shrink: 0;
     }
 
+    .password-wrapper {
+      position: relative;
+    }
+
+    .password-wrapper input {
+      padding-right: 48px;
+    }
+
+    .toggle-password {
+      position: absolute;
+      right: 10px;
+      top: 50%;
+      transform: translateY(-50%);
+      width: 36px;
+      height: 36px;
+      border: none;
+      border-radius: 10px;
+      background: transparent;
+      color: #64748b;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      transition: background .2s ease, color .2s ease;
+    }
+
+    .toggle-password:hover {
+      background: #eef3ff;
+      color: var(--primary);
+    }
+
+    .toggle-password i {
+      color: currentColor;
+    }
+
     input {
       flex: 1;
       padding: 13px 15px;
@@ -326,7 +361,7 @@
 
       <div class="card-header">
         <h2>歡迎回來</h2>
-        <p>請輸入您的管理員代號登入系統</p>
+        <p>請使用已審核的管理者帳號登入系統</p>
       </div>
 
       <form id="loginForm">
@@ -340,9 +375,12 @@
 
         <div class="form-group">
           <label>密碼 Password</label>
-          <div class="input-wrapper">
+          <div class="input-wrapper password-wrapper">
             <i data-lucide="lock" size="20"></i>
             <input type="password" id="password" placeholder="請輸入密碼" required>
+            <button type="button" class="toggle-password" data-target="password" aria-label="顯示密碼">
+              <i data-lucide="eye" size="20"></i>
+            </button>
           </div>
         </div>
 
@@ -350,13 +388,34 @@
       </form>
 
       <div class="footer-link">
-        還沒有帳號？ <a href="{% url 'register' %}">前往註冊頁</a>
+        還沒有帳號？ <a href="{% url 'register' %}">申請管理者帳號</a>
       </div>
     </div>
   </div>
 
   <script>
     lucide.createIcons();
+
+    document.querySelectorAll('.toggle-password').forEach((button) => {
+      const input = document.getElementById(button.dataset.target);
+      if (!input) return;
+      const show = () => {
+        input.type = 'text';
+        button.innerHTML = '<i data-lucide="eye-off" size="20"></i>';
+        lucide.createIcons();
+      };
+      const hide = () => {
+        input.type = 'password';
+        button.innerHTML = '<i data-lucide="eye" size="20"></i>';
+        lucide.createIcons();
+      };
+      button.addEventListener('mousedown', show);
+      button.addEventListener('mouseup', hide);
+      button.addEventListener('mouseleave', hide);
+      button.addEventListener('touchstart', (e) => { e.preventDefault(); show(); }, { passive: false });
+      button.addEventListener('touchend', hide);
+      button.addEventListener('click', (e) => e.preventDefault());
+    });
 
     document.getElementById('loginForm').onsubmit = async function(e) {
       e.preventDefault();

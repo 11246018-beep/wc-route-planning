@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Dispatch Nav | 管理者帳號</title>
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <link href="https://fonts.googleapis.com/css?family=Open+Sans:300,400,600,700" rel="stylesheet" />
+  <style>
+    :root { --primary:#4A90E2; --text:#344767; --muted:#67748e; --line:#e5e7eb; --soft:#f8fafc; --danger:#dc2626; --green:#16a34a; --dark:#344767; }
+    * { box-sizing: border-box; }
+    body { margin:0; font-family:"Open Sans", sans-serif; background:#f3f6fb; color:var(--text); }
+    .page { max-width: 1280px; margin: 28px auto; padding: 0 22px; }
+    .topbar { display:flex; align-items:center; justify-content:space-between; gap:16px; margin-bottom:22px; }
+    .brand { display:flex; align-items:center; gap:12px; font-weight:800; font-size:24px; }
+    .brand .icon { width:42px; height:42px; border-radius:14px; background:#e8f1ff; color:var(--primary); display:flex; align-items:center; justify-content:center; }
+    .actions { display:flex; gap:10px; flex-wrap:wrap; }
+    .btn-link { display:inline-flex; align-items:center; gap:8px; padding:11px 16px; border-radius:14px; text-decoration:none; color:var(--text); background:white; border:1px solid var(--line); font-weight:700; box-shadow:0 6px 20px rgba(15,23,42,.06); }
+    .card { background:white; border:1px solid var(--line); border-radius:24px; box-shadow:0 14px 34px rgba(15,23,42,.08); overflow:hidden; }
+    .card-head { padding:24px 26px; border-bottom:1px solid var(--line); display:flex; align-items:flex-start; justify-content:space-between; gap:12px; }
+    h1 { margin:0 0 8px; font-size:26px; color:#111827; }
+    .hint { margin:0; color:var(--muted); line-height:1.7; }
+    .table-wrap { max-height: calc(100vh - 230px); overflow:auto; }
+    table { width:100%; border-collapse:collapse; min-width:980px; }
+    th { position:sticky; top:0; background:#eef3ff; color:#243b64; text-align:left; padding:15px 16px; font-size:14px; z-index:1; }
+    td { padding:15px 16px; border-top:1px solid var(--line); vertical-align:middle; }
+    .username { font-weight:800; color:#111827; }
+    .sub { color:var(--muted); font-size:13px; margin-top:4px; }
+    .badge { display:inline-flex; padding:7px 11px; border-radius:999px; font-weight:800; font-size:13px; }
+    .badge.pending { background:#fff7ed; color:#c2410c; }
+    .badge.on { background:#dcfce7; color:#166534; }
+    .badge.role { background:#eaf2ff; color:#1d4ed8; }
+    .btns { display:flex; gap:8px; flex-wrap:wrap; }
+    button { border:0; border-radius:12px; padding:9px 12px; font-weight:800; cursor:pointer; color:white; }
+    .approve { background:var(--green); }
+    .enable { background:#2563eb; }
+    .disable { background:#f97316; }
+    .viewer { background:#64748b; }
+    .manager { background:#4f46e5; }
+    .super { background:#7c3aed; }
+    .delete { background:var(--danger); }
+    .disabled-note { color:#94a3b8; font-size:13px; font-weight:700; }
+    @media (max-width: 720px) { .topbar,.card-head { flex-direction:column; align-items:stretch; } .page { margin:16px auto; padding:0 12px; } }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <div class="topbar">
+      <div class="brand"><div class="icon"><i data-lucide="shield-check"></i></div>Dispatch Nav｜管理者帳號</div>
+      <div class="actions">
+        <a class="btn-link" href="{% url 'home' %}"><i data-lucide="map"></i>回到地圖</a>
+        <a class="btn-link" href="{% url 'admin_action_logs' %}"><i data-lucide="clipboard-list"></i>操作紀錄</a>
+        <a class="btn-link" href="{% url 'logout' %}"><i data-lucide="log-out"></i>登出</a>
+      </div>
+    </div>
+
+    <section class="card">
+      <div class="card-head">
+        <div>
+          <h1>帳號審核與權限管理</h1>
+          <p class="hint">新註冊帳號預設為待審核，必須由高階管理者核准後才能登入。admin 帳號會固定保留高階管理者權限，避免系統被鎖住。</p>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>帳號</th>
+              <th>角色</th>
+              <th>狀態</th>
+              <th>註冊時間</th>
+              <th>最後登入</th>
+              <th>操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in user_rows %}
+            <tr>
+              <td>
+                <div class="username">{{ row.obj.username }}</div>
+                <div class="sub">ID：{{ row.obj.id }}</div>
+              </td>
+              <td><span class="badge role">{{ row.role }}</span></td>
+              <td>
+                {% if row.obj.is_active %}
+                  <span class="badge on">{{ row.status }}</span>
+                {% else %}
+                  <span class="badge pending">{{ row.status }}</span>
+                {% endif %}
+              </td>
+              <td>{{ row.date_joined_text }}</td>
+              <td>{{ row.last_login_text }}</td>
+              <td>
+                {% if row.obj.username == 'admin' %}
+                  <span class="disabled-note">admin 為固定高階管理者</span>
+                {% else %}
+                <div class="btns">
+                  <form method="post" action="{% url 'account_management_action' row.obj.id %}">{% csrf_token %}<input type="hidden" name="action" value="approve"><button class="approve" type="submit">核准</button></form>
+                  <form method="post" action="{% url 'account_management_action' row.obj.id %}">{% csrf_token %}<input type="hidden" name="action" value="enable"><button class="enable" type="submit">啟用</button></form>
+                  <form method="post" action="{% url 'account_management_action' row.obj.id %}">{% csrf_token %}<input type="hidden" name="action" value="disable"><button class="disable" type="submit">停用</button></form>
+                  <form method="post" action="{% url 'account_management_action' row.obj.id %}">{% csrf_token %}<input type="hidden" name="action" value="viewer"><button class="viewer" type="submit">只讀</button></form>
+                  <form method="post" action="{% url 'account_management_action' row.obj.id %}">{% csrf_token %}<input type="hidden" name="action" value="manager"><button class="manager" type="submit">管理者</button></form>
+                  <form method="post" action="{% url 'account_management_action' row.obj.id %}">{% csrf_token %}<input type="hidden" name="action" value="super"><button class="super" type="submit">高階</button></form>
+                  <form method="post" action="{% url 'account_management_action' row.obj.id %}" onsubmit="return confirm('確定刪除這個帳號？');">{% csrf_token %}<input type="hidden" name="action" value="delete"><button class="delete" type="submit">刪除</button></form>
+                </div>
+                {% endif %}
+              </td>
+            </tr>
+            {% empty %}
+            <tr><td colspan="6">目前沒有帳號資料。</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+  <script>lucide.createIcons();</script>
+</body>
+</html>

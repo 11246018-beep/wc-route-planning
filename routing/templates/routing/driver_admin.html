@@ -506,9 +506,12 @@
         <input id="keywordInput" type="text" placeholder="搜尋司機編號、姓名、電話、席位" />
       </div>
       <button class="btn primary" type="button" onclick="loadDrivers()"><i data-lucide="refresh-cw"></i> 重新整理</button>
+      {% if user.is_staff or user.is_superuser %}
       <button class="btn success" type="button" onclick="openCreate()"><i data-lucide="user-plus"></i> 新增司機帳號</button>
+      {% endif %}
     </section>
 
+    {% if user.is_staff or user.is_superuser %}
     <section class="panel">
       <h3 id="formTitle">新增 / 編輯司機帳號</h3>
       <div class="panel-note">
@@ -576,6 +579,8 @@
       </div>
     </section>
 
+    {% endif %}
+
     <section class="slot-panel">
       <h3>固定排程席位總覽</h3>
       <div class="panel-note">
@@ -600,11 +605,11 @@
             <th>工時</th>
             <th>狀態</th>
             <th>建立時間</th>
-            <th>操作</th>
+            {% if user.is_staff or user.is_superuser %}<th>操作</th>{% endif %}
           </tr>
         </thead>
         <tbody id="driverTableBody">
-          <tr><td colspan="11" class="empty-box">載入中...</td></tr>
+          <tr><td colspan="{% if user.is_staff or user.is_superuser %}11{% else %}10{% endif %}" class="empty-box">載入中...</td></tr>
         </tbody>
       </table>
     </section>
@@ -613,6 +618,7 @@
   <script>
     lucide.createIcons();
 
+    const CAN_MANAGE_DRIVERS = {% if user.is_staff or user.is_superuser %}true{% else %}false{% endif %};
     let allDrivers = [];
     let fixedSlots = [];
     let summaryData = null;
@@ -638,6 +644,7 @@
 
     function renderSlotOptions(selectedValue='') {
       const select = document.getElementById('formScheduleSlot');
+      if (!select) return;
       const currentValue = selectedValue || '';
       const options = ['<option value="">不參與固定 14 車排程</option>'];
 
@@ -651,8 +658,10 @@
     }
 
     function updateScheduleSlotHint() {
-      const scheduleSlot = document.getElementById('formScheduleSlot').value;
+      const select = document.getElementById('formScheduleSlot');
       const hint = document.getElementById('scheduleSlotHint');
+      if (!select || !hint) return;
+      const scheduleSlot = select.value;
       const meta = slotMeta(scheduleSlot);
 
       if (!scheduleSlot || !meta) {
@@ -670,7 +679,7 @@
         : `/api/admin/drivers/`;
 
       const tbody = document.getElementById('driverTableBody');
-      tbody.innerHTML = `<tr><td colspan="11" class="empty-box">載入中...</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="{% if user.is_staff or user.is_superuser %}11{% else %}10{% endif %}" class="empty-box">載入中...</td></tr>`;
 
       try {
         const res = await fetch(url);
@@ -685,7 +694,10 @@
         fixedSlots = Array.isArray(data.fixed_slots) ? data.fixed_slots : [];
         summaryData = data.summary || null;
 
-        renderSlotOptions(document.getElementById('formScheduleSlot').value || '');
+        if (CAN_MANAGE_DRIVERS) {
+          const slotSelect = document.getElementById('formScheduleSlot');
+          renderSlotOptions(slotSelect ? slotSelect.value || '' : '');
+        }
         renderSummary(allDrivers, summaryData);
         renderSlotGrid(allDrivers, fixedSlots);
         renderTable(allDrivers);
@@ -749,7 +761,7 @@
       const tbody = document.getElementById('driverTableBody');
 
       if (!drivers.length) {
-        tbody.innerHTML = `<tr><td colspan="11" class="empty-box">目前沒有司機資料</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="${CAN_MANAGE_DRIVERS ? 11 : 10}" class="empty-box">目前沒有司機資料</td></tr>`;
         return;
       }
 
@@ -781,13 +793,14 @@
             <td>${driver.max_minutes ?? '-'}</td>
             <td>${statusHtml}</td>
             <td>${escapeHtml(driver.created_at || '-')}</td>
+            ${CAN_MANAGE_DRIVERS ? `
             <td>
               <div class="row-actions">
                 <button class="btn warning" type="button" onclick="openEdit('${escapeHtml(driver.driver_code)}')"><i data-lucide="pencil"></i> 編輯</button>
                 <button class="btn danger" type="button" onclick="resetPassword('${escapeHtml(driver.driver_code)}')"><i data-lucide="key-round"></i> 重設密碼</button>
                 <button class="btn gray" type="button" onclick="deleteDriver(${driver.id || 0}, '${escapeHtml(driver.driver_code)}')"><i data-lucide="trash-2"></i> 刪除</button>
               </div>
-            </td>
+            </td>` : ''}
           </tr>
         `;
       }).join('');
@@ -796,12 +809,14 @@
     }
 
     function openCreate() {
+      if (!CAN_MANAGE_DRIVERS) { alert('權限不足：只讀人員不能新增司機帳號。'); return; }
       resetForm();
       document.getElementById('formTitle').textContent = '新增司機帳號';
       window.scrollTo({ top: 0, behavior: 'smooth' });
     }
 
     function openEdit(driverCode) {
+      if (!CAN_MANAGE_DRIVERS) { alert('權限不足：只讀人員不能編輯司機帳號。'); return; }
       const driver = allDrivers.find(item => item.driver_code === driverCode);
       if (!driver) {
         alert('找不到該司機資料');
@@ -825,6 +840,7 @@
     }
 
     function resetForm() {
+      if (!CAN_MANAGE_DRIVERS || !document.getElementById('formId')) return;
       document.getElementById('formTitle').textContent = '新增 / 編輯司機帳號';
       document.getElementById('formId').value = '';
       document.getElementById('formDriverCode').value = '';
@@ -840,6 +856,7 @@
     }
 
     async function saveDriver() {
+      if (!CAN_MANAGE_DRIVERS) { alert('權限不足：只讀人員不能儲存司機帳號。'); return; }
       const payload = {
         id: Number(document.getElementById('formId').value || 0),
         driver_code: document.getElementById('formDriverCode').value.trim().toUpperCase(),
@@ -886,6 +903,7 @@
     }
 
     async function resetPassword(driverCode) {
+      if (!CAN_MANAGE_DRIVERS) { alert('權限不足：只讀人員不能重設司機密碼。'); return; }
       const newPassword = prompt(`請輸入 ${driverCode} 的新密碼：`);
       if (newPassword === null) return;
 
@@ -920,6 +938,7 @@
     }
 
     async function deleteDriver(driverId, driverCode) {
+      if (!CAN_MANAGE_DRIVERS) { alert('權限不足：只讀人員不能刪除司機帳號。'); return; }
       const confirmed = confirm(`你確定要刪除司機帳號 ${driverCode} 嗎？
 
 注意：
@@ -961,9 +980,11 @@
     }
 
     document.getElementById('keywordInput').addEventListener('input', loadDrivers);
-    document.getElementById('formScheduleSlot').addEventListener('change', updateScheduleSlotHint);
+    if (document.getElementById('formScheduleSlot')) { document.getElementById('formScheduleSlot').addEventListener('change', updateScheduleSlotHint); }
 
-    resetForm();
+    if (CAN_MANAGE_DRIVERS) {
+      resetForm();
+    }
     loadDrivers();
   </script>
 </body>

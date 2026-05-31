@@ -6,6 +6,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Dispatch Nav | 清掃紀錄</title>
   <script src="https://unpkg.com/lucide@latest"></script>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <link href="https://fonts.googleapis.com/css?family=Open+Sans:300,400,600,700" rel="stylesheet" />
   <style>
     :root {
@@ -432,7 +433,7 @@
     }
 
     .modal-card {
-      width: min(920px, 100%);
+      width: min(1120px, 100%);
       max-height: 90vh;
       overflow: auto;
       background: white;
@@ -513,6 +514,73 @@
       line-height: 1.7;
       color: #334155;
       word-break: break-word;
+    }
+
+    .location-compare {
+      margin-top: 18px;
+      border: 1px solid #e2e8f0;
+      border-radius: 14px;
+      overflow: hidden;
+      background: #fff;
+    }
+
+    .location-map-head {
+      padding: 12px 14px;
+      border-bottom: 1px solid #e2e8f0;
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .location-legend {
+      display: flex;
+      gap: 14px;
+      flex-wrap: wrap;
+      color: #64748b;
+      font-size: 13px;
+    }
+
+    .legend-dot {
+      width: 12px;
+      height: 12px;
+      display: inline-block;
+      border-radius: 50%;
+      vertical-align: -1px;
+      margin-right: 5px;
+    }
+
+    #photoCompareMap {
+      height: 300px;
+      width: 100%;
+      background: #f1f5f9;
+    }
+
+    .location-note {
+      padding: 10px 14px;
+      font-size: 13px;
+      color: #64748b;
+      line-height: 1.7;
+      border-top: 1px solid #e2e8f0;
+    }
+
+    .compare-pin {
+      width: 30px;
+      height: 30px;
+      border-radius: 50% 50% 50% 0;
+      transform: rotate(-45deg);
+      border: 2px solid #fff;
+      box-shadow: 0 2px 7px rgba(15, 23, 42, 0.3);
+    }
+
+    .compare-pin > span {
+      display: block;
+      color: #fff;
+      transform: rotate(45deg);
+      text-align: center;
+      font-size: 13px;
+      font-weight: 700;
+      line-height: 27px;
     }
 
 
@@ -764,7 +832,7 @@
           <thead>
             <tr>
               <th>司機</th>
-              <th>日期</th>
+              <th>日期時間</th>
               <th>點位</th>
               <th>清潔前狀況</th>
               <th>清潔後判定</th>
@@ -799,8 +867,13 @@
           </div>
 
           <div class="detail-item">
-            <div class="detail-label">時間</div>
-            <div class="detail-value" id="modalTime">-</div>
+            <div class="detail-label">清潔前拍照時間（台灣）</div>
+            <div class="detail-value" id="modalBeforeTime">-</div>
+          </div>
+
+          <div class="detail-item">
+            <div class="detail-label">清潔後拍照時間（台灣）</div>
+            <div class="detail-value" id="modalAfterTime">-</div>
           </div>
 
           <div class="detail-item">
@@ -820,17 +893,45 @@
 
         </div>
       </div>
+
+      <div class="location-compare">
+        <div class="location-map-head">
+          <strong>拍照位置比對</strong>
+          <div class="location-legend">
+            <span><i class="legend-dot" style="background:#2563eb;"></i>清理點位</span>
+            <span><i class="legend-dot" style="background:#f97316;"></i>清潔前拍照位置</span>
+            <span><i class="legend-dot" style="background:#16a34a;"></i>清潔後拍照位置</span>
+          </div>
+        </div>
+        <div id="photoCompareMap"></div>
+        <div class="location-note" id="locationCompareNote">載入位置資料中...</div>
+      </div>
     </div>
   </div>
 
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script>
     lucide.createIcons();
 
+    const CAN_MANAGE_RECORDS = {{ user.is_staff|yesno:"true,false" }} || {{ user.is_superuser|yesno:"true,false" }};
     let allRecords = [];
+    let photoCompareMap = null;
+    let photoCompareLayer = null;
+
+    const taipeiDateFormatter = new Intl.DateTimeFormat('sv-SE', {
+      timeZone: 'Asia/Taipei',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false
+    });
 
     function updateLastUpdateTime() {
       const now = new Date();
-      const text = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`;
+      const text = taipeiDateFormatter.format(now).replace(',', '');
       document.getElementById('lastUpdateText').textContent = `最後更新：${text}`;
     }
 
@@ -845,6 +946,16 @@
 
     function getRecordTime(record) {
       return record.created_at || record.uploaded_at || record.time || '-';
+    }
+
+    function formatRecordDateTime(value) {
+      if (!value || value === '-') return '-';
+      const text = String(value);
+      if (/^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}/.test(text) && !/[zZ]|[+-]\d{2}:?\d{2}$/.test(text)) {
+        return text.replace('T', ' ').slice(0, 19);
+      }
+      const date = new Date(value);
+      return Number.isNaN(date.getTime()) ? text : taipeiDateFormatter.format(date).replace(',', '');
     }
 
     function getRecordAddress(record) {
@@ -892,7 +1003,11 @@
         image_url: getImageUrl(raw),
         is_qualified: raw.is_qualified,
         risk_reason: raw.risk_reason || raw.reason || '-',
-        point_key: raw.point_key || '-'
+        point_key: raw.point_key || '-',
+        point_lat: raw.point_lat,
+        point_lon: raw.point_lon,
+        photo_lat: raw.photo_lat,
+        photo_lon: raw.photo_lon
       };
     }
 
@@ -977,15 +1092,17 @@
           return `
             <tr>
               <td>${escapeHtml(item.address)}</td>
-              <td>${escapeHtml(item.latest_time || '-')}</td>
+              <td>${escapeHtml(formatRecordDateTime(item.latest_time))}</td>
               <td>
-                <button
-                  type="button"
-                  class="delete-btn"
-                  data-delete-risk="1"
-                  data-risk-address="${escapeHtml(item.address)}"
-                  data-risk-ids="${escapeHtml(ids)}"
-                >刪除</button>
+                ${CAN_MANAGE_RECORDS ? `
+                  <button
+                    type="button"
+                    class="delete-btn"
+                    data-delete-risk="1"
+                    data-risk-address="${escapeHtml(item.address)}"
+                    data-risk-ids="${escapeHtml(ids)}"
+                  >刪除</button>
+                ` : '<span class="small-text">只讀</span>'}
               </td>
             </tr>
           `;
@@ -1181,6 +1298,7 @@ function renderTable(records) {
       grouped[key] = {
         driver_code: record.driver_code || '-',
         date: dateOnly || '-',
+        display_time: formatRecordDateTime(record.created_at),
         stop_address: record.stop_address || '-',
         before: null,
         after: null,
@@ -1190,6 +1308,10 @@ function renderTable(records) {
 
     if (record.id) {
       grouped[key].record_ids.push(record.id);
+    }
+
+    if (formatRecordDateTime(record.created_at) > grouped[key].display_time) {
+      grouped[key].display_time = formatRecordDateTime(record.created_at);
     }
 
     if (record.photo_type === 'before' || record.photo_type === '前') {
@@ -1213,7 +1335,7 @@ function renderTable(records) {
     return `
       <tr>
         <td>${escapeHtml(row.driver_code)}</td>
-        <td>${escapeHtml(row.date)}</td>
+        <td>${escapeHtml(row.display_time)}</td>
         <td>${escapeHtml(row.stop_address)}</td>
         <td>${getBeforeHtml(before)}</td>
         <td>${getAfterHtml(after)}</td>
@@ -1221,27 +1343,29 @@ function renderTable(records) {
           <button
             type="button"
             class="thumbnail-btn"
-            onclick="showFlowModal('${row.driver_code}', '${row.date}', '${row.stop_address}')"
+            onclick="showFlowModal('${row.driver_code}', '${row.date}', '${row.stop_address}', '${row.display_time}')"
           >
             查看
           </button>
         </td>
         <td>
-          <button
-            type="button"
-            class="delete-btn"
-            data-delete-records="1"
-            data-record-ids="${escapeHtml(row.record_ids.join(','))}"
-          >
-            刪除
-          </button>
+          ${CAN_MANAGE_RECORDS ? `
+            <button
+              type="button"
+              class="delete-btn"
+              data-delete-records="1"
+              data-record-ids="${escapeHtml(row.record_ids.join(','))}"
+            >
+              刪除
+            </button>
+          ` : '<span class="small-text">只讀</span>'}
         </td>
       </tr>
     `;
   }).join('');
 }
 
-    function showFlowModal(driverCode, date, address) {
+    function showFlowModal(driverCode, date, address, displayTime) {
       const matchedRecords = allRecords.filter(record => {
         const recordDate = String(record.created_at || '').split(' ')[0];
         return (
@@ -1261,7 +1385,7 @@ function renderTable(records) {
 
       html += `
         <div>
-          <div class="detail-label" style="margin-bottom:8px;">清潔前照片</div>
+          <div class="detail-label" style="margin-bottom:8px;">清潔前照片 · ${before ? escapeHtml(formatRecordDateTime(before.created_at)) : '-'}</div>
           <div class="modal-image-wrap" style="min-height:220px;">
             ${before && before.image_url ? `<img src="${before.image_url}" alt="清潔前照片">` : '<span class="muted">無圖片</span>'}
           </div>
@@ -1270,7 +1394,7 @@ function renderTable(records) {
 
       html += `
         <div>
-          <div class="detail-label" style="margin-bottom:8px;">清潔後照片</div>
+          <div class="detail-label" style="margin-bottom:8px;">清潔後照片 · ${after ? escapeHtml(formatRecordDateTime(after.created_at)) : '-'}</div>
           <div class="modal-image-wrap" style="min-height:220px;">
             ${after && after.image_url ? `<img src="${after.image_url}" alt="清潔後照片">` : '<span class="muted">無圖片</span>'}
           </div>
@@ -1282,7 +1406,8 @@ function renderTable(records) {
       imageWrap.innerHTML = html;
 
       document.getElementById('modalDriver').textContent = driverCode || '-';
-      document.getElementById('modalTime').textContent = date || '-';
+      document.getElementById('modalBeforeTime').textContent = before ? formatRecordDateTime(before.created_at) : '-';
+      document.getElementById('modalAfterTime').textContent = after ? formatRecordDateTime(after.created_at) : '-';
       document.getElementById('modalAddress').textContent = address || '-';
       document.getElementById('modalPhotoType').textContent = '清潔前 / 清潔後';
 
@@ -1297,10 +1422,110 @@ function renderTable(records) {
       document.getElementById('modalStatus').textContent = getCleaningResultText(before, after);
 
       modal.classList.add('show');
+      renderPhotoCompareMap(before, after);
     }
 
     function closeModal() {
       document.getElementById('imageModal').classList.remove('show');
+    }
+
+    function validCoordinate(lat, lon) {
+      return lat !== null && lat !== undefined && lat !== '' &&
+        lon !== null && lon !== undefined && lon !== '' &&
+        Number.isFinite(Number(lat)) && Number.isFinite(Number(lon));
+    }
+
+    function makeComparePin(color, text) {
+      return L.divIcon({
+        className: '',
+        html: `<div class="compare-pin" style="background:${color};"><span>${text}</span></div>`,
+        iconSize: [30, 30],
+        iconAnchor: [15, 30]
+      });
+    }
+
+    function distanceMeters(lat1, lon1, lat2, lon2) {
+      const radius = 6371000;
+      const dLat = (Number(lat2) - Number(lat1)) * Math.PI / 180;
+      const dLon = (Number(lon2) - Number(lon1)) * Math.PI / 180;
+      const a = Math.sin(dLat / 2) ** 2 +
+        Math.cos(Number(lat1) * Math.PI / 180) * Math.cos(Number(lat2) * Math.PI / 180) *
+        Math.sin(dLon / 2) ** 2;
+      return Math.round(radius * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)));
+    }
+
+    function renderPhotoCompareMap(before, after) {
+      const pointSource = [before, after].find(record =>
+        record && validCoordinate(record.point_lat, record.point_lon)
+      ) || {};
+      const hasPoint = validCoordinate(pointSource.point_lat, pointSource.point_lon);
+      const hasBeforeLocation = before && validCoordinate(before.photo_lat, before.photo_lon);
+      const hasAfterLocation = after && validCoordinate(after.photo_lat, after.photo_lon);
+      const mapNode = document.getElementById('photoCompareMap');
+      const noteNode = document.getElementById('locationCompareNote');
+
+      if (photoCompareMap) {
+        photoCompareMap.remove();
+      }
+
+      photoCompareMap = L.map(mapNode, { zoomControl: true }).setView([25.04, 121.5], 12);
+      L.tileLayer('https://{s}.google.com/vt/lyrs=m&x={x}&y={y}&z={z}', {
+        maxZoom: 20,
+        subdomains: ['mt0', 'mt1', 'mt2', 'mt3']
+      }).addTo(photoCompareMap);
+      photoCompareLayer = L.layerGroup().addTo(photoCompareMap);
+
+      const markers = [];
+      const messages = [];
+      if (hasPoint) {
+        const point = [Number(pointSource.point_lat), Number(pointSource.point_lon)];
+        markers.push(point);
+        L.marker(point, { icon: makeComparePin('#2563eb', '點') })
+          .addTo(photoCompareLayer)
+          .bindPopup('清理點位');
+      } else {
+        messages.push('查不到此清理點位的座標');
+      }
+
+      if (hasBeforeLocation) {
+        const position = [Number(before.photo_lat), Number(before.photo_lon)];
+        markers.push(position);
+        L.marker(position, { icon: makeComparePin('#f97316', '前') })
+          .addTo(photoCompareLayer)
+          .bindPopup(`清潔前拍照位置<br>${escapeHtml(formatRecordDateTime(before.created_at))}`);
+        if (hasPoint) {
+          L.polyline([[Number(pointSource.point_lat), Number(pointSource.point_lon)], position], {
+            color: '#f97316', dashArray: '5 6', weight: 2
+          }).addTo(photoCompareLayer);
+          messages.push(`清潔前距點位約 ${distanceMeters(pointSource.point_lat, pointSource.point_lon, before.photo_lat, before.photo_lon)} 公尺`);
+        }
+      } else {
+        messages.push('清潔前照片未留存拍攝位置');
+      }
+
+      if (hasAfterLocation) {
+        const position = [Number(after.photo_lat), Number(after.photo_lon)];
+        markers.push(position);
+        L.marker(position, { icon: makeComparePin('#16a34a', '後') })
+          .addTo(photoCompareLayer)
+          .bindPopup(`清潔後拍照位置<br>${escapeHtml(formatRecordDateTime(after.created_at))}`);
+        if (hasPoint) {
+          L.polyline([[Number(pointSource.point_lat), Number(pointSource.point_lon)], position], {
+            color: '#16a34a', dashArray: '5 6', weight: 2
+          }).addTo(photoCompareLayer);
+          messages.push(`清潔後距點位約 ${distanceMeters(pointSource.point_lat, pointSource.point_lon, after.photo_lat, after.photo_lon)} 公尺`);
+        }
+      } else {
+        messages.push('清潔後照片未留存拍攝位置');
+      }
+
+      noteNode.textContent = messages.join('；') || '目前無可比較的位置資料。';
+      if (markers.length > 1) {
+        photoCompareMap.fitBounds(L.latLngBounds(markers).pad(0.3), { maxZoom: 19 });
+      } else if (markers.length === 1) {
+        photoCompareMap.setView(markers[0], 18);
+      }
+      setTimeout(() => photoCompareMap.invalidateSize(), 0);
     }
 
     async function loadRecords() {
@@ -1421,12 +1646,14 @@ function renderTable(records) {
     document.addEventListener('click', function(event) {
       const riskButton = event.target.closest('[data-delete-risk]');
       if (riskButton) {
+        if (!CAN_MANAGE_RECORDS) { alert('權限不足：只讀人員不能刪除清掃分析紀錄。'); return; }
         deleteRiskArea(riskButton.dataset.riskAddress || '', riskButton.dataset.riskIds || '');
         return;
       }
 
       const recordButton = event.target.closest('[data-delete-records]');
       if (recordButton) {
+        if (!CAN_MANAGE_RECORDS) { alert('權限不足：只讀人員不能刪除清掃紀錄。'); return; }
         deleteCleaningRecords(recordButton.dataset.recordIds || '');
       }
     });

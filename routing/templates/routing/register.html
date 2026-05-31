@@ -206,6 +206,41 @@
       flex-shrink: 0;
     }
 
+    .password-wrapper {
+      position: relative;
+    }
+
+    .password-wrapper input {
+      padding-right: 48px;
+    }
+
+    .toggle-password {
+      position: absolute;
+      right: 10px;
+      top: 50%;
+      transform: translateY(-50%);
+      width: 36px;
+      height: 36px;
+      border: none;
+      border-radius: 10px;
+      background: transparent;
+      color: #64748b;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      transition: background .2s ease, color .2s ease;
+    }
+
+    .toggle-password:hover {
+      background: #eef3ff;
+      color: var(--primary);
+    }
+
+    .toggle-password i {
+      color: currentColor;
+    }
+
     input {
       flex: 1;
       padding: 13px 15px;
@@ -324,8 +359,8 @@
         <img src="{% static 'images/dispatch_nav_logo.png' %}" alt="Dispatch Nav Logo">
       </div>
 
-      <h2>建立管理員</h2>
-      <p>請設定新的管理員帳號與密碼</p>
+      <h2>申請管理者帳號</h2>
+      <p>申請送出後需由高階管理者審核，通過後才能登入。</p>
 
       <form id="registerForm">
         {% csrf_token %}
@@ -339,13 +374,16 @@
 
         <div class="form-group">
           <label>設定密碼 Password</label>
-          <div class="input-wrapper">
+          <div class="input-wrapper password-wrapper">
             <i data-lucide="lock" size="20"></i>
             <input type="password" id="reg_password" placeholder="輸入密碼" required>
+            <button type="button" class="toggle-password" data-target="reg_password" aria-label="顯示密碼">
+              <i data-lucide="eye" size="20"></i>
+            </button>
           </div>
         </div>
 
-        <button type="submit" class="btn-login">確認註冊</button>
+        <button type="submit" class="btn-login">送出申請</button>
       </form>
 
       <div class="footer-link">
@@ -356,6 +394,27 @@
 
   <script>
     lucide.createIcons();
+
+    document.querySelectorAll('.toggle-password').forEach((button) => {
+      const input = document.getElementById(button.dataset.target);
+      if (!input) return;
+      const show = () => {
+        input.type = 'text';
+        button.innerHTML = '<i data-lucide="eye-off" size="20"></i>';
+        lucide.createIcons();
+      };
+      const hide = () => {
+        input.type = 'password';
+        button.innerHTML = '<i data-lucide="eye" size="20"></i>';
+        lucide.createIcons();
+      };
+      button.addEventListener('mousedown', show);
+      button.addEventListener('mouseup', hide);
+      button.addEventListener('mouseleave', hide);
+      button.addEventListener('touchstart', (e) => { e.preventDefault(); show(); }, { passive: false });
+      button.addEventListener('touchend', hide);
+      button.addEventListener('click', (e) => e.preventDefault());
+    });
 
     document.getElementById('registerForm').onsubmit = async function(e) {
       e.preventDefault();
@@ -377,7 +436,7 @@
 
       const result = await response.json();
       if (result.success) {
-        alert("註冊成功！請重新登入");
+        alert(result.message || "帳號申請已送出，請等待高階管理者審核後再登入。");
         window.location.href = "{% url 'login' %}";
       } else {
         alert(result.message);
