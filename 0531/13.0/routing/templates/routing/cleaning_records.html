@@ -1,0 +1,105 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <title>清掃紀錄</title>
+</head>
+<body>
+
+<h2>清掃紀錄</h2>
+
+<div style="margin-bottom: 16px; display: flex; gap: 12px; flex-wrap: wrap;">
+  <input
+    id="driverCodeInput"
+    type="text"
+    placeholder="搜尋司機編號，例如 P01"
+    style="padding: 8px 12px; min-width: 220px;"
+  />
+
+  <select id="statusSelect" style="padding: 8px 12px;">
+    <option value="">全部狀態</option>
+    <option value="合格">合格</option>
+    <option value="不合格">不合格</option>
+  </select>
+
+  <button type="button" onclick="loadRecords()">搜尋</button>
+</div>
+
+<button type="button" onclick="window.location.href='/cleaning-report/'">
+  分析 / 月報表
+</button>
+
+<table border="1" cellpadding="10">
+  <thead>
+    <tr>
+      <th>司機</th>
+      <th>分數</th>
+      <th>狀態</th>
+      <th>時間</th>
+      <th>照片</th>
+    </tr>
+  </thead>
+  <tbody id="tableBody">
+    <tr><td colspan="5">載入中...</td></tr>
+  </tbody>
+</table>
+
+<script>
+async function loadRecords() {
+  const driverCode = document.getElementById("driverCodeInput").value.trim();
+  const status = document.getElementById("statusSelect").value;
+
+  const params = new URLSearchParams();
+
+  if (driverCode) {
+    params.append("driver_code", driverCode);
+  }
+
+  if (status) {
+    params.append("status", status);
+  }
+
+  const url = params.toString()
+    ? `/api/admin/cleaning-records/?${params.toString()}`
+    : `/api/admin/cleaning-records/`;
+
+  const res = await fetch(url);
+  const data = await res.json();
+
+  const tbody = document.getElementById("tableBody");
+
+  if (!data.ok) {
+    tbody.innerHTML = "<tr><td colspan='5'>讀取失敗</td></tr>";
+    return;
+  }
+
+  if (!data.records.length) {
+    tbody.innerHTML = "<tr><td colspan='5'>查無資料</td></tr>";
+    return;
+  }
+
+  tbody.innerHTML = data.records.map(r => `
+    <tr>
+      <td>${r.driver_code}</td>
+      <td>${r.score ?? '-'}</td>
+      <td>${r.status ?? '-'}</td>
+      <td>${r.created_at}</td>
+      <td>
+        ${r.image_url ? `<img src="${r.image_url}" width="120">` : '無圖片'}
+      </td>
+    </tr>
+  `).join("");
+}
+
+document.getElementById("driverCodeInput").addEventListener("keydown", function(event) {
+  if (event.key === "Enter") {
+    loadRecords();
+  }
+});
+
+loadRecords();
+</script>
+
+</body>
+</html>

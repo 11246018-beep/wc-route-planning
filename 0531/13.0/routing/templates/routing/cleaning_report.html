@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <title>清掃月報表</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+
+<h2>清掃月報表</h2>
+
+<!-- 摘要 -->
+<div style="display:flex; gap:16px; margin-bottom:20px;">
+  <div>總筆數：<span id="total"></span></div>
+  <div>平均分數：<span id="avg"></span></div>
+  <div>合格：<span id="pass"></span></div>
+  <div>不合格：<span id="fail"></span></div>
+</div>
+
+<!-- 圖表 -->
+<div style="display:flex; gap:40px; flex-wrap:wrap;">
+  <div style="width:300px;">
+    <canvas id="pieChart"></canvas>
+  </div>
+
+  <div style="width:500px;">
+    <canvas id="barChart"></canvas>
+  </div>
+</div>
+
+<!-- 司機統計表 -->
+<h3>司機統計</h3>
+<table border="1" cellpadding="10">
+  <thead>
+    <tr>
+      <th>司機</th>
+      <th>平均分數</th>
+      <th>次數</th>
+    </tr>
+  </thead>
+  <tbody id="driverTable"></tbody>
+</table>
+
+<script>
+async function loadReport() {
+  const res = await fetch('/api/admin/cleaning-summary/');
+  const data = await res.json();
+
+  if (!data.ok) {
+    alert("讀取失敗");
+    return;
+  }
+
+  const summary = data.summary;
+  const drivers = data.drivers;
+
+  // 填數字
+  document.getElementById("total").textContent = summary.total_count;
+  document.getElementById("avg").textContent = summary.avg_score;
+  document.getElementById("pass").textContent = summary.pass_count;
+  document.getElementById("fail").textContent = summary.fail_count;
+
+  // 圓餅圖
+  new Chart(document.getElementById("pieChart"), {
+    type: "pie",
+    data: {
+      labels: ["合格", "不合格"],
+      datasets: [{
+        data: [summary.pass_count, summary.fail_count]
+      }]
+    }
+  });
+
+  // 長條圖
+  new Chart(document.getElementById("barChart"), {
+    type: "bar",
+    data: {
+      labels: drivers.map(d => d.driver_code),
+      datasets: [{
+        label: "平均分數",
+        data: drivers.map(d => d.avg_score)
+      }]
+    },
+    options: {
+      scales: {
+        y: {
+          beginAtZero: true,
+          max: 100
+        }
+      }
+    }
+  });
+
+  // 表格
+  const tbody = document.getElementById("driverTable");
+  tbody.innerHTML = drivers.map(d => `
+    <tr>
+      <td>${d.driver_code}</td>
+      <td>${d.avg_score}</td>
+      <td>${d.count}</td>
+    </tr>
+  `).join("");
+}
+
+loadReport();
+</script>
+
+</body>
+</html>
