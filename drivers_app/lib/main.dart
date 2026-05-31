@@ -1,4 +1,4 @@
-import 'dart:async';
+﻿import 'dart:async';
 import 'dart:convert';
 import 'dart:ui';
 import 'package:flutter/material.dart';
@@ -10,16 +10,64 @@ import 'dart:io';
 import 'package:image_picker/image_picker.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:uuid/uuid.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 String kBaseUrl = 'https://schools-rivers-sub-lifetime.trycloudflare.com';
 String kRouteVariant = 'normal';
+String? kDriverToken;
 
 const Map<String, String> kRouteVariantLabels = {
-  'normal': '不跨縣市',
-  'compact': '可跨縣市',
+  'normal': '不跨縣市路線',
+  'compact': '跨縣市路線',
 };
 
 const List<String> kVisibleRouteVariants = ['normal', 'compact'];
+
+Set<int> parseStoredSeqSet(List<String>? values) {
+  if (values == null) return <int>{};
+  return values.map((value) => int.tryParse(value)).whereType<int>().toSet();
+}
+
+List<String> serializeSeqSet(Set<int> values) {
+  final sorted = values.toList()..sort();
+  return sorted.map((value) => value.toString()).toList();
+}
+
+String cleaningProgressKeyPrefix({
+  required String driverCode,
+  required int day,
+  required String routeId,
+  required String routeVariant,
+}) {
+  return 'cleaning_progress:$driverCode:$day:$routeId:$routeVariant';
+}
+
+Future<void> clearStoredCleaningProgress(String keyPrefix) async {
+  final prefs = await SharedPreferences.getInstance();
+  await prefs.remove('$keyPrefix:current_stop_seq');
+  await prefs.remove('$keyPrefix:completed');
+  await prefs.remove('$keyPrefix:skipped');
+  await prefs.remove('$keyPrefix:before_uploaded');
+  await prefs.remove('$keyPrefix:after_uploaded');
+}
+
+Map<String, String> driverAuthHeaders({bool jsonContent = false}) {
+  return {
+    if (jsonContent) 'Content-Type': 'application/json',
+    if (kDriverToken != null && kDriverToken!.isNotEmpty)
+      'Authorization': 'Bearer $kDriverToken',
+  };
+}
+
+Future<void> saveDriverToken(String? token) async {
+  kDriverToken = token;
+  final prefs = await SharedPreferences.getInstance();
+  if (token == null || token.isEmpty) {
+    await prefs.remove('driver_auth_token');
+  } else {
+    await prefs.setString('driver_auth_token', token);
+  }
+}
 
 Future<void> showConnectionSettingsSheet(
   BuildContext context, {
@@ -49,7 +97,7 @@ Future<void> showConnectionSettingsSheet(
               ),
               const SizedBox(height: 8),
               const Text(
-                'Android 實機請填你電腦的 IPv4。Android 模擬器常用 10.0.2.2，iOS 模擬器常用 127.0.0.1。',
+                'Android 模擬器可使用 10.0.2.2，實機請輸入電腦的區網 IPv4。',
                 style: TextStyle(color: Colors.black54),
               ),
               const SizedBox(height: 16),
@@ -99,7 +147,9 @@ Future<void> showConnectionSettingsSheet(
                                 newUrl.startsWith('https://'))) {
                           ScaffoldMessenger.of(context).showSnackBar(
                             const SnackBar(
-                              content: Text('請輸入完整網址，例如 http://172.20.10.2:8000'),
+                              content: Text(
+                                '請輸入正確網址，例如：http://172.20.10.2:8000',
+                              ),
                             ),
                           );
                           return;
@@ -109,7 +159,7 @@ Future<void> showConnectionSettingsSheet(
                         await onSaved?.call();
                         if (!context.mounted) return;
                         ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(content: Text('目前後台已切換為：$kBaseUrl')),
+                          SnackBar(content: Text('Base URL 已更新：$kBaseUrl')),
                         );
                       },
                       child: const Text('儲存'),
@@ -126,6 +176,7 @@ Future<void> showConnectionSettingsSheet(
 }
 
 void goToLoginPage(BuildContext context) {
+  saveDriverToken(null);
   Navigator.of(context).pushAndRemoveUntil(
     MaterialPageRoute(builder: (_) => const LoginPage()),
     (route) => false,
@@ -138,7 +189,7 @@ Future<void> confirmLogout(BuildContext context) async {
     builder: (context) {
       return AlertDialog(
         title: const Text('確認登出'),
-        content: const Text('要登出並回到登入頁嗎？'),
+        content: const Text('確定要登出嗎？'),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(context).pop(false),
@@ -160,6 +211,8 @@ Future<void> confirmLogout(BuildContext context) async {
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  final prefs = await SharedPreferences.getInstance();
+  kDriverToken = prefs.getString('driver_auth_token');
 
   await Supabase.initialize(
     url: 'https://evwzonunmjvulzitxjmn.supabase.co',
@@ -172,12 +225,11 @@ Future<void> main() async {
 class DriverApp extends StatelessWidget {
   const DriverApp({super.key});
 
-
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      title: '司機排程 App',
+      title: 'Dispatch Nav',
       theme: ThemeData(
         useMaterial3: true,
         colorScheme: ColorScheme.fromSeed(
@@ -197,7 +249,7 @@ class DriverApp extends StatelessWidget {
         ),
         inputDecorationTheme: InputDecorationTheme(
           filled: true,
-          fillColor: Colors.white.withValues(alpha:0.92),
+          fillColor: Colors.white.withValues(alpha: 0.92),
           border: OutlineInputBorder(
             borderRadius: BorderRadius.circular(18),
             borderSide: const BorderSide(color: Color(0x22000000)),
@@ -228,7 +280,7 @@ class DriverApp extends StatelessWidget {
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(18),
             ),
-            backgroundColor: Colors.white.withValues(alpha:0.88),
+            backgroundColor: Colors.white.withValues(alpha: 0.88),
           ),
         ),
         snackBarTheme: const SnackBarThemeData(
@@ -241,7 +293,6 @@ class DriverApp extends StatelessWidget {
 }
 
 class ApiService {
-  
   static Future<Map<String, dynamic>> uploadImageToSupabase({
     required String driverCode,
     required int day,
@@ -259,6 +310,8 @@ class ApiService {
     String? stopCounty,
     double? stopLat,
     double? stopLon,
+    required double photoLat,
+    required double photoLon,
   }) async {
     final supabase = Supabase.instance.client;
     final fileExt = imageFile.path.split('.').last.toLowerCase();
@@ -266,13 +319,9 @@ class ApiService {
     final filePath =
         '$driverCode/day_$day/$routeId/$photoType/${stopSeq ?? 0}_$fileName.$fileExt';
 
-    await supabase.storage
-        .from('photos')
-        .upload(filePath, imageFile);
+    await supabase.storage.from('photos').upload(filePath, imageFile);
 
-    final publicUrl = supabase.storage
-        .from('photos')
-        .getPublicUrl(filePath);
+    final publicUrl = supabase.storage.from('photos').getPublicUrl(filePath);
 
     await supabase.from('uploaded_photos').insert({
       'driver_code': driverCode,
@@ -292,6 +341,11 @@ class ApiService {
       'stop_county': stopCounty,
       'stop_lat': stopLat,
       'stop_lon': stopLon,
+      'photo_lat': photoLat,
+      'photo_lon': photoLon,
+      'point_lat': stopLat,
+      'point_lon': stopLon,
+      'created_at': DateTime.now().toUtc().toIso8601String(),
     });
 
     return {
@@ -303,7 +357,7 @@ class ApiService {
 
   static Future<Map<String, dynamic>> checkBackend() async {
     final response = await http
-        .get(Uri.parse('$kBaseUrl/api/driver/reports/?limit=1'))
+        .get(Uri.parse('$kBaseUrl/api/health/'))
         .timeout(const Duration(seconds: 12));
 
     final data = jsonDecode(utf8.decode(response.bodyBytes));
@@ -312,7 +366,7 @@ class ApiService {
       return Map<String, dynamic>.from(data);
     }
 
-    throw Exception(data['message'] ?? '後台連線失敗');
+    throw Exception(data['message'] ?? '連線測試失敗');
   }
 
   static Future<Map<String, dynamic>> login({
@@ -321,16 +375,14 @@ class ApiService {
   }) async {
     final response = await http.post(
       Uri.parse('$kBaseUrl/api/driver/login/'),
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({
-        'driver_code': driverCode,
-        'password': password,
-      }),
+      headers: driverAuthHeaders(jsonContent: true),
+      body: jsonEncode({'driver_code': driverCode, 'password': password}),
     );
 
     final data = jsonDecode(utf8.decode(response.bodyBytes));
 
     if (response.statusCode == 200 && data['success'] == true) {
+      await saveDriverToken(data['token']?.toString());
       return Map<String, dynamic>.from(data);
     }
 
@@ -345,14 +397,14 @@ class ApiService {
       '$kBaseUrl/api/driver/task/?driver_code=$driverCode&day=$day&variant=$kRouteVariant',
     );
 
-    final response = await http.get(uri);
+    final response = await http.get(uri, headers: driverAuthHeaders());
     final data = jsonDecode(utf8.decode(response.bodyBytes));
 
     if (response.statusCode == 200 && data['ok'] == true) {
       return Map<String, dynamic>.from(data);
     }
 
-    throw Exception(data['message'] ?? '取得排程失敗');
+    throw Exception(data['message'] ?? '讀取排程失敗');
   }
 
   static Future<Map<String, dynamic>> fetchProfile({
@@ -362,14 +414,14 @@ class ApiService {
       '$kBaseUrl/api/driver/profile/?driver_code=$driverCode',
     );
 
-    final response = await http.get(uri);
+    final response = await http.get(uri, headers: driverAuthHeaders());
     final data = jsonDecode(utf8.decode(response.bodyBytes));
 
     if (response.statusCode == 200 && data['ok'] == true) {
       return Map<String, dynamic>.from(data['profile'] ?? {});
     }
 
-    throw Exception(data['message'] ?? '取得個人資料失敗');
+    throw Exception(data['message'] ?? '讀取司機資料失敗');
   }
 
   static Future<Map<String, dynamic>> submitReport({
@@ -382,7 +434,7 @@ class ApiService {
   }) async {
     final response = await http.post(
       Uri.parse('$kBaseUrl/api/driver/report/'),
-      headers: {'Content-Type': 'application/json'},
+      headers: driverAuthHeaders(jsonContent: true),
       body: jsonEncode({
         'driver_code': driverCode,
         'day': day,
@@ -410,17 +462,17 @@ class ApiService {
       '$kBaseUrl/api/driver/reports/?driver_code=$driverCode&limit=10',
     );
 
-    final response = await http.get(uri);
+    final response = await http.get(uri, headers: driverAuthHeaders());
     final data = jsonDecode(utf8.decode(response.bodyBytes));
 
     if (response.statusCode == 200 && data['ok'] == true) {
       return List<Map<String, dynamic>>.from(data['reports'] ?? []);
     }
 
-    throw Exception(data['message'] ?? '取得回報紀錄失敗');
+    throw Exception(data['message'] ?? '讀取回報失敗');
   }
 
-    static Future<Map<String, dynamic>> uploadLiveLocation({
+  static Future<Map<String, dynamic>> uploadLiveLocation({
     required String driverCode,
     required int day,
     required String routeId,
@@ -428,12 +480,15 @@ class ApiService {
     required double lon,
     required int currentStopSeq,
     required int completedCount,
+    required List<int> completedStopSeqs,
+    required List<int> skippedStopSeqs,
     required int totalCount,
     required String status,
+    String? progressResetAck,
   }) async {
     final response = await http.post(
       Uri.parse('$kBaseUrl/api/driver/live/update/'),
-      headers: {'Content-Type': 'application/json'},
+      headers: driverAuthHeaders(jsonContent: true),
       body: jsonEncode({
         'driver_code': driverCode,
         'day': day,
@@ -442,8 +497,11 @@ class ApiService {
         'lon': lon,
         'current_stop_seq': currentStopSeq,
         'completed_count': completedCount,
+        'completed_stop_seqs': completedStopSeqs,
+        'skipped_stop_seqs': skippedStopSeqs,
         'total_count': totalCount,
         'status': status,
+        'progress_reset_ack': progressResetAck ?? '',
       }),
     );
 
@@ -453,7 +511,28 @@ class ApiService {
       return Map<String, dynamic>.from(data);
     }
 
-    throw Exception(data['message'] ?? '上傳位置失敗');
+    throw Exception(data['message'] ?? '上傳定位失敗');
+  }
+
+  static Future<Map<String, dynamic>> fetchLiveState({
+    required String driverCode,
+    String? progressResetAck,
+  }) async {
+    final uri = Uri.parse('$kBaseUrl/api/driver/live/state/').replace(
+      queryParameters: {
+        'driver_code': driverCode,
+        'progress_reset_ack': progressResetAck ?? '',
+      },
+    );
+
+    final response = await http.get(uri, headers: driverAuthHeaders());
+    final data = jsonDecode(utf8.decode(response.bodyBytes));
+
+    if (response.statusCode == 200 && data['ok'] == true) {
+      return Map<String, dynamic>.from(data);
+    }
+
+    throw Exception(data['message'] ?? '讀取即時狀態失敗');
   }
 
   static Future<Map<String, dynamic>> uploadCleaningImage({
@@ -462,6 +541,7 @@ class ApiService {
   }) async {
     final uri = Uri.parse('$kBaseUrl/api/driver/upload-image/');
     final request = http.MultipartRequest('POST', uri);
+    request.headers.addAll(driverAuthHeaders());
 
     request.fields['driver_code'] = driverCode;
     request.files.add(
@@ -476,10 +556,9 @@ class ApiService {
       return Map<String, dynamic>.from(data);
     }
 
-    throw Exception(data['message'] ?? '圖片上傳失敗');
+    throw Exception(data['message'] ?? '上傳照片失敗');
   }
-  
- 
+
   static Future<Map<String, dynamic>> detectCleaningAI({
     required String driverCode,
     required File imageFile,
@@ -487,13 +566,13 @@ class ApiService {
   }) async {
     final uri = Uri.parse('$kBaseUrl/api/ai/detect/');
     final request = http.MultipartRequest('POST', uri);
+    request.headers.addAll(driverAuthHeaders());
 
     request.fields['driver_code'] = driverCode;
     request.fields['photo_type'] = photoType;
     request.files.add(
       await http.MultipartFile.fromPath('image', imageFile.path),
     );
-
 
     final streamedResponse = await request.send();
     final response = await http.Response.fromStream(streamedResponse);
@@ -503,11 +582,9 @@ class ApiService {
       return Map<String, dynamic>.from(data);
     }
 
-    throw Exception(data['message'] ?? 'AI辨識失敗');
+    throw Exception(data['message'] ?? 'AI 辨識失敗');
   }
 }
-
-
 
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
@@ -519,6 +596,7 @@ class LoginPage extends StatefulWidget {
 class _LoginPageState extends State<LoginPage> {
   final TextEditingController driverIdController = TextEditingController();
   final TextEditingController passwordController = TextEditingController();
+
   bool isLoading = false;
   bool isCheckingConnection = false;
 
@@ -534,9 +612,9 @@ class _LoginPageState extends State<LoginPage> {
     final password = passwordController.text.trim();
 
     if (driverCode.isEmpty || password.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('請輸入司機編號與密碼')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('請輸入司機代碼與密碼')));
       return;
     }
 
@@ -564,18 +642,17 @@ class _LoginPageState extends State<LoginPage> {
       );
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('登入失敗：$e')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('登入失敗：$e')));
     } finally {
-      if (mounted) { 
+      if (mounted) {
         setState(() {
           isLoading = false;
         });
       }
     }
   }
-
 
   Future<void> handleTestConnection() async {
     setState(() {
@@ -585,14 +662,14 @@ class _LoginPageState extends State<LoginPage> {
     try {
       await ApiService.checkBackend();
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('後台連線成功：$kBaseUrl')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('連線成功：')));
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('後台連線失敗：$e')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('連線失敗：')));
     } finally {
       if (mounted) {
         setState(() {
@@ -604,132 +681,178 @@ class _LoginPageState extends State<LoginPage> {
 
   @override
   Widget build(BuildContext context) {
+    final bottomInset = MediaQuery.of(context).viewInsets.bottom;
+
     return Scaffold(
-      body: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 420),
-          child: Padding(
-            padding: const EdgeInsets.all(24),
-            child: Card(
-              elevation: 2,
-              child: Padding(
-                padding: const EdgeInsets.all(24),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Icon(
-                      Icons.local_shipping,
-                      size: 72,
-                      color: Colors.indigo,
-                    ),
-                    const SizedBox(height: 20),
-                    const Text(
-                      '司機排程系統',
-                      style: TextStyle(
-                        fontSize: 28,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    const Text(
-                      '請輸入司機編號與密碼',
-                      style: TextStyle(fontSize: 15, color: Colors.grey),
-                    ),
-                    const SizedBox(height: 28),
-                    TextField(
-                      controller: driverIdController,
-                      textCapitalization: TextCapitalization.characters,
-                      decoration: const InputDecoration(
-                        labelText: '司機編號',
-                        hintText: '例如：P01 / W01',
-                        border: OutlineInputBorder(),
-                        prefixIcon: Icon(Icons.badge_outlined),
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-                    TextField(
-                      controller: passwordController,
-                      obscureText: true,
-                      decoration: const InputDecoration(
-                        labelText: '密碼',
-                        border: OutlineInputBorder(),
-                        prefixIcon: Icon(Icons.lock_outline),
-                      ),
-                    ),
-                    const SizedBox(height: 24),
-                    SizedBox(
-                      width: double.infinity,
-                      height: 52,
-                      child: ElevatedButton(
-                        onPressed: isLoading ? null : handleLogin,
-                        child: isLoading
-                            ? const SizedBox(
-                                width: 22,
-                                height: 22,
-                                child: CircularProgressIndicator(strokeWidth: 2),
-                              )
-                            : const Text(
-                                '登入',
-                                style: TextStyle(fontSize: 18),
+      resizeToAvoidBottomInset: true,
+      body: SafeArea(
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            return SingleChildScrollView(
+              keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+              padding: EdgeInsets.fromLTRB(24, 24, 24, 24 + bottomInset),
+              child: ConstrainedBox(
+                constraints: BoxConstraints(
+                  minHeight: constraints.maxHeight - 24,
+                ),
+                child: Center(
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 420),
+                    child: Card(
+                      elevation: 2,
+                      child: Padding(
+                        padding: const EdgeInsets.fromLTRB(24, 28, 24, 24),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Image.asset(
+                              'assets/images/dispatch_nav_logo.png',
+                              height: 130,
+                              fit: BoxFit.contain,
+                              errorBuilder: (context, error, stackTrace) {
+                                return const Icon(
+                                  Icons.local_shipping,
+                                  size: 82,
+                                  color: Colors.indigo,
+                                );
+                              },
+                            ),
+                            const SizedBox(height: 18),
+                            const Text(
+                              '司機排程系統',
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                fontSize: 28,
+                                fontWeight: FontWeight.bold,
+                                letterSpacing: 1,
                               ),
+                            ),
+                            const SizedBox(height: 8),
+                            const Text(
+                              '請輸入司機代碼與密碼',
+                              style: TextStyle(
+                                fontSize: 15,
+                                color: Colors.grey,
+                              ),
+                            ),
+                            const SizedBox(height: 28),
+                            TextField(
+                              controller: driverIdController,
+                              textCapitalization: TextCapitalization.characters,
+                              decoration: const InputDecoration(
+                                labelText: '司機代碼',
+                                hintText: '例如：P01 / W01',
+                                border: OutlineInputBorder(),
+                                prefixIcon: Icon(Icons.badge_outlined),
+                              ),
+                            ),
+                            const SizedBox(height: 16),
+                            TextField(
+                              controller: passwordController,
+                              obscureText: true,
+                              decoration: const InputDecoration(
+                                labelText: '密碼',
+                                border: OutlineInputBorder(),
+                                prefixIcon: Icon(Icons.lock_outline),
+                              ),
+                            ),
+                            const SizedBox(height: 24),
+                            SizedBox(
+                              width: double.infinity,
+                              height: 52,
+                              child: ElevatedButton(
+                                onPressed: isLoading ? null : handleLogin,
+                                child: isLoading
+                                    ? const SizedBox(
+                                        width: 22,
+                                        height: 22,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                          valueColor:
+                                              AlwaysStoppedAnimation<Color>(
+                                                Colors.white,
+                                              ),
+                                        ),
+                                      )
+                                    : const Text(
+                                        '登入',
+                                        style: TextStyle(fontSize: 18),
+                                      ),
+                              ),
+                            ),
+                            const SizedBox(height: 12),
+                            SizedBox(
+                              width: double.infinity,
+                              height: 48,
+                              child: OutlinedButton.icon(
+                                onPressed: isCheckingConnection
+                                    ? null
+                                    : handleTestConnection,
+                                icon: isCheckingConnection
+                                    ? const SizedBox(
+                                        width: 18,
+                                        height: 18,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                        ),
+                                      )
+                                    : const Icon(Icons.wifi_tethering),
+                                label: const Text('測試連線'),
+                              ),
+                            ),
+                            const SizedBox(height: 12),
+                            SizedBox(
+                              width: double.infinity,
+                              height: 48,
+                              child: OutlinedButton.icon(
+                                onPressed: () async {
+                                  await showConnectionSettingsSheet(
+                                    context,
+                                    onSaved: () {
+                                      if (mounted) setState(() {});
+                                    },
+                                  );
+                                },
+                                icon: const Icon(Icons.settings_ethernet),
+                                label: const Text('連線設定'),
+                              ),
+                            ),
+                            const SizedBox(height: 14),
+                            Text(
+                              '目前連線：$kBaseUrl',
+                              style: const TextStyle(
+                                fontSize: 12,
+                                color: Colors.grey,
+                              ),
+                              textAlign: TextAlign.center,
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              '目前路線：${kRouteVariantLabels[kRouteVariant] ?? kRouteVariant}',
+                              style: const TextStyle(
+                                fontSize: 12,
+                                color: Colors.grey,
+                              ),
+                              textAlign: TextAlign.center,
+                            ),
+                            const SizedBox(height: 6),
+                            const Text(
+                              '請確認 Base URL 指向目前 Django 後台',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: Colors.grey,
+                              ),
+                              textAlign: TextAlign.center,
+                            ),
+                          ],
+                        ),
                       ),
                     ),
-                    const SizedBox(height: 12),
-                    SizedBox(
-                      width: double.infinity,
-                      height: 48,
-                      child: OutlinedButton.icon(
-                        onPressed: isCheckingConnection ? null : handleTestConnection,
-                        icon: isCheckingConnection
-                            ? const SizedBox(
-                                width: 18,
-                                height: 18,
-                                child: CircularProgressIndicator(strokeWidth: 2),
-                              )
-                            : const Icon(Icons.wifi_tethering),
-                        label: const Text('測試後台連線'),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    SizedBox(
-                      width: double.infinity,
-                      height: 48,
-                      child: OutlinedButton.icon(
-                        onPressed: () async {
-                          await showConnectionSettingsSheet(
-                            context,
-                            onSaved: () {
-                              if (mounted) setState(() {});
-                            },
-                          );
-                        },
-                        icon: const Icon(Icons.settings_ethernet),
-                        label: const Text('修改連線設定'),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    Text(
-                      '目前後台：$kBaseUrl',
-                      style: const TextStyle(fontSize: 12, color: Colors.grey),
-                      textAlign: TextAlign.center,
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      '目前模式：${kRouteVariantLabels[kRouteVariant] ?? kRouteVariant}',
-                      style: const TextStyle(fontSize: 12, color: Colors.grey),
-                      textAlign: TextAlign.center,
-                    ),
-                    const SizedBox(height: 6),
-                    const Text(
-                      '請確認 Base URL 是你目前 Django 可連到的位址',
-                      style: TextStyle(fontSize: 12, color: Colors.grey),
-                      textAlign: TextAlign.center,
-                    ),
-                  ],
+                  ),
                 ),
               ),
-            ),
-          ),
+            );
+          },
         ),
       ),
     );
@@ -761,15 +884,24 @@ class _MainMapScreenState extends State<MainMapScreen> {
   String? loadError;
   Map<String, dynamic> routeData = const {};
   Set<Marker> markers = <Marker>{};
+  Set<int> completedStopSeqs = <int>{};
+  Set<int> skippedStopSeqs = <int>{};
+  Timer? progressResetTimer;
+  bool isCheckingProgressReset = false;
 
   @override
   void initState() {
     super.initState();
     loadRouteForDay(selectedDay);
+    progressResetTimer = Timer.periodic(
+      const Duration(seconds: 10),
+      (_) => _checkCurrentRouteProgressReset(),
+    );
   }
 
   @override
   void dispose() {
+    progressResetTimer?.cancel();
     _mapController?.dispose();
     super.dispose();
   }
@@ -792,13 +924,22 @@ class _MainMapScreenState extends State<MainMapScreen> {
         day: day,
       );
       final route = Map<String, dynamic>.from(data['route'] ?? {});
+      final routeId = route['route_id']?.toString() ?? '';
       final stops = List<Map<String, dynamic>>.from(route['stops'] ?? []);
+      final progress = await _loadStoredProgress(day: day, routeId: routeId);
+      final syncedProgress = await _syncRemoteProgressResetForRoute(
+        day: day,
+        routeId: routeId,
+        progress: progress,
+      );
       final builtMarkers = <Marker>{};
 
       for (final stop in stops) {
         final seq = stop['seq']?.toString() ?? '-';
         final lat = _parseDouble(stop['lat'] ?? stop['latitude']);
-        final lon = _parseDouble(stop['lon'] ?? stop['lng'] ?? stop['longitude']);
+        final lon = _parseDouble(
+          stop['lon'] ?? stop['lng'] ?? stop['longitude'],
+        );
         if (lat == null || lon == null) continue;
 
         builtMarkers.add(
@@ -807,7 +948,7 @@ class _MainMapScreenState extends State<MainMapScreen> {
             position: LatLng(lat, lon),
             infoWindow: InfoWindow(
               title: '第 $seq 站',
-              snippet: (stop['address'] ?? '未提供地址').toString(),
+              snippet: (stop['address'] ?? '無地址').toString(),
             ),
             onTap: () => _focusStop(stop),
           ),
@@ -828,6 +969,8 @@ class _MainMapScreenState extends State<MainMapScreen> {
       setState(() {
         routeData = data;
         markers = builtMarkers;
+        completedStopSeqs = syncedProgress.completed;
+        skippedStopSeqs = syncedProgress.skipped;
         isLoadingRoute = false;
       });
 
@@ -851,11 +994,100 @@ class _MainMapScreenState extends State<MainMapScreen> {
     }
   }
 
+  Future<({Set<int> completed, Set<int> skipped})> _loadStoredProgress({
+    required int day,
+    required String routeId,
+  }) async {
+    if (routeId.isEmpty) {
+      return (completed: <int>{}, skipped: <int>{});
+    }
+    final prefs = await SharedPreferences.getInstance();
+    final keyPrefix = cleaningProgressKeyPrefix(
+      driverCode: widget.driverCode,
+      day: day,
+      routeId: routeId,
+      routeVariant: kRouteVariant,
+    );
+    return (
+      completed: parseStoredSeqSet(prefs.getStringList('$keyPrefix:completed')),
+      skipped: parseStoredSeqSet(prefs.getStringList('$keyPrefix:skipped')),
+    );
+  }
+
+  Future<({Set<int> completed, Set<int> skipped})>
+      _syncRemoteProgressResetForRoute({
+    required int day,
+    required String routeId,
+    required ({Set<int> completed, Set<int> skipped}) progress,
+  }) async {
+    if (routeId.isEmpty) return progress;
+
+    final keyPrefix = cleaningProgressKeyPrefix(
+      driverCode: widget.driverCode,
+      day: day,
+      routeId: routeId,
+      routeVariant: kRouteVariant,
+    );
+    final prefs = await SharedPreferences.getInstance();
+    final ackKey = '$keyPrefix:progress_reset_ack';
+    final ack = prefs.getString(ackKey) ?? '';
+
+    try {
+      final state = await ApiService.fetchLiveState(
+        driverCode: widget.driverCode,
+        progressResetAck: ack,
+      );
+      final resetAt = '${state['reset_progress_at'] ?? ''}';
+      final resetRequired = state['reset_required'] == true && resetAt.isNotEmpty;
+
+      if (!resetRequired) return progress;
+
+      await clearStoredCleaningProgress(keyPrefix);
+      await prefs.setString(ackKey, resetAt);
+      return (completed: <int>{}, skipped: <int>{});
+    } catch (_) {
+      return progress;
+    }
+  }
+
+  bool _sameSeqSet(Set<int> a, Set<int> b) =>
+      a.length == b.length && a.every(b.contains);
+
+  Future<void> _checkCurrentRouteProgressReset() async {
+    if (isCheckingProgressReset || isLoadingRoute) return;
+    final route = Map<String, dynamic>.from(routeData['route'] ?? {});
+    final routeId = route['route_id']?.toString() ?? '';
+    if (routeId.isEmpty) return;
+
+    isCheckingProgressReset = true;
+    try {
+      final syncedProgress = await _syncRemoteProgressResetForRoute(
+        day: selectedDay,
+        routeId: routeId,
+        progress: (
+          completed: completedStopSeqs,
+          skipped: skippedStopSeqs,
+        ),
+      );
+
+      if (!mounted) return;
+      if (!_sameSeqSet(completedStopSeqs, syncedProgress.completed) ||
+          !_sameSeqSet(skippedStopSeqs, syncedProgress.skipped)) {
+        setState(() {
+          completedStopSeqs = syncedProgress.completed;
+          skippedStopSeqs = syncedProgress.skipped;
+        });
+      }
+    } finally {
+      isCheckingProgressReset = false;
+    }
+  }
+
   String _friendlyTaskError(Object error, int day) {
     final raw = error.toString().replaceFirst('Exception: ', '').trim();
-    if (raw.contains('找不到') && raw.contains('排程')) {
+    if (raw.contains('沒有') && raw.contains('路線')) {
       final modeLabel = kRouteVariantLabels[kRouteVariant] ?? kRouteVariant;
-      return '$raw\n\n這通常不是 app 壞掉，而是司機 ${widget.driverCode} 目前在「$modeLabel」模式下沒有第 $day 天的排程資料。\n請先到 Django 後台重新產生或重新分派排程，再回 app 按右上角重新整理。';
+      return '$raw\n\n請確認司機 ${widget.driverCode} 在第 $day 天是否有 $modeLabel 排程。';
     }
     return raw;
   }
@@ -901,9 +1133,9 @@ class _MainMapScreenState extends State<MainMapScreen> {
     final lon = _parseDouble(stop['lon'] ?? stop['lng'] ?? stop['longitude']);
     if (lat == null || lon == null || _mapController == null) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('這個點位沒有座標資料')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('找不到此站點座標')));
       return;
     }
 
@@ -920,7 +1152,7 @@ class _MainMapScreenState extends State<MainMapScreen> {
   }) {
     return Container(
       decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha:0.92),
+        color: Colors.white.withValues(alpha: 0.92),
         shape: BoxShape.circle,
         boxShadow: const [
           BoxShadow(
@@ -960,7 +1192,6 @@ class _MainMapScreenState extends State<MainMapScreen> {
     );
   }
 
-
   Widget _variantChip(String variant) {
     final active = kRouteVariant == variant;
     final label = kRouteVariantLabels[variant] ?? variant;
@@ -974,6 +1205,8 @@ class _MainMapScreenState extends State<MainMapScreen> {
           if (kRouteVariant == variant) return;
           setState(() {
             kRouteVariant = variant;
+            completedStopSeqs = <int>{};
+            skippedStopSeqs = <int>{};
           });
           loadRouteForDay(selectedDay);
         },
@@ -1012,7 +1245,7 @@ class _MainMapScreenState extends State<MainMapScreen> {
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
           decoration: BoxDecoration(
-            color: Colors.white.withValues(alpha:0.82),
+            color: Colors.white.withValues(alpha: 0.82),
             borderRadius: BorderRadius.circular(18),
             border: Border.all(color: const Color(0x14000000)),
           ),
@@ -1023,7 +1256,10 @@ class _MainMapScreenState extends State<MainMapScreen> {
               Text(
                 value,
                 textAlign: TextAlign.center,
-                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                style: const TextStyle(
+                  fontWeight: FontWeight.bold,
+                  fontSize: 16,
+                ),
               ),
               const SizedBox(height: 4),
               Text(
@@ -1041,50 +1277,67 @@ class _MainMapScreenState extends State<MainMapScreen> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          '歡迎，司機 ${widget.driverCode}',
+          '司機：${widget.driverCode}',
           style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
         ),
         const SizedBox(height: 6),
         Text(
-          '總部：${widget.depotId} ｜ 工時上限：${widget.maxMinutes} 分',
+          '場站：${widget.depotId}，工時上限：${widget.maxMinutes} 分鐘',
           style: const TextStyle(fontSize: 14, color: Colors.black54),
         ),
         const SizedBox(height: 4),
         Text(
-          '後台：$kBaseUrl',
+          '連線：$kBaseUrl',
           style: const TextStyle(fontSize: 12, color: Colors.black45),
         ),
         const SizedBox(height: 14),
         Container(
           padding: const EdgeInsets.all(18),
           decoration: BoxDecoration(
-            color: Colors.white.withValues(alpha:0.76),
+            color: Colors.white.withValues(alpha: 0.76),
             borderRadius: BorderRadius.circular(24),
-            border: Border.all(color: Colors.white.withValues(alpha:0.5)),
+            border: Border.all(color: Colors.white.withValues(alpha: 0.5)),
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                '第 $selectedDay 天路線摘要',
-                style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
+                '第 $selectedDay 天路線總覽',
+                style: const TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w700,
+                ),
               ),
               const SizedBox(height: 8),
-              Text('路線編號：${route['route_id'] ?? '-'}'),
+              Text('路線：${route['route_id'] ?? '-'}'),
               const SizedBox(height: 4),
-              Text('模式：${data['label'] ?? (kRouteVariantLabels[kRouteVariant] ?? kRouteVariant)}'),
+              Text(
+                '類型：${data['label'] ?? (kRouteVariantLabels[kRouteVariant] ?? kRouteVariant)}',
+              ),
               const SizedBox(height: 4),
               Text('縣市：${counties.isEmpty ? '-' : counties.join('、')}'),
               const SizedBox(height: 4),
-              Text('總站點數：${route['stop_count'] ?? stops.length}'),
+              Text('站點數：${route['stop_count'] ?? stops.length}'),
               const SizedBox(height: 14),
               Row(
                 children: [
-                  statBox('總工時', '${fmtNum(metrics['total_min'])} 分', Icons.schedule),
+                  statBox(
+                    '總時間',
+                    '${fmtNum(metrics['total_min'])} 分鐘',
+                    Icons.schedule,
+                  ),
                   const SizedBox(width: 10),
-                  statBox('行車時間', '${fmtNum(metrics['drive_min'])} 分', Icons.route),
+                  statBox(
+                    '行駛時間',
+                    '${fmtNum(metrics['drive_min'])} 分鐘',
+                    Icons.route,
+                  ),
                   const SizedBox(width: 10),
-                  statBox('距離', '${fmtNum(metrics['dist_km'])} km', Icons.straighten),
+                  statBox(
+                    '距離',
+                    '${fmtNum(metrics['dist_km'])} km',
+                    Icons.straighten,
+                  ),
                 ],
               ),
             ],
@@ -1104,7 +1357,7 @@ class _MainMapScreenState extends State<MainMapScreen> {
       return Container(
         padding: const EdgeInsets.all(18),
         decoration: BoxDecoration(
-          color: Colors.white.withValues(alpha:0.82),
+          color: Colors.white.withValues(alpha: 0.82),
           borderRadius: BorderRadius.circular(22),
         ),
         child: const Text('今天沒有排程資料'),
@@ -1115,15 +1368,28 @@ class _MainMapScreenState extends State<MainMapScreen> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         const Text(
-          '今日點位清單',
+          '站點清單',
           style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
         ),
         const SizedBox(height: 12),
         ...stops.map((stop) {
           final seq = stop['seq']?.toString() ?? '-';
+          final seqInt = int.tryParse(seq) ?? 0;
+          final isCompleted = completedStopSeqs.contains(seqInt);
+          final isSkipped = skippedStopSeqs.contains(seqInt) && !isCompleted;
           final address = stop['address']?.toString() ?? '無地址';
           final county = stop['county']?.toString() ?? '';
           final serviceMin = stop['service_min']?.toString() ?? '0';
+          final statusText = isCompleted
+              ? '已完成'
+              : isSkipped
+              ? '已跳過'
+              : '未完成';
+          final statusColor = isCompleted
+              ? Colors.green
+              : isSkipped
+              ? Colors.grey
+              : Colors.grey;
           return Padding(
             padding: const EdgeInsets.only(bottom: 12),
             child: InkWell(
@@ -1132,9 +1398,15 @@ class _MainMapScreenState extends State<MainMapScreen> {
               child: Container(
                 padding: const EdgeInsets.all(16),
                 decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha:0.86),
+                  color: isCompleted
+                      ? Colors.green.shade50.withValues(alpha: 0.92)
+                      : Colors.white.withValues(alpha: 0.86),
                   borderRadius: BorderRadius.circular(22),
-                  border: Border.all(color: const Color(0x14000000)),
+                  border: Border.all(
+                    color: isCompleted
+                        ? Colors.green.shade400
+                        : const Color(0x14000000),
+                  ),
                 ),
                 child: Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -1142,8 +1414,8 @@ class _MainMapScreenState extends State<MainMapScreen> {
                     Container(
                       width: 42,
                       height: 42,
-                      decoration: const BoxDecoration(
-                        color: Colors.black87,
+                      decoration: BoxDecoration(
+                        color: isCompleted ? Colors.green : Colors.black87,
                         shape: BoxShape.circle,
                       ),
                       alignment: Alignment.center,
@@ -1169,15 +1441,22 @@ class _MainMapScreenState extends State<MainMapScreen> {
                           ),
                           const SizedBox(height: 6),
                           Text('縣市：$county'),
-                          Text('服務時間：$serviceMin 分'),
+                          Text('服務時間：$serviceMin 分鐘'),
                           const SizedBox(height: 8),
-                          const Row(
+                          Row(
                             children: [
-                              Icon(Icons.place_outlined, size: 16, color: Colors.black54),
-                              SizedBox(width: 4),
+                              Icon(
+                                Icons.place_outlined,
+                                size: 16,
+                                color: statusColor,
+                              ),
+                              const SizedBox(width: 4),
                               Text(
-                                '點一下聚焦到地圖',
-                                style: TextStyle(fontSize: 12, color: Colors.black54),
+                                '$statusText，可點選定位',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: statusColor,
+                                ),
                               ),
                             ],
                           ),
@@ -1191,51 +1470,25 @@ class _MainMapScreenState extends State<MainMapScreen> {
           );
         }),
         const SizedBox(height: 10),
-        Row(
-          children: [
-            Expanded(
-              child: SizedBox(
-                height: 52,
-                child: OutlinedButton.icon(
-                  onPressed: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) => SchedulePage(
-                          driverCode: widget.driverCode,
-                          day: selectedDay,
-                        ),
-                      ),
-                    );
-                  },
-                  icon: const Icon(Icons.event_note_outlined),
-                  label: const Text('詳細排程'),
+        SizedBox(
+          width: double.infinity,
+          height: 52,
+          child: OutlinedButton.icon(
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => ReportPage(
+                    driverCode: widget.driverCode,
+                    day: selectedDay,
+                    routeId: routeId,
+                  ),
                 ),
-              ),
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: SizedBox(
-                height: 52,
-                child: OutlinedButton.icon(
-                  onPressed: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) => ReportPage(
-                          driverCode: widget.driverCode,
-                          day: selectedDay,
-                          routeId: routeId,
-                        ),
-                      ),
-                    );
-                  },
-                  icon: const Icon(Icons.report_problem_outlined),
-                  label: const Text('問題回報'),
-                ),
-              ),
-            ),
-          ],
+              );
+            },
+            icon: const Icon(Icons.report_problem_outlined),
+            label: const Text('工作回報'),
+          ),
         ),
         const SizedBox(height: 10),
         SizedBox(
@@ -1254,10 +1507,10 @@ class _MainMapScreenState extends State<MainMapScreen> {
                     stops: stops,
                   ),
                 ),
-              );
+              ).then((_) => loadRouteForDay(selectedDay));
             },
             icon: const Icon(Icons.my_location),
-            label: const Text('點位即時更新 / 定位上傳'),
+            label: const Text('即時定位 / 清掃作業'),
           ),
         ),
       ],
@@ -1300,9 +1553,8 @@ class _MainMapScreenState extends State<MainMapScreen> {
                     Navigator.push(
                       context,
                       MaterialPageRoute(
-                        builder: (context) => DriverProfilePage(
-                          driverCode: widget.driverCode,
-                        ),
+                        builder: (context) =>
+                            DriverProfilePage(driverCode: widget.driverCode),
                       ),
                     );
                   },
@@ -1351,14 +1603,20 @@ class _MainMapScreenState extends State<MainMapScreen> {
             maxChildSize: 0.88,
             builder: (context, scrollController) {
               return ClipRRect(
-                borderRadius: const BorderRadius.vertical(top: Radius.circular(30)),
+                borderRadius: const BorderRadius.vertical(
+                  top: Radius.circular(30),
+                ),
                 child: BackdropFilter(
                   filter: ImageFilter.blur(sigmaX: 22, sigmaY: 22),
                   child: Container(
                     decoration: BoxDecoration(
-                      color: const Color(0xFFE1F5FE).withValues(alpha:0.64),
-                      borderRadius: const BorderRadius.vertical(top: Radius.circular(30)),
-                      border: Border.all(color: Colors.white.withValues(alpha:0.5)),
+                      color: const Color(0xFFE1F5FE).withValues(alpha: 0.64),
+                      borderRadius: const BorderRadius.vertical(
+                        top: Radius.circular(30),
+                      ),
+                      border: Border.all(
+                        color: Colors.white.withValues(alpha: 0.5),
+                      ),
                     ),
                     child: ListView(
                       controller: scrollController,
@@ -1369,7 +1627,7 @@ class _MainMapScreenState extends State<MainMapScreen> {
                             width: 46,
                             height: 5,
                             decoration: BoxDecoration(
-                              color: Colors.black.withValues(alpha:0.12),
+                              color: Colors.black.withValues(alpha: 0.12),
                               borderRadius: BorderRadius.circular(20),
                             ),
                           ),
@@ -1394,8 +1652,11 @@ class _MainMapScreenState extends State<MainMapScreen> {
                         ),
                         const SizedBox(height: 8),
                         Text(
-                          '目前抓取模式：${kRouteVariantLabels[kRouteVariant] ?? kRouteVariant}',
-                          style: const TextStyle(fontSize: 12, color: Colors.black54),
+                          '目前路線：${kRouteVariantLabels[kRouteVariant] ?? kRouteVariant}',
+                          style: const TextStyle(
+                            fontSize: 12,
+                            color: Colors.black54,
+                          ),
                         ),
                         const SizedBox(height: 18),
                         if (isLoadingRoute)
@@ -1407,10 +1668,10 @@ class _MainMapScreenState extends State<MainMapScreen> {
                           Container(
                             padding: const EdgeInsets.all(18),
                             decoration: BoxDecoration(
-                              color: Colors.white.withValues(alpha:0.82),
+                              color: Colors.white.withValues(alpha: 0.82),
                               borderRadius: BorderRadius.circular(22),
                             ),
-                            child: Text('載入失敗：$loadError'),
+                            child: Text('讀取失敗：'),
                           )
                         else ...[
                           _summaryCard(data),
@@ -1433,10 +1694,7 @@ class _MainMapScreenState extends State<MainMapScreen> {
 class DriverProfilePage extends StatefulWidget {
   final String driverCode;
 
-  const DriverProfilePage({
-    super.key,
-    required this.driverCode,
-  });
+  const DriverProfilePage({super.key, required this.driverCode});
 
   @override
   State<DriverProfilePage> createState() => _DriverProfilePageState();
@@ -1500,7 +1758,7 @@ class _DriverProfilePageState extends State<DriverProfilePage> {
             return Center(
               child: Padding(
                 padding: const EdgeInsets.all(24),
-                child: Text('載入失敗：${snapshot.error}'),
+                child: Text('讀取失敗：'),
               ),
             );
           }
@@ -1529,10 +1787,12 @@ class _DriverProfilePageState extends State<DriverProfilePage> {
                           ),
                         ),
                         const SizedBox(height: 8),
-                        Text('司機編號：${profile['driver_code'] ?? widget.driverCode}'),
+                        Text(
+                          '司機代碼：${profile['driver_code'] ?? widget.driverCode}',
+                        ),
                         const SizedBox(height: 6),
                         Text(
-                          isActive ? '帳號狀態：啟用中' : '帳號狀態：停用中',
+                          isActive ? '啟用中' : '停用中',
                           style: TextStyle(
                             color: isActive ? Colors.green : Colors.red,
                             fontWeight: FontWeight.w600,
@@ -1551,7 +1811,7 @@ class _DriverProfilePageState extends State<DriverProfilePage> {
                 infoTile(
                   icon: Icons.schedule_outlined,
                   title: '工時上限',
-                  value: '${profile['max_minutes'] ?? '-'} 分鐘',
+                  value: ' 分鐘',
                 ),
                 infoTile(
                   icon: Icons.phone_outlined,
@@ -1581,11 +1841,7 @@ class SchedulePage extends StatefulWidget {
   final String driverCode;
   final int day;
 
-  const SchedulePage({
-    super.key,
-    required this.driverCode,
-    required this.day,
-  });
+  const SchedulePage({super.key, required this.driverCode, required this.day});
 
   @override
   State<SchedulePage> createState() => _SchedulePageState();
@@ -1671,9 +1927,7 @@ class _SchedulePageState extends State<SchedulePage> {
         ),
         subtitle: Padding(
           padding: const EdgeInsets.only(top: 6),
-          child: Text(
-            '縣市：$county\n任務編號：$taskId\n服務時間：$serviceMin 分鐘',
-          ),
+          child: Text('縣市：$county\n任務：$taskId\n服務時間：$serviceMin 分鐘'),
         ),
         isThreeLine: true,
       ),
@@ -1684,19 +1938,17 @@ class _SchedulePageState extends State<SchedulePage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text('${widget.driverCode} - 第 ${widget.day} 天排程'),
+        title: Text('${widget.driverCode} - 第 ${widget.day} 天任務'),
         actions: [
-          IconButton(
-            onPressed: refreshTask,
-            icon: const Icon(Icons.refresh),
-          ),
+          IconButton(onPressed: refreshTask, icon: const Icon(Icons.refresh)),
         ],
       ),
       floatingActionButton: FutureBuilder<Map<String, dynamic>>(
         future: futureTask,
         builder: (context, snapshot) {
-          final route =
-              Map<String, dynamic>.from((snapshot.data ?? {})['route'] ?? {});
+          final route = Map<String, dynamic>.from(
+            (snapshot.data ?? {})['route'] ?? {},
+          );
           final routeId = route['route_id']?.toString() ?? '';
           final stopCount = int.tryParse('${route['stop_count'] ?? 0}') ?? 0;
           final stops = List<Map<String, dynamic>>.from(route['stops'] ?? []);
@@ -1741,11 +1993,11 @@ class _SchedulePageState extends State<SchedulePage> {
                             ),
                           ),
                         );
-                    
+
                         if (!context.mounted) return;
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('已返回排程頁')),
-                        );
+                        ScaffoldMessenger.of(
+                          context,
+                        ).showSnackBar(const SnackBar(content: Text('回報頁已關閉')));
                       }
                     : null,
                 icon: const Icon(Icons.report_problem_outlined),
@@ -1767,7 +2019,7 @@ class _SchedulePageState extends State<SchedulePage> {
               child: Padding(
                 padding: const EdgeInsets.all(24),
                 child: Text(
-                  '載入失敗：${snapshot.error}',
+                  '讀取失敗：',
                   style: const TextStyle(fontSize: 16),
                 ),
               ),
@@ -1801,13 +2053,17 @@ class _SchedulePageState extends State<SchedulePage> {
                         const SizedBox(height: 8),
                         Text('第 ${widget.day} 天'),
                         const SizedBox(height: 4),
-                        Text('路線編號：${route['route_id'] ?? '-'}'),
+                        Text('路線：${route['route_id'] ?? '-'}'),
                         const SizedBox(height: 4),
-                        Text('模式：${data['label'] ?? (kRouteVariantLabels[kRouteVariant] ?? kRouteVariant)}'),
+                        Text(
+                          '類型：${data['label'] ?? (kRouteVariantLabels[kRouteVariant] ?? kRouteVariant)}',
+                        ),
                         const SizedBox(height: 4),
-                        Text('縣市：${counties.isEmpty ? '-' : counties.join("、")}'),
+                        Text(
+                          '縣市：${counties.isEmpty ? '-' : counties.join('、')}',
+                        ),
                         const SizedBox(height: 4),
-                        Text('總站點數：${route['stop_count'] ?? stops.length}'),
+                        Text('站點數：${route['stop_count'] ?? stops.length}'),
                       ],
                     ),
                   ),
@@ -1816,13 +2072,13 @@ class _SchedulePageState extends State<SchedulePage> {
                 Row(
                   children: [
                     infoCard(
-                      '總工時',
-                      '${fmtNum(metrics['total_min'])} 分',
+                      '總時間',
+                      '${fmtNum(metrics['total_min'])} 分鐘',
                       Icons.schedule,
                     ),
                     infoCard(
-                      '行車時間',
-                      '${fmtNum(metrics['drive_min'])} 分',
+                      '行駛時間',
+                      '${fmtNum(metrics['drive_min'])} 分鐘',
                       Icons.route,
                     ),
                     infoCard(
@@ -1834,7 +2090,7 @@ class _SchedulePageState extends State<SchedulePage> {
                 ),
                 const SizedBox(height: 16),
                 const Text(
-                  '今日站點清單',
+                  '站點清單',
                   style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
                 ),
                 const SizedBox(height: 12),
@@ -1878,25 +2134,36 @@ class LiveLocationPage extends StatefulWidget {
 }
 
 class _LiveLocationPageState extends State<LiveLocationPage> {
-  final TextEditingController currentStopSeqController =
-      TextEditingController(text: '1');
-  final TextEditingController completedCountController =
-      TextEditingController(text: '0');
+  final TextEditingController currentStopSeqController = TextEditingController(
+    text: '1',
+  );
+  final TextEditingController completedCountController = TextEditingController(
+    text: '0',
+  );
 
   Position? currentPosition;
   String selectedStatus = 'navigating';
   bool isLocating = false;
   bool isUploading = false;
-  bool autoUploadEnabled = false;
-  String lastResultText = '尚未上傳位置';
-  String autoUploadText = '自動上傳未啟動';
-  Timer? autoUploadTimer;
+  String lastResultText = '尚未上傳定位';
   final ImagePicker _picker = ImagePicker();
   File? selectedImage;
+  Position? authorizedPhotoPosition;
+  String? authorizedPhotoType;
+  Position? capturedPhotoPosition;
+  String? capturedPhotoType;
   bool isUploadingImage = false;
-  String uploadImageResult = '尚未上傳清掃照片';
+  String uploadImageResult = '尚未上傳照片';
   String selectedPhotoType = 'before';
+  Set<int> completedStopSeqs = <int>{};
+  Set<int> skippedStopSeqs = <int>{};
+  Set<int> beforeUploadedStopSeqs = <int>{};
+  Set<int> afterUploadedStopSeqs = <int>{};
+  bool hasUploadedBefore = false;
   bool hasUploadedAfter = false;
+  Timer? progressResetTimer;
+  String progressResetAck = '';
+  bool isCheckingProgressReset = false;
 
   final List<String> statusOptions = const [
     'idle',
@@ -1911,6 +2178,17 @@ class _LiveLocationPageState extends State<LiveLocationPage> {
 
   int get completedCount =>
       int.tryParse(completedCountController.text.trim()) ?? 0;
+
+  bool get hasAuthorizedLocationForPhoto =>
+      authorizedPhotoPosition != null &&
+      authorizedPhotoType == selectedPhotoType;
+
+  String get _progressKeyPrefix => cleaningProgressKeyPrefix(
+    driverCode: widget.driverCode,
+    day: widget.day,
+    routeId: widget.routeId,
+    routeVariant: kRouteVariant,
+  );
 
   double get progressRatio {
     if (widget.totalCount <= 0) return 0;
@@ -1942,6 +2220,183 @@ class _LiveLocationPageState extends State<LiveLocationPage> {
     return getStopBySeq(currentStopSeq + 1);
   }
 
+  @override
+  void initState() {
+    super.initState();
+    _loadProgress();
+    progressResetTimer = Timer.periodic(
+      const Duration(seconds: 10),
+      (_) => _checkProgressReset(silent: true),
+    );
+  }
+
+  Future<void> _loadProgress() async {
+    final prefs = await SharedPreferences.getInstance();
+    final completed = parseStoredSeqSet(
+      prefs.getStringList('$_progressKeyPrefix:completed'),
+    );
+    final skipped = parseStoredSeqSet(
+      prefs.getStringList('$_progressKeyPrefix:skipped'),
+    );
+    final beforeUploaded = parseStoredSeqSet(
+      prefs.getStringList('$_progressKeyPrefix:before_uploaded'),
+    );
+    final afterUploaded = parseStoredSeqSet(
+      prefs.getStringList('$_progressKeyPrefix:after_uploaded'),
+    );
+    final savedResetAck =
+        prefs.getString('$_progressKeyPrefix:progress_reset_ack') ?? '';
+    final savedCurrent = prefs.getInt('$_progressKeyPrefix:current_stop_seq');
+    final initialCurrent =
+        _validStopSeq(savedCurrent) &&
+            _isStopUnlocked(savedCurrent!, completed: completed, skipped: skipped)
+        ? savedCurrent!
+        : _firstOpenStopSeq(completed: completed, skipped: skipped);
+
+    if (!mounted) return;
+    setState(() {
+      completedStopSeqs = completed;
+      skippedStopSeqs = skipped;
+      beforeUploadedStopSeqs = beforeUploaded;
+      afterUploadedStopSeqs = afterUploaded;
+      progressResetAck = savedResetAck;
+      currentStopSeqController.text = '$initialCurrent';
+      completedCountController.text = '${completedStopSeqs.length}';
+      _syncCurrentStopPhotoState();
+    });
+    await _checkProgressReset(silent: true);
+  }
+
+  Future<void> _saveProgress() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt('$_progressKeyPrefix:current_stop_seq', currentStopSeq);
+    await prefs.setStringList(
+      '$_progressKeyPrefix:completed',
+      serializeSeqSet(completedStopSeqs),
+    );
+    await prefs.setStringList(
+      '$_progressKeyPrefix:skipped',
+      serializeSeqSet(skippedStopSeqs),
+    );
+    await prefs.setStringList(
+      '$_progressKeyPrefix:before_uploaded',
+      serializeSeqSet(beforeUploadedStopSeqs),
+    );
+    await prefs.setStringList(
+      '$_progressKeyPrefix:after_uploaded',
+      serializeSeqSet(afterUploadedStopSeqs),
+    );
+    if (progressResetAck.isNotEmpty) {
+      await prefs.setString(
+        '$_progressKeyPrefix:progress_reset_ack',
+        progressResetAck,
+      );
+    }
+  }
+
+  bool _validStopSeq(int? seq) => seq != null && getStopBySeq(seq) != null;
+
+  List<int> _sortedStopSeqs() {
+    final seqs = widget.stops
+        .map((stop) => int.tryParse('${stop['seq'] ?? 0}') ?? 0)
+        .where((seq) => seq > 0)
+        .toList();
+    seqs.sort();
+    return seqs;
+  }
+
+  int _maxUnlockedStopSeq({Set<int>? completed, Set<int>? skipped}) {
+    final completedSet = completed ?? completedStopSeqs;
+    final skippedSet = skipped ?? skippedStopSeqs;
+    final seqs = _sortedStopSeqs();
+    if (seqs.isEmpty) return 0;
+
+    var maxUnlocked = seqs.first;
+    for (final seq in seqs) {
+      if (seq > maxUnlocked) break;
+      if (completedSet.contains(seq) || skippedSet.contains(seq)) {
+        final currentIndex = seqs.indexOf(seq);
+        if (currentIndex >= 0 && currentIndex + 1 < seqs.length) {
+          maxUnlocked = seqs[currentIndex + 1];
+        }
+      } else {
+        break;
+      }
+    }
+    return maxUnlocked;
+  }
+
+  bool _isStopUnlocked(
+    int seq, {
+    Set<int>? completed,
+    Set<int>? skipped,
+  }) {
+    if (!_validStopSeq(seq)) return false;
+    return seq <= _maxUnlockedStopSeq(completed: completed, skipped: skipped);
+  }
+
+  int _firstOpenStopSeq({Set<int>? completed, Set<int>? skipped}) {
+    final completedSet = completed ?? completedStopSeqs;
+    final skippedSet = skipped ?? skippedStopSeqs;
+    for (final stop in widget.stops) {
+      final seq = int.tryParse('${stop['seq'] ?? 0}') ?? 0;
+      if (seq > 0 && !completedSet.contains(seq) && !skippedSet.contains(seq)) {
+        return seq;
+      }
+    }
+    for (final stop in widget.stops) {
+      final seq = int.tryParse('${stop['seq'] ?? 0}') ?? 0;
+      if (seq > 0 && !completedSet.contains(seq)) {
+        return seq;
+      }
+    }
+    return widget.totalCount > 0 ? 1 : 0;
+  }
+
+  int _nextOpenStopSeq(int afterSeq) {
+    for (final stop in widget.stops) {
+      final seq = int.tryParse('${stop['seq'] ?? 0}') ?? 0;
+      if (seq > afterSeq &&
+          !completedStopSeqs.contains(seq) &&
+          !skippedStopSeqs.contains(seq)) {
+        return seq;
+      }
+    }
+    return _firstOpenStopSeq();
+  }
+
+  void _clearPendingPhotoState() {
+    selectedImage = null;
+    authorizedPhotoPosition = null;
+    authorizedPhotoType = null;
+    capturedPhotoPosition = null;
+    capturedPhotoType = null;
+    uploadImageResult = '尚未上傳照片';
+  }
+
+  void _syncCurrentStopPhotoState() {
+    hasUploadedBefore = beforeUploadedStopSeqs.contains(currentStopSeq);
+    hasUploadedAfter = afterUploadedStopSeqs.contains(currentStopSeq);
+    selectedPhotoType = hasUploadedBefore ? 'after' : 'before';
+    completedCountController.text = '${completedStopSeqs.length}';
+  }
+
+  Future<void> selectCurrentStop(int seq) async {
+    if (!_validStopSeq(seq)) return;
+    if (!_isStopUnlocked(seq)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('請先完成或跳過前一站，才能開放後續站點')),
+      );
+      return;
+    }
+    setState(() {
+      currentStopSeqController.text = '$seq';
+      _clearPendingPhotoState();
+      _syncCurrentStopPhotoState();
+    });
+    await _saveProgress();
+  }
+
   double? _parseDouble(dynamic value) {
     if (value == null) return null;
     return double.tryParse(value.toString());
@@ -1955,27 +2410,19 @@ class _LiveLocationPageState extends State<LiveLocationPage> {
     final address = (stop['address'] ?? '').toString().trim();
 
     if (lat != null && lon != null) {
-      return Uri.https(
-        'www.google.com',
-        '/maps/dir/',
-        {
-          'api': '1',
-          'destination': '$lat,$lon',
-          'travelmode': 'driving',
-        },
-      );
+      return Uri.https('www.google.com', '/maps/dir/', {
+        'api': '1',
+        'destination': '$lat,$lon',
+        'travelmode': 'driving',
+      });
     }
 
     if (address.isNotEmpty) {
-      return Uri.https(
-        'www.google.com',
-        '/maps/dir/',
-        {
-          'api': '1',
-          'destination': address,
-          'travelmode': 'driving',
-        },
-      );
+      return Uri.https('www.google.com', '/maps/dir/', {
+        'api': '1',
+        'destination': address,
+        'travelmode': 'driving',
+      });
     }
 
     return null;
@@ -1985,21 +2432,18 @@ class _LiveLocationPageState extends State<LiveLocationPage> {
     final uri = _buildNavigationUri(stop);
 
     if (uri == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('這個站點沒有可用的導航資料')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('目前站點沒有可導航資料')));
       return;
     }
 
-    final ok = await launchUrl(
-      uri,
-      mode: LaunchMode.externalApplication,
-    );
+    final ok = await launchUrl(uri, mode: LaunchMode.externalApplication);
 
     if (!ok && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('無法開啟導航')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('無法開啟導航')));
     }
   }
 
@@ -2008,12 +2452,68 @@ class _LiveLocationPageState extends State<LiveLocationPage> {
   }
 
   Future<void> navigateToNextStop() async {
-    await openNavigationToStop(nextStopData);
+    await openNavigationToStop(getStopBySeq(_nextOpenStopSeq(currentStopSeq)));
+  }
+
+  Future<void> _applyRemoteProgressReset(String resetAt) async {
+    if (resetAt.isEmpty || resetAt == progressResetAck) return;
+
+    progressResetAck = resetAt;
+    await clearStoredCleaningProgress(_progressKeyPrefix);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('$_progressKeyPrefix:progress_reset_ack', resetAt);
+
+    if (!mounted) return;
+    setState(() {
+      completedStopSeqs = <int>{};
+      skippedStopSeqs = <int>{};
+      beforeUploadedStopSeqs = <int>{};
+      afterUploadedStopSeqs = <int>{};
+      currentStopSeqController.text = widget.totalCount > 0 ? '1' : '0';
+      completedCountController.text = '0';
+      selectedStatus = 'navigating';
+      selectedImage = null;
+      authorizedPhotoPosition = null;
+      authorizedPhotoType = null;
+      capturedPhotoPosition = null;
+      capturedPhotoType = null;
+      hasUploadedBefore = false;
+      hasUploadedAfter = false;
+      lastResultText = '管理端已清除目前進度，APP 已同步歸零';
+      uploadImageResult = '尚未上傳照片';
+    });
+  }
+
+  Future<void> _checkProgressReset({bool silent = false}) async {
+    if (isCheckingProgressReset) return;
+    isCheckingProgressReset = true;
+
+    try {
+      final state = await ApiService.fetchLiveState(
+        driverCode: widget.driverCode,
+        progressResetAck: progressResetAck,
+      );
+      final resetAt = '${state['reset_progress_at'] ?? ''}';
+      final resetRequired = state['reset_required'] == true && resetAt.isNotEmpty;
+
+      if (resetRequired) {
+        await _applyRemoteProgressReset(resetAt);
+        if (!silent && mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('管理端已清除目前進度，APP 已同步歸零')),
+          );
+        }
+      }
+    } catch (_) {
+      // Keep the current local progress if the monitor endpoint is temporarily unavailable.
+    } finally {
+      isCheckingProgressReset = false;
+    }
   }
 
   @override
   void dispose() {
-    autoUploadTimer?.cancel();
+    progressResetTimer?.cancel();
     currentStopSeqController.dispose();
     completedCountController.dispose();
     super.dispose();
@@ -2033,13 +2533,71 @@ class _LiveLocationPageState extends State<LiveLocationPage> {
     });
   }
 
+  Future<void> completeCurrentStop({bool navigateNext = false}) async {
+    if (!hasUploadedAfter) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('請先完成清潔後照片上傳')));
+      return;
+    }
+
+    if (widget.totalCount <= 0) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('目前沒有站點資料')));
+      return;
+    }
+
+    final completedSeq = currentStopSeq <= 0 ? 1 : currentStopSeq;
+    final nextSeq = _nextOpenStopSeq(completedSeq);
+
+    setState(() {
+      completedStopSeqs.add(completedSeq);
+      skippedStopSeqs.remove(completedSeq);
+      currentStopSeqController.text = '$nextSeq';
+      selectedStatus = completedStopSeqs.length >= widget.totalCount
+          ? 'finished'
+          : 'working';
+      _clearPendingPhotoState();
+      _syncCurrentStopPhotoState();
+    });
+    await _saveProgress();
+    await uploadLocation();
+
+    if (navigateNext && mounted && completedSeq != nextSeq) {
+      await openNavigationToStop(currentStopData);
+    }
+  }
+
+  Future<void> skipCurrentStop() async {
+    if (widget.totalCount <= 0) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('目前沒有站點資料')));
+      return;
+    }
+
+    final skippedSeq = currentStopSeq <= 0 ? 1 : currentStopSeq;
+    final nextSeq = _nextOpenStopSeq(skippedSeq);
+
+    setState(() {
+      skippedStopSeqs.add(skippedSeq);
+      currentStopSeqController.text = '$nextSeq';
+      selectedStatus = 'working';
+      _clearPendingPhotoState();
+      _syncCurrentStopPhotoState();
+    });
+    await _saveProgress();
+    await uploadLocation();
+  }
+
   Future<Position?> _fetchCurrentLocation({
     bool showErrorSnackBar = true,
   }) async {
     try {
       final serviceEnabled = await Geolocator.isLocationServiceEnabled();
       if (!serviceEnabled) {
-        throw Exception('手機定位服務尚未開啟');
+        throw Exception('定位服務未開啟');
       }
 
       LocationPermission permission = await Geolocator.checkPermission();
@@ -2049,11 +2607,11 @@ class _LiveLocationPageState extends State<LiveLocationPage> {
       }
 
       if (permission == LocationPermission.denied) {
-        throw Exception('定位權限被拒絕');
+        throw Exception('定位權限未開啟');
       }
 
       if (permission == LocationPermission.deniedForever) {
-        throw Exception('定位權限被永久拒絕，請到手機設定開啟');
+        throw Exception('定位權限已永久拒絕，請到系統設定開啟定位權限');
       }
 
       final pos = await Geolocator.getCurrentPosition();
@@ -2064,46 +2622,41 @@ class _LiveLocationPageState extends State<LiveLocationPage> {
         currentPosition = pos;
         lastResultText =
             '已取得目前位置\n'
-            '緯度：${pos.latitude}\n'
-            '經度：${pos.longitude}\n'
-            '精度：約 ${pos.accuracy.toStringAsFixed(1)} 公尺';
+            '緯度：\n'
+            '經度：\n'
+            '精準度：約  公尺';
       });
 
       return pos;
     } catch (e) {
       if (!mounted) return null;
       setState(() {
-        lastResultText = '取得位置失敗：$e';
+        lastResultText = '取得定位失敗：';
       });
       if (showErrorSnackBar) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('取得位置失敗：$e')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('取得定位失敗：')));
       }
       return null;
     }
   }
 
-  Future<void> getCurrentLocation() async {
-    setState(() {
-      isLocating = true;
-    });
-
-    await _fetchCurrentLocation();
-
-    if (!mounted) return;
-    setState(() {
-      isLocating = false;
-    });
-  }
-
   Future<void> uploadLocation({
     bool silentSuccess = false,
-    bool autoMode = false,
+    bool forceFreshLocation = false,
+    bool authorizeForPhoto = false,
   }) async {
     if (isUploading) return;
 
-    Position? pos = currentPosition;
+    if (authorizeForPhoto) {
+      setState(() {
+        authorizedPhotoPosition = null;
+        authorizedPhotoType = null;
+      });
+    }
+
+    Position? pos = forceFreshLocation ? null : currentPosition;
 
     if (pos == null) {
       if (!mounted) return;
@@ -2111,7 +2664,7 @@ class _LiveLocationPageState extends State<LiveLocationPage> {
         isLocating = true;
       });
 
-      pos = await _fetchCurrentLocation(showErrorSnackBar: !autoMode);
+      pos = await _fetchCurrentLocation();
 
       if (!mounted) return;
       setState(() {
@@ -2124,7 +2677,7 @@ class _LiveLocationPageState extends State<LiveLocationPage> {
     }
 
     final currentSeq = int.tryParse(currentStopSeqController.text.trim()) ?? 0;
-    final completed = int.tryParse(completedCountController.text.trim()) ?? 0;
+    final completed = completedStopSeqs.length;
 
     setState(() {
       isUploading = true;
@@ -2139,40 +2692,73 @@ class _LiveLocationPageState extends State<LiveLocationPage> {
         lon: pos.longitude,
         currentStopSeq: currentSeq,
         completedCount: completed,
+        completedStopSeqs: serializeSeqSet(completedStopSeqs)
+            .map((value) => int.parse(value))
+            .toList(),
+        skippedStopSeqs: serializeSeqSet(skippedStopSeqs)
+            .map((value) => int.parse(value))
+            .toList(),
         totalCount: widget.totalCount,
         status: selectedStatus,
+        progressResetAck: progressResetAck,
       );
 
       final live = Map<String, dynamic>.from(result['live'] ?? {});
+      final resetAt = '${result['reset_progress_at'] ?? ''}';
+      final resetRequired = result['reset_required'] == true && resetAt.isNotEmpty;
 
       if (!mounted) return;
 
+      if (resetRequired) {
+        await _applyRemoteProgressReset(resetAt);
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('管理端已清除目前進度，APP 已同步歸零')),
+        );
+        return;
+      }
+
       setState(() {
+        if (authorizeForPhoto) {
+          authorizedPhotoPosition = pos;
+          authorizedPhotoType = selectedPhotoType;
+          selectedImage = null;
+          capturedPhotoPosition = null;
+          capturedPhotoType = null;
+        }
         lastResultText =
-            '${autoMode ? "自動" : "手動"}上傳成功\n'
+            '定位上傳成功\n'
             '司機：${live['driver_code'] ?? widget.driverCode}\n'
-            '第幾天：${live['day'] ?? widget.day}\n'
+            '天數：${live['day'] ?? widget.day}\n'
             '目前站點：${live['current_stop_seq'] ?? currentSeq}\n'
-            '完成數：${live['completed_count'] ?? completed} / ${live['total_count'] ?? widget.totalCount}\n'
+            '完成進度：${live['completed_count'] ?? completed} / ${live['total_count'] ?? widget.totalCount}\n'
             '狀態：${live['status'] ?? selectedStatus}\n'
             '更新時間：${live['updated_at'] ?? '-'}';
       });
 
       if (!silentSuccess) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(autoMode ? '自動上傳完成' : '即時位置已上傳')),
+          SnackBar(
+            content: Text(
+              authorizeForPhoto
+                  ? '${selectedPhotoType == "before" ? "清潔前" : "清潔後"}定位上傳成功，可以拍照'
+                  : '即時定位上傳成功',
+            ),
+          ),
         );
       }
     } catch (e) {
       if (!mounted) return;
       setState(() {
-        lastResultText = '${autoMode ? "自動" : "手動"}上傳失敗：$e';
+        if (authorizeForPhoto) {
+          authorizedPhotoPosition = null;
+          authorizedPhotoType = null;
+        }
+        lastResultText = '上傳定位失敗：';
       });
-      if (!autoMode) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('上傳失敗：$e')),
-        );
-      }
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('上傳定位失敗，請稍後再試：')));
     } finally {
       if (mounted) {
         setState(() {
@@ -2182,154 +2768,12 @@ class _LiveLocationPageState extends State<LiveLocationPage> {
     }
   }
 
-  Future<void> _autoUploadCycle() async {
-    if (!autoUploadEnabled) return;
-
-    if (!mounted) return;
-    setState(() {
-      autoUploadText = '自動上傳中...';
-    });
-
-    await uploadLocation(
-      silentSuccess: true,
-      autoMode: true,
-    );
-
-    if (!mounted) return;
-    setState(() {
-      autoUploadText = '自動上傳啟動中，每 10 秒更新一次';
-    });
-  }
-
-  void toggleAutoUpload(bool value) {
-    if (value) {
-      autoUploadTimer?.cancel();
-      setState(() {
-        autoUploadEnabled = true;
-        autoUploadText = '自動上傳啟動中，每 10 秒更新一次';
-      });
-
-      _autoUploadCycle();
-
-      autoUploadTimer = Timer.periodic(const Duration(seconds: 10), (_) {
-        _autoUploadCycle();
-      });
-    } else {
-      autoUploadTimer?.cancel();
-      setState(() {
-        autoUploadEnabled = false;
-        autoUploadText = '自動上傳未啟動';
-      });
-    }
-  }
-
   Future<void> completeCurrentStopAndUpload() async {
-    if (widget.totalCount <= 0) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('這條路線沒有站點資料')),
-      );
-      return;
-    }
-
-    int current = currentStopSeq;
-    int completed = completedCount;
-
-    if (current <= 0) current = 1;
-    if (completed < 0) completed = 0;
-
-    int newCompleted = completed;
-    if (current > completed) {
-      newCompleted = current;
-    } else {
-      newCompleted = completed + 1;
-    }
-
-    if (newCompleted > widget.totalCount) {
-      newCompleted = widget.totalCount;
-    }
-
-    final isFinished = newCompleted >= widget.totalCount;
-    final newCurrent = isFinished ? widget.totalCount : (newCompleted + 1);
-
-    setProgress(
-      newCurrentStopSeq: newCurrent,
-      newCompletedCount: newCompleted,
-      newStatus: isFinished ? 'finished' : 'working',
-    );
-
-    setState(() {
-      selectedImage = null;
-      uploadImageResult = '尚未上傳清掃照片';
-      selectedPhotoType = 'before';
-      hasUploadedAfter = false;
-    });
-
-    await uploadLocation();
+    await completeCurrentStop();
   }
 
   Future<void> completeCurrentStopAndNavigateNext() async {
-    if (widget.totalCount <= 0) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('這條路線沒有站點資料')),
-      );
-      return;
-    }
-
-    int current = currentStopSeq;
-    int completed = completedCount;
-
-    if (current <= 0) current = 1;
-    if (completed < 0) completed = 0;
-
-    int newCompleted = completed;
-    if (current > completed) {
-      newCompleted = current;
-    } else {
-      newCompleted = completed + 1;
-    }
-
-    if (newCompleted > widget.totalCount) {
-      newCompleted = widget.totalCount;
-    }
-
-    final isFinished = newCompleted >= widget.totalCount;
-    final newCurrent = isFinished ? widget.totalCount : (newCompleted + 1);
-
-    setProgress(
-      newCurrentStopSeq: newCurrent,
-      newCompletedCount: newCompleted,
-      newStatus: isFinished ? 'finished' : 'navigating',
-    );
-
-    setState(() {
-      selectedImage = null;
-      uploadImageResult = '尚未上傳清掃照片';
-      selectedPhotoType = 'before';
-      hasUploadedAfter = false;
-    });
-
-    await uploadLocation();
-
-    if (!isFinished && mounted) {
-      await openNavigationToStop(currentStopData);
-    }
-  }
-
-  Future<void> markFinishedAndUpload() async {
-    if (widget.totalCount <= 0) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('這條路線沒有站點資料')),
-      );
-      return;
-    }
-
-    setProgress(
-      newCurrentStopSeq: widget.totalCount,
-      newCompletedCount: widget.totalCount,
-      newStatus: 'finished',
-    );
-
-    await uploadLocation();
+    await completeCurrentStop(navigateNext: true);
   }
 
   void showAiResultDialog(String message) {
@@ -2338,9 +2782,7 @@ class _LiveLocationPageState extends State<LiveLocationPage> {
       builder: (context) {
         return AlertDialog(
           title: const Text('AI 辨識結果'),
-          content: SingleChildScrollView(
-            child: Text(message),
-          ),
+          content: SingleChildScrollView(child: Text(message)),
           actions: [
             TextButton(
               onPressed: () => Navigator.of(context).pop(),
@@ -2352,8 +2794,18 @@ class _LiveLocationPageState extends State<LiveLocationPage> {
     );
   }
 
-
   Future<void> pickCleaningImage() async {
+    if (!hasAuthorizedLocationForPhoto) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            '請先為${selectedPhotoType == "before" ? "清潔前" : "清潔後"}照片上傳當下位置，成功後才能拍照',
+          ),
+        ),
+      );
+      return;
+    }
+
     try {
       final XFile? pickedFile = await _picker.pickImage(
         source: ImageSource.camera,
@@ -2363,20 +2815,32 @@ class _LiveLocationPageState extends State<LiveLocationPage> {
 
       setState(() {
         selectedImage = File(pickedFile.path);
+        capturedPhotoPosition = authorizedPhotoPosition;
+        capturedPhotoType = authorizedPhotoType;
+        authorizedPhotoPosition = null;
+        authorizedPhotoType = null;
       });
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('拍照失敗：$e')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('拍照失敗：')));
     }
   }
 
   Future<void> uploadCleaningImage() async {
     if (selectedImage == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('請先拍照')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('請先拍照')));
+      return;
+    }
+
+    if (capturedPhotoPosition == null ||
+        capturedPhotoType != selectedPhotoType) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('請先上傳當下位置，再拍照上傳')));
       return;
     }
 
@@ -2391,11 +2855,13 @@ class _LiveLocationPageState extends State<LiveLocationPage> {
       final stopCounty = stopData?['county']?.toString();
       final stopLat = double.tryParse('${stopData?['lat'] ?? ''}');
       final stopLon = double.tryParse('${stopData?['lon'] ?? ''}');
+      final photoPosition = capturedPhotoPosition!;
+      final uploadingPhotoType = selectedPhotoType;
 
       final result = await ApiService.detectCleaningAI(
         driverCode: widget.driverCode,
         imageFile: selectedImage!,
-        photoType: selectedPhotoType,
+        photoType: uploadingPhotoType,
       );
 
       final isQualified = result['is_qualified'] ?? false;
@@ -2406,7 +2872,7 @@ class _LiveLocationPageState extends State<LiveLocationPage> {
         day: widget.day,
         routeId: widget.routeId,
         imageFile: selectedImage!,
-        photoType: selectedPhotoType,
+        photoType: uploadingPhotoType,
         isQualified: isQualified,
         reviewStatus: reviewStatus,
         pointKey: '${widget.routeId}_$stopSeq',
@@ -2418,6 +2884,8 @@ class _LiveLocationPageState extends State<LiveLocationPage> {
         stopCounty: stopCounty,
         stopLat: stopLat,
         stopLon: stopLon,
+        photoLat: photoPosition.latitude,
+        photoLon: photoPosition.longitude,
       );
 
       if (!mounted) return;
@@ -2425,11 +2893,22 @@ class _LiveLocationPageState extends State<LiveLocationPage> {
       String dialogMessage = '';
 
       setState(() {
-        if (selectedPhotoType == 'after') {
+        if (uploadingPhotoType == 'before') {
+          beforeUploadedStopSeqs.add(stopSeq);
+          hasUploadedBefore = true;
+          selectedPhotoType = 'after';
+        } else {
+          afterUploadedStopSeqs.add(stopSeq);
           hasUploadedAfter = true;
         }
 
-        final photoTypeText = selectedPhotoType == 'before' ? '清潔前' : '清潔後';
+        selectedImage = null;
+        capturedPhotoPosition = null;
+        capturedPhotoType = null;
+        authorizedPhotoPosition = null;
+        authorizedPhotoType = null;
+
+        final photoTypeText = uploadingPhotoType == 'before' ? '清潔前' : '清潔後';
 
         final classCountsRaw = result['class_counts'];
         Map<String, dynamic> detectionMap = {};
@@ -2438,31 +2917,31 @@ class _LiveLocationPageState extends State<LiveLocationPage> {
           detectionMap = Map<String, dynamic>.from(classCountsRaw);
         }
 
-        final detectionText = detectionMap.isEmpty ? '無' : detectionMap.toString();
+        final detectionText = detectionMap.isEmpty
+            ? '無'
+            : detectionMap.toString();
 
-        if (selectedPhotoType == 'before') {
+        if (uploadingPhotoType == 'before') {
           final isRisk = result['is_risk'] ?? false;
-          final reason = result['reason']?.toString() ?? '環境狀況尚可';
-          final riskScore = result['risk_score'] ?? 0;
+          final reason = result['reason']?.toString() ?? '未提供原因';
 
           uploadImageResult =
               '照片類型：$photoTypeText\n'
               '上傳者：${uploadResult['driver_code']}\n\n'
               'AI辨識完成\n'
-              '風險分數：$riskScore\n'
               '點位風險：${isRisk ? "是" : "否"}\n'
               '原因：$reason\n'
               '辨識結果：$detectionText';
 
           dialogMessage = uploadImageResult;
         } else {
-          final reviewStatus = result['status']?.toString() ?? '未知';
+          final reviewStatus = result['status']?.toString() ?? '未分類';
 
           uploadImageResult =
               '照片類型：$photoTypeText\n'
               '上傳者：${uploadResult['driver_code']}\n\n'
               'AI辨識完成\n'
-              '清潔狀態：$reviewStatus\n'
+              '清潔後狀態：$reviewStatus\n'
               '辨識結果：$detectionText';
 
           dialogMessage = uploadImageResult;
@@ -2470,12 +2949,17 @@ class _LiveLocationPageState extends State<LiveLocationPage> {
       });
 
       if (!mounted) return;
+      await _saveProgress();
+      if (!mounted) return;
       showAiResultDialog(dialogMessage);
     } catch (e) {
       if (!mounted) return;
       setState(() {
-        uploadImageResult = '上傳或辨識失敗：$e';
+        uploadImageResult = '上傳照片失敗：$e';
       });
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('上傳照片失敗：$e')));
     } finally {
       if (mounted) {
         setState(() {
@@ -2506,8 +2990,8 @@ class _LiveLocationPageState extends State<LiveLocationPage> {
   }) {
     final text = stop == null
         ? '無資料'
-        : '第 ${stop['seq'] ?? '-'} 站\n'
-            '${stop['address'] ?? '無地址'}';
+        : '第 ${stop['seq'] ?? '-'} 站\n${stop['address'] ?? '無地址'}';
+
 
     return Card(
       child: ListTile(
@@ -2515,6 +2999,75 @@ class _LiveLocationPageState extends State<LiveLocationPage> {
         title: Text(title),
         subtitle: Text(text),
         isThreeLine: true,
+      ),
+    );
+  }
+
+  Widget stopSelectorCard() {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              '選擇目前站點',
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              '站點會依序開放；完成或跳過前一站後才可選下一站，已開放的前面站點可回頭補清。',
+              style: TextStyle(color: Colors.black54),
+            ),
+            const SizedBox(height: 12),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                for (final stop in widget.stops)
+                  Builder(
+                    builder: (context) {
+                      final seq = int.tryParse('${stop['seq'] ?? 0}') ?? 0;
+                      final active = seq == currentStopSeq;
+                      final completed = completedStopSeqs.contains(seq);
+                      final skipped =
+                          skippedStopSeqs.contains(seq) && !completed;
+                      final unlocked = _isStopUnlocked(seq);
+                      final selectedColor = completed
+                          ? Colors.green
+                          : skipped
+                          ? Colors.grey
+                          : Colors.grey;
+                      final backgroundColor = completed
+                          ? Colors.green.shade100
+                          : skipped
+                          ? Colors.grey.shade200
+                          : unlocked
+                          ? Colors.grey.shade200
+                          : Colors.grey.shade100;
+                      return ChoiceChip(
+                        label: Text('第 $seq 站'),
+                        selected: active,
+                        selectedColor: selectedColor,
+                        backgroundColor: backgroundColor,
+                        labelStyle: TextStyle(
+                          color: active
+                              ? Colors.white
+                              : unlocked
+                              ? Colors.black87
+                              : Colors.black38,
+                          fontWeight: FontWeight.w600,
+                        ),
+                        onSelected: unlocked
+                            ? (_) => selectCurrentStop(seq)
+                            : null,
+                      );
+                    },
+                  ),
+              ],
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -2533,9 +3086,7 @@ class _LiveLocationPageState extends State<LiveLocationPage> {
     final progressPercent = (progressRatio * 100).toStringAsFixed(1);
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('即時定位上傳'),
-      ),
+      appBar: AppBar(title: const Text('即時定位上傳')),
       body: Stack(
         children: [
           ListView(
@@ -2557,9 +3108,11 @@ class _LiveLocationPageState extends State<LiveLocationPage> {
                       const SizedBox(height: 8),
                       Text('第 ${widget.day} 天'),
                       const SizedBox(height: 4),
-                      Text('路線編號：${widget.routeId.isEmpty ? "-" : widget.routeId}'),
+                      Text(
+                        "路線：${widget.routeId.isEmpty ? '-' : widget.routeId}",
+                      ),
                       const SizedBox(height: 4),
-                      Text('總站點數：${widget.totalCount}'),
+                      Text('站點數：${widget.totalCount}'),
                     ],
                   ),
                 ),
@@ -2572,14 +3125,14 @@ class _LiveLocationPageState extends State<LiveLocationPage> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       const Text(
-                        '今日進度',
+                        '清掃進度',
                         style: TextStyle(
                           fontSize: 18,
                           fontWeight: FontWeight.bold,
                         ),
                       ),
                       const SizedBox(height: 10),
-                      Text('已完成：$progressText 站（$progressPercent%）'),
+                      Text('進度：$progressText，$progressPercent%'),
                       const SizedBox(height: 10),
                       LinearProgressIndicator(
                         value: progressRatio,
@@ -2598,9 +3151,10 @@ class _LiveLocationPageState extends State<LiveLocationPage> {
               ),
               stopCard(
                 title: '下一站',
-                stop: nextStopData,
+                stop: getStopBySeq(_nextOpenStopSeq(currentStopSeq)),
                 icon: Icons.navigation_outlined,
               ),
+              stopSelectorCard(),
               const SizedBox(height: 12),
               SizedBox(
                 height: 52,
@@ -2614,32 +3168,17 @@ class _LiveLocationPageState extends State<LiveLocationPage> {
               SizedBox(
                 height: 52,
                 child: OutlinedButton.icon(
-                  onPressed: navigateToNextStop,
+                  onPressed: hasUploadedAfter ? navigateToNextStop : null,
                   icon: const Icon(Icons.alt_route),
-                  label: const Text('導航到下一站'),
+                  label: const Text('導航到下一個未完成站點'),
                 ),
               ),
               const SizedBox(height: 12),
-              infoCard(
-                title: '目前緯度',
-                value: latText,
-                icon: Icons.my_location,
-              ),
+              infoCard(title: '目前緯度', value: latText, icon: Icons.my_location),
               infoCard(
                 title: '目前經度',
                 value: lonText,
                 icon: Icons.explore_outlined,
-              ),
-              const SizedBox(height: 12),
-              Card(
-                child: SwitchListTile(
-                  value: autoUploadEnabled,
-                  title: const Text('自動上傳位置'),
-                  subtitle: Text(autoUploadText),
-                  onChanged: (value) {
-                    toggleAutoUpload(value);
-                  },
-                ),
               ),
               const SizedBox(height: 12),
               const SizedBox(height: 24),
@@ -2648,21 +3187,24 @@ class _LiveLocationPageState extends State<LiveLocationPage> {
                 style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
               ),
               const SizedBox(height: 12),
-              DropdownButtonFormField<String>(
-                initialValue: selectedPhotoType,
-                decoration: const InputDecoration(
-                  labelText: '照片類型',
-                  border: OutlineInputBorder(),
+              InputDecorator(
+                decoration: const InputDecoration(labelText: '清潔前狀態'),
+                child: Text(
+                  hasUploadedBefore ? '清潔前照片已上傳' : '清潔前照片未完成',
+                  style: const TextStyle(fontSize: 16),
                 ),
-                items: const [
-                  DropdownMenuItem(value: 'before', child: Text('清潔前')),
-                  DropdownMenuItem(value: 'after', child: Text('清潔後')),
-                ],
-                onChanged: (value) {
-                  setState(() {
-                    selectedPhotoType = value ?? 'before';
-                  });
-                },
+              ),
+              const SizedBox(height: 12),
+              Text(
+                hasAuthorizedLocationForPhoto
+                    ? '定位已上傳，可以拍照或上傳照片'
+                    : '請先按「上傳當下位置」，成功後才能拍照',
+                style: TextStyle(
+                  color: hasAuthorizedLocationForPhoto
+                      ? Colors.green.shade700
+                      : Colors.orange.shade800,
+                  fontWeight: FontWeight.w600,
+                ),
               ),
               const SizedBox(height: 12),
               if (selectedImage != null)
@@ -2671,12 +3213,18 @@ class _LiveLocationPageState extends State<LiveLocationPage> {
                 const Text('尚未拍照'),
               const SizedBox(height: 12),
               ElevatedButton(
-                onPressed: pickCleaningImage,
-                child: const Text('拍照'),
+                onPressed: hasAuthorizedLocationForPhoto
+                    ? pickCleaningImage
+                    : null,
+                child: Text(
+                  selectedPhotoType == 'before' ? '拍清潔前照片' : '拍清潔後照片',
+                ),
               ),
               const SizedBox(height: 12),
               ElevatedButton(
-                onPressed: isUploadingImage ? null : uploadCleaningImage,
+                onPressed: (isUploadingImage || selectedImage == null)
+                    ? null
+                    : uploadCleaningImage,
                 child: isUploadingImage
                     ? const CircularProgressIndicator()
                     : const Text('上傳照片'),
@@ -2688,16 +3236,16 @@ class _LiveLocationPageState extends State<LiveLocationPage> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(
-                        hasUploadedAfter ? '清潔後照片：已完成' : '清潔後照片：未完成',
-                      ),
+                      Text(hasUploadedBefore ? '清潔前照片已完成' : '清潔前照片未完成'),
+                      const SizedBox(height: 8),
+                      Text(hasUploadedAfter ? '清潔後照片已完成' : '清潔後照片未完成'),
                       const SizedBox(height: 8),
                       Text(
-                        uploadImageResult == '尚未上傳清掃照片'
-                            ? '尚未上傳清掃照片'
+                        uploadImageResult == '尚未上傳照片'
+                            ? '尚未上傳照片'
                             : 'AI 辨識完成，請查看彈出結果',
                       ),
-                      if (uploadImageResult != '尚未上傳清掃照片') ...[
+                      if (uploadImageResult != '尚未上傳照片') ...[
                         const SizedBox(height: 12),
                         SizedBox(
                           width: double.infinity,
@@ -2713,67 +3261,39 @@ class _LiveLocationPageState extends State<LiveLocationPage> {
                   ),
                 ),
               ),
-              const SizedBox(height: 16),
-              DropdownButtonFormField<String>(
-                initialValue: selectedStatus,
-                decoration: const InputDecoration(
-                  labelText: '目前狀態',
-                  border: OutlineInputBorder(),
-                ),
-                items: statusOptions.map((status) {
-                  return DropdownMenuItem<String>(
-                    value: status,
-                    child: Text(status),
-                  );
-                }).toList(),
-                onChanged: (value) {
-                  setState(() {
-                    selectedStatus = value ?? 'working';
-                  });
-                },
-              ),
+              const SizedBox(height: 4),
               const SizedBox(height: 16),
               TextField(
                 controller: currentStopSeqController,
+                readOnly: true,
                 keyboardType: TextInputType.number,
                 decoration: const InputDecoration(
-                  labelText: '目前第幾站',
+                  labelText: '目前站點',
                   border: OutlineInputBorder(),
                 ),
               ),
               const SizedBox(height: 16),
               TextField(
                 controller: completedCountController,
+                readOnly: true,
                 keyboardType: TextInputType.number,
                 decoration: InputDecoration(
-                  labelText: '已完成站數',
+                  labelText: '已完成站點數',
                   border: const OutlineInputBorder(),
-                  helperText: '總站數固定為 ${widget.totalCount}',
+                  helperText: '總站點數為 ${widget.totalCount}',
                 ),
               ),
               const SizedBox(height: 16),
               SizedBox(
                 height: 52,
                 child: ElevatedButton.icon(
-                  onPressed: isLocating ? null : getCurrentLocation,
-                  icon: const Icon(Icons.gps_fixed),
-                  label: isLocating
-                      ? const SizedBox(
-                          width: 22,
-                          height: 22,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Text('取得目前位置'),
-                ),
-              ),
-              const SizedBox(height: 12),
-              SizedBox(
-                height: 52,
-                child: ElevatedButton.icon(
-                  onPressed: isUploading
+                  onPressed: (isUploading || isLocating || hasUploadedAfter)
                       ? null
                       : () {
-                          uploadLocation();
+                          uploadLocation(
+                            forceFreshLocation: true,
+                            authorizeForPhoto: true,
+                          );
                         },
                   icon: const Icon(Icons.upload),
                   label: isUploading
@@ -2782,17 +3302,20 @@ class _LiveLocationPageState extends State<LiveLocationPage> {
                           height: 22,
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
-                      : const Text('手動上傳目前位置'),
+                      : Text(
+                          '上傳${selectedPhotoType == "before" ? "清潔前" : "清潔後"}定位',
+                        ),
                 ),
               ),
               const SizedBox(height: 12),
               SizedBox(
                 height: 52,
                 child: ElevatedButton.icon(
-                  onPressed:
-                      (isUploading || !hasUploadedAfter) ? null : completeCurrentStopAndUpload,
+                  onPressed: (isUploading || !hasUploadedAfter)
+                      ? null
+                      : completeCurrentStopAndUpload,
                   icon: const Icon(Icons.task_alt),
-                  label: const Text('完成目前站點並上傳'),
+                  label: const Text('完成目前站點'),
                 ),
               ),
               const SizedBox(height: 12),
@@ -2803,10 +3326,11 @@ class _LiveLocationPageState extends State<LiveLocationPage> {
                     backgroundColor: Colors.deepPurple,
                     foregroundColor: Colors.white,
                   ),
-                  onPressed:
-                      (isUploading || !hasUploadedAfter) ? null : completeCurrentStopAndNavigateNext,
+                  onPressed: (isUploading || !hasUploadedAfter)
+                      ? null
+                      : completeCurrentStopAndNavigateNext,
                   icon: const Icon(Icons.near_me),
-                  label: const Text('完成目前站點並導航下一站'),
+                  label: const Text('完成並前往下一站'),
                 ),
               ),
               const SizedBox(height: 12),
@@ -2814,14 +3338,12 @@ class _LiveLocationPageState extends State<LiveLocationPage> {
                 height: 52,
                 child: ElevatedButton.icon(
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.green,
+                    backgroundColor: Colors.orange,
                     foregroundColor: Colors.white,
                   ),
-                  onPressed: (isUploading || currentStopSeq < widget.totalCount)
-                      ? null
-                      : markFinishedAndUpload,
-                  icon: const Icon(Icons.done_all),
-                  label: const Text('標記今日完成'),
+                  onPressed: isUploading ? null : skipCurrentStop,
+                  icon: const Icon(Icons.skip_next),
+                  label: const Text('跳過目前站點'),
                 ),
               ),
               const SizedBox(height: 24),
@@ -2875,7 +3397,7 @@ class _AILoadingOverlayState extends State<AILoadingOverlay>
   Widget build(BuildContext context) {
     return Positioned.fill(
       child: Container(
-        color: Colors.black.withValues(alpha:0.45),
+        color: Colors.black.withValues(alpha: 0.45),
         child: Center(
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -2893,12 +3415,12 @@ class _AILoadingOverlayState extends State<AILoadingOverlay>
                       color: Colors.white,
                       boxShadow: [
                         BoxShadow(
-                          color: Colors.cyanAccent.withValues(alpha:0.75),
+                          color: Colors.cyanAccent.withValues(alpha: 0.75),
                           blurRadius: glow,
                           spreadRadius: 2,
                         ),
                         BoxShadow(
-                          color: Colors.blueAccent.withValues(alpha:0.35),
+                          color: Colors.blueAccent.withValues(alpha: 0.35),
                           blurRadius: glow + 12,
                           spreadRadius: 6,
                         ),
@@ -2924,11 +3446,8 @@ class _AILoadingOverlayState extends State<AILoadingOverlay>
               ),
               const SizedBox(height: 10),
               const Text(
-                '請稍候，正在分析照片內容',
-                style: TextStyle(
-                  fontSize: 15,
-                  color: Colors.white70,
-                ),
+                '請稍候，正在分析照片與回傳結果',
+                style: TextStyle(fontSize: 15, color: Colors.white70),
               ),
               const SizedBox(height: 18),
               const SizedBox(
@@ -2967,14 +3486,12 @@ class _ReportPageState extends State<ReportPage> {
   final TextEditingController contentController = TextEditingController();
   final TextEditingController stopSeqController = TextEditingController();
 
-  
-  String selectedType = '客戶不在';
+  String selectedType = '地址有誤';
   bool isSubmitting = false;
   bool isLoadingReports = true;
   List<Map<String, dynamic>> reports = [];
 
   final List<String> reportTypes = const [
-    '客戶不在',
     '地址有誤',
     '無法進入',
     '設備異常',
@@ -3009,9 +3526,9 @@ class _ReportPageState extends State<ReportPage> {
       });
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('載入回報紀錄失敗：$e')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('讀取回報紀錄失敗：')));
     } finally {
       if (mounted) {
         setState(() {
@@ -3026,9 +3543,9 @@ class _ReportPageState extends State<ReportPage> {
     final stopSeq = int.tryParse(stopSeqController.text.trim()) ?? 0;
 
     if (content.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('請填寫回報內容')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('請輸入回報內容')));
       return;
     }
 
@@ -3051,16 +3568,16 @@ class _ReportPageState extends State<ReportPage> {
       contentController.clear();
       stopSeqController.clear();
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('工作回報已送出')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('工作回報已送出')));
 
       await loadReports();
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('送出失敗：$e')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('送出失敗：')));
     } finally {
       if (mounted) {
         setState(() {
@@ -3073,14 +3590,17 @@ class _ReportPageState extends State<ReportPage> {
   Widget buildReportCard(Map<String, dynamic> report) {
     return Card(
       child: ListTile(
-        leading: const Icon(Icons.assignment_turned_in_outlined, color: Colors.indigo),
+        leading: const Icon(
+          Icons.assignment_turned_in_outlined,
+          color: Colors.indigo,
+        ),
         title: Text(report['report_type']?.toString() ?? '未分類'),
         subtitle: Padding(
           padding: const EdgeInsets.only(top: 6),
           child: Text(
             '內容：${report['content'] ?? ''}\n'
-            '第幾天：${report['day'] ?? '-'} ｜ '
-            '第幾站：${report['stop_seq'] ?? '-'}\n'
+            '天數：${report['day'] ?? '-'}，'
+            '站點：${report['stop_seq'] ?? '-'}\n'
             '時間：${report['created_at'] ?? '-'}',
           ),
         ),
@@ -3095,10 +3615,7 @@ class _ReportPageState extends State<ReportPage> {
       appBar: AppBar(
         title: const Text('工作回報'),
         actions: [
-          IconButton(
-            onPressed: loadReports,
-            icon: const Icon(Icons.refresh),
-          ),
+          IconButton(onPressed: loadReports, icon: const Icon(Icons.refresh)),
         ],
       ),
       body: Stack(
@@ -3114,12 +3631,17 @@ class _ReportPageState extends State<ReportPage> {
                     children: [
                       Text(
                         '司機：${widget.driverCode}',
-                        style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                        style: const TextStyle(
+                          fontSize: 20,
+                          fontWeight: FontWeight.bold,
+                        ),
                       ),
                       const SizedBox(height: 6),
                       Text('第 ${widget.day} 天'),
                       const SizedBox(height: 4),
-                      Text('路線編號：${widget.routeId.isEmpty ? "-" : widget.routeId}'),
+                      Text(
+                        "路線：${widget.routeId.isEmpty ? '-' : widget.routeId}",
+                      ),
                     ],
                   ),
                 ),
@@ -3148,7 +3670,7 @@ class _ReportPageState extends State<ReportPage> {
                 controller: stopSeqController,
                 keyboardType: TextInputType.number,
                 decoration: const InputDecoration(
-                  labelText: '第幾站（可不填）',
+                  labelText: '站點編號（可留空）',
                   hintText: '例如：3',
                   border: OutlineInputBorder(),
                 ),
@@ -3159,7 +3681,7 @@ class _ReportPageState extends State<ReportPage> {
                 maxLines: 5,
                 decoration: const InputDecoration(
                   labelText: '回報內容',
-                  hintText: '例如：客戶不在現場，電話未接通，已先拍照回報。',
+                  hintText: '請輸入回報內容，例如現場狀況、照片補充或特殊問題。',
                   border: OutlineInputBorder(),
                   alignLabelWithHint: true,
                 ),
@@ -3179,10 +3701,10 @@ class _ReportPageState extends State<ReportPage> {
                       : const Text('送出工作回報'),
                 ),
               ),
-              
+
               const SizedBox(height: 24),
               const Text(
-                '最近回報紀錄',
+                '回報紀錄',
                 style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
               ),
               const SizedBox(height: 12),
@@ -3204,3 +3726,4 @@ class _ReportPageState extends State<ReportPage> {
     );
   }
 }
+
