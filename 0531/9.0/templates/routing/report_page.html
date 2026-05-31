@@ -1,0 +1,639 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Dispatch Nav | 問題回報</title>
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <link href="https://fonts.googleapis.com/css?family=Open+Sans:300,400,600,700" rel="stylesheet" />
+  <style>
+    :root {
+      --primary: #4A90E2;
+      --danger: #ef4444;
+      --warning: #f59e0b;
+      --glass: rgba(255, 255, 255, 0.95);
+      --soft-shadow: 0 10px 30px rgba(0, 0, 0, 0.08);
+      --text-main: #344767;
+      --sidebar-width: 80px;
+      --sidebar-expanded: 260px;
+      --bg: #f8f9fa;
+    }
+
+    * { box-sizing: border-box; }
+    body, html {
+      height: 100%;
+      margin: 0;
+      font-family: "Open Sans", sans-serif;
+      background: var(--bg);
+      color: var(--text-main);
+    }
+
+    #soft-sidebar {
+      position: fixed; top: 15px; left: 15px; bottom: 15px;
+      width: var(--sidebar-width); z-index: 1200;
+      background: var(--glass); backdrop-filter: blur(10px);
+      border-radius: 15px; box-shadow: var(--soft-shadow);
+      transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+      overflow: hidden; display: flex; flex-direction: column;
+      border: 1px solid rgba(255, 255, 255, 0.3);
+    }
+    #soft-sidebar:hover { width: var(--sidebar-expanded); }
+
+    .sidebar-header { padding: 25px 20px; display: flex; align-items: center; gap: 15px; min-width: 260px; }
+    .sidebar-header .logo-box { background: var(--primary); color: white; padding: 8px; border-radius: 8px; display: flex; }
+    .sidebar-header span { font-weight: 700; color: var(--text-main); white-space: nowrap; opacity: 0; transition: 0.3s; }
+    #soft-sidebar:hover .sidebar-header span { opacity: 1; }
+
+    .menu-list { flex: 1; padding: 10px 15px; display: flex; flex-direction: column; gap: 5px; }
+    .menu-item { display: flex; align-items: center; gap: 15px; padding: 12px; border-radius: 10px; cursor: pointer; transition: background 0.2s; min-width: 230px; text-decoration: none; }
+    .menu-item:hover { background: #f8f9fa; }
+    .menu-item .icon-box { width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; border-radius: 8px; background: white; box-shadow: 0 4px 6px rgba(0,0,0,0.05); color: #8392ab; }
+    .menu-item.active .icon-box { background: var(--danger); color: white; }
+    .menu-item span { font-size: 14px; font-weight: 600; color: #67748e; white-space: nowrap; opacity: 0; transition: 0.2s; }
+    #soft-sidebar:hover .menu-item span { opacity: 1; }
+
+    #top-nav {
+      position: fixed; top: 15px;
+      left: 110px; right: 15px; height: 60px;
+      z-index: 1000; background: var(--glass); backdrop-filter: blur(10px);
+      border-radius: 12px; box-shadow: var(--soft-shadow);
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 0 20px;
+      border: 1px solid rgba(255, 255, 255, 0.3);
+      transition: left 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    body:has(#soft-sidebar:hover) #top-nav {
+      left: 290px;
+    }
+
+    .nav-brand {
+      font-weight: 700;
+      font-size: 18px;
+      color: var(--text-main);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .nav-right {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      font-size: 13px;
+      color: #67748e;
+      font-weight: 600;
+    }
+
+    .page-wrap {
+      margin-left: 110px;
+      padding: 95px 20px 20px;
+      transition: margin-left 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    body:has(#soft-sidebar:hover) .page-wrap {
+      margin-left: 290px;
+    }
+
+    .toolbar, .summary-grid, .report-list {
+      max-width: 1400px;
+      margin: 0 auto;
+    }
+
+    .toolbar {
+      display: grid;
+      grid-template-columns: 1.2fr 1fr auto;
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+
+    .field, .summary-card, .report-card {
+      background: var(--glass);
+      border-radius: 16px;
+      box-shadow: var(--soft-shadow);
+      border: 1px solid rgba(255,255,255,0.4);
+    }
+
+    .field {
+      padding: 14px 16px;
+    }
+
+    .field label {
+      display: block;
+      font-size: 12px;
+      font-weight: 700;
+      color: #8392ab;
+      margin-bottom: 8px;
+      text-transform: uppercase;
+      letter-spacing: 0.4px;
+    }
+
+    .field input, .field select, .edit-panel textarea {
+      width: 100%;
+      border: 1px solid #d2d6da;
+      border-radius: 10px;
+      padding: 10px 12px;
+      font-size: 14px;
+      outline: none;
+      background: white;
+      font-family: inherit;
+    }
+
+    .edit-panel textarea {
+      min-height: 120px;
+      resize: vertical;
+    }
+
+    .action-btn, .small-btn {
+      border: none;
+      border-radius: 12px;
+      color: white;
+      font-weight: 700;
+      cursor: pointer;
+      box-shadow: var(--soft-shadow);
+    }
+
+    .action-btn {
+      background: var(--primary);
+      padding: 0 18px;
+      height: 100%;
+      min-height: 74px;
+    }
+
+    .small-btn {
+      padding: 8px 14px;
+      font-size: 13px;
+    }
+
+    .small-btn.edit { background: var(--warning); }
+    .small-btn.delete { background: var(--danger); }
+    .small-btn.save { background: #10b981; }
+    .small-btn.cancel { background: #6b7280; }
+
+    .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 14px;
+      margin-bottom: 16px;
+    }
+
+    .summary-card {
+      padding: 18px;
+    }
+
+    .summary-label {
+      font-size: 12px;
+      font-weight: 700;
+      color: #8392ab;
+      text-transform: uppercase;
+      margin-bottom: 10px;
+    }
+
+    .summary-value {
+      font-size: 28px;
+      font-weight: 700;
+      color: var(--text-main);
+    }
+
+    .edit-panel {
+      max-width: 1400px;
+      margin: 0 auto 16px;
+      background: var(--glass);
+      border-radius: 16px;
+      box-shadow: var(--soft-shadow);
+      border: 1px solid rgba(255,255,255,0.4);
+      padding: 18px;
+      display: none;
+    }
+
+    .edit-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 14px;
+      margin-bottom: 14px;
+    }
+
+    .edit-actions {
+      display: flex;
+      gap: 10px;
+      justify-content: flex-end;
+    }
+
+    .report-list {
+      display: grid;
+      gap: 14px;
+    }
+
+    .report-card {
+      padding: 18px;
+    }
+
+    .report-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 12px;
+      flex-wrap: wrap;
+    }
+
+    .report-type {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      background: #fff5f5;
+      color: var(--danger);
+      border-radius: 999px;
+      padding: 6px 12px;
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .report-time {
+      color: #8392ab;
+      font-size: 13px;
+      font-weight: 600;
+    }
+
+    .report-content {
+      font-size: 15px;
+      line-height: 1.7;
+      color: #344767;
+      margin-bottom: 14px;
+      white-space: pre-wrap;
+    }
+
+    .report-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-bottom: 14px;
+    }
+
+    .meta-chip {
+      background: white;
+      border: 1px solid #e9ecef;
+      border-radius: 999px;
+      padding: 6px 12px;
+      font-size: 13px;
+      color: #67748e;
+      font-weight: 600;
+    }
+
+    .card-actions {
+      display: flex;
+      gap: 10px;
+      justify-content: flex-end;
+    }
+
+    .empty-box {
+      background: var(--glass);
+      border-radius: 16px;
+      box-shadow: var(--soft-shadow);
+      padding: 36px 24px;
+      text-align: center;
+      color: #8392ab;
+      border: 1px solid rgba(255,255,255,0.4);
+    }
+
+    @media (max-width: 1100px) {
+      .summary-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+      .toolbar {
+        grid-template-columns: 1fr;
+      }
+      .action-btn {
+        min-height: 52px;
+      }
+      .edit-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <aside id="soft-sidebar">
+    <div class="sidebar-header">
+      <div class="logo-box"><i data-lucide="layout-grid" size="18"></i></div>
+      <span>Dispatch Nav</span>
+    </div>
+    <div class="menu-list">
+      <a href="{% url 'home' %}" class="menu-item">
+        <div class="icon-box"><i data-lucide="home" size="18"></i></div>
+        <span>Dashboard</span>
+      </a>
+
+      <a href="{% url 'report_page' %}" class="menu-item active">
+        <div class="icon-box"><i data-lucide="triangle-alert" size="18"></i></div>
+        <span>問題回報</span>
+      </a>
+
+      <a href="{% url 'data_list' %}" class="menu-item">
+        <div class="icon-box"><i data-lucide="table" size="18"></i></div>
+        <span>資料管理</span>
+      </a>
+
+      <a href="{% url 'login' %}" class="menu-item">
+        <div class="icon-box"><i data-lucide="log-out" size="14"></i></div>
+        <span>登出</span>
+      </a>
+    </div>
+  </aside>
+
+  <nav id="top-nav">
+    <div class="nav-brand"><i data-lucide="triangle-alert"></i> 問題回報管理</div>
+    <div class="nav-right">
+      <span id="lastUpdateText">最後更新：--</span>
+    </div>
+  </nav>
+
+  <main class="page-wrap">
+    <section class="toolbar">
+      <div class="field">
+        <label for="driverFilter">司機編號篩選</label>
+        <input id="driverFilter" type="text" placeholder="例如：P01、W01，不填代表全部" />
+      </div>
+
+      <div class="field">
+        <label for="typeFilter">回報類型篩選</label>
+        <select id="typeFilter">
+          <option value="">全部類型</option>
+          <option value="客戶不在">客戶不在</option>
+          <option value="地址有誤">地址有誤</option>
+          <option value="無法進入">無法進入</option>
+          <option value="設備異常">設備異常</option>
+          <option value="臨時取消">臨時取消</option>
+          <option value="交通延誤">交通延誤</option>
+          <option value="其他">其他</option>
+        </select>
+      </div>
+
+      <button class="action-btn" id="refreshBtn" type="button">重新整理</button>
+    </section>
+
+    <section class="summary-grid">
+      <div class="summary-card">
+        <div class="summary-label">總回報數</div>
+        <div class="summary-value" id="summaryTotal">0</div>
+      </div>
+      <div class="summary-card">
+        <div class="summary-label">客戶不在</div>
+        <div class="summary-value" id="summaryAbsent">0</div>
+      </div>
+      <div class="summary-card">
+        <div class="summary-label">設備異常</div>
+        <div class="summary-value" id="summaryDevice">0</div>
+      </div>
+      <div class="summary-card">
+        <div class="summary-label">交通延誤</div>
+        <div class="summary-value" id="summaryTraffic">0</div>
+      </div>
+    </section>
+
+    <section class="edit-panel" id="editPanel">
+      <h3 style="margin-top:0;">編輯問題回報</h3>
+      <input type="hidden" id="editId" />
+      <div class="edit-grid">
+        <div class="field" style="padding:0; box-shadow:none; border:none; background:transparent;">
+          <label for="editType">回報類型</label>
+          <select id="editType">
+            <option value="客戶不在">客戶不在</option>
+            <option value="地址有誤">地址有誤</option>
+            <option value="無法進入">無法進入</option>
+            <option value="設備異常">設備異常</option>
+            <option value="臨時取消">臨時取消</option>
+            <option value="交通延誤">交通延誤</option>
+            <option value="其他">其他</option>
+          </select>
+        </div>
+
+        <div class="field" style="padding:0; box-shadow:none; border:none; background:transparent;">
+          <label for="editStopSeq">第幾站</label>
+          <input id="editStopSeq" type="number" min="0" placeholder="例如：3" />
+        </div>
+      </div>
+
+      <div class="field" style="padding:0; box-shadow:none; border:none; background:transparent; margin-bottom:14px;">
+        <label for="editContent">回報內容</label>
+        <textarea id="editContent" placeholder="請輸入回報內容"></textarea>
+      </div>
+
+      <div class="edit-actions">
+        <button type="button" class="small-btn cancel" onclick="cancelEdit()">取消</button>
+        <button type="button" class="small-btn save" onclick="saveEdit()">儲存修改</button>
+      </div>
+    </section>
+
+    <section class="report-list" id="reportList">
+      <div class="empty-box">載入中...</div>
+    </section>
+  </main>
+
+  <script>
+    lucide.createIcons();
+
+    let allReports = [];
+
+    function updateLastUpdateTime() {
+      const now = new Date();
+      const text = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`;
+      document.getElementById('lastUpdateText').textContent = `最後更新：${text}`;
+    }
+
+    async function loadReports() {
+      const reportList = document.getElementById('reportList');
+      reportList.innerHTML = '<div class="empty-box">載入中...</div>';
+
+      try {
+        const res = await fetch('/api/driver/reports/?limit=200');
+        const data = await res.json();
+
+        if (!res.ok || !data.ok) {
+          reportList.innerHTML = `<div class="empty-box">讀取失敗：${data.message || '未知錯誤'}</div>`;
+          return;
+        }
+
+        allReports = Array.isArray(data.reports) ? data.reports : [];
+        applyFilters();
+        updateLastUpdateTime();
+      } catch (err) {
+        reportList.innerHTML = `<div class="empty-box">連線失敗：${err}</div>`;
+      }
+    }
+
+    function applyFilters() {
+      const driverKeyword = document.getElementById('driverFilter').value.trim().toUpperCase();
+      const typeFilter = document.getElementById('typeFilter').value;
+      const reportList = document.getElementById('reportList');
+
+      let filtered = [...allReports];
+
+      if (driverKeyword) {
+        filtered = filtered.filter(item =>
+          String(item.driver_code || '').toUpperCase().includes(driverKeyword)
+        );
+      }
+
+      if (typeFilter) {
+        filtered = filtered.filter(item => String(item.report_type || '') === typeFilter);
+      }
+
+      renderSummary(filtered);
+      renderReports(filtered, reportList);
+    }
+
+    function renderSummary(reports) {
+      document.getElementById('summaryTotal').textContent = reports.length;
+      document.getElementById('summaryAbsent').textContent = reports.filter(r => r.report_type === '客戶不在').length;
+      document.getElementById('summaryDevice').textContent = reports.filter(r => r.report_type === '設備異常').length;
+      document.getElementById('summaryTraffic').textContent = reports.filter(r => r.report_type === '交通延誤').length;
+    }
+
+    function renderReports(reports, reportList) {
+      if (!reports.length) {
+        reportList.innerHTML = '<div class="empty-box">目前沒有符合條件的回報資料</div>';
+        return;
+      }
+
+      reportList.innerHTML = reports.map(report => `
+        <article class="report-card">
+          <div class="report-head">
+            <div class="report-type">
+              <i data-lucide="badge-alert" size="16"></i>
+              <span>${escapeHtml(report.report_type || '未分類')}</span>
+            </div>
+            <div class="report-time">
+              建立：${escapeHtml(report.created_at || '-')}
+              ${report.updated_at ? ` ｜ 更新：${escapeHtml(report.updated_at)}` : ''}
+            </div>
+          </div>
+
+          <div class="report-content">${escapeHtml(report.content || '')}</div>
+
+          <div class="report-meta">
+            <div class="meta-chip">ID：${report.id || '-'}</div>
+            <div class="meta-chip">司機：${escapeHtml(report.driver_code || '-')}</div>
+            <div class="meta-chip">第幾天：${report.day || '-'}</div>
+            <div class="meta-chip">第幾站：${report.stop_seq || '-'}</div>
+            <div class="meta-chip">路線：${escapeHtml(report.route_id || '-')}</div>
+            <div class="meta-chip">模式：${escapeHtml(report.variant || '-')}</div>
+            <div class="meta-chip">狀態：${escapeHtml(report.status || '-')}</div>
+          </div>
+
+          <div class="card-actions">
+            <button type="button" class="small-btn edit"
+              onclick='openEdit(${JSON.stringify(report)})'>編輯</button>
+            <button type="button" class="small-btn delete"
+              onclick="deleteReport(${report.id})">刪除</button>
+          </div>
+        </article>
+      `).join('');
+
+      lucide.createIcons();
+    }
+
+    function openEdit(report) {
+      const panel = document.getElementById('editPanel');
+      document.getElementById('editId').value = report.id || '';
+      document.getElementById('editType').value = report.report_type || '其他';
+      document.getElementById('editStopSeq').value = report.stop_seq || 0;
+      document.getElementById('editContent').value = report.content || '';
+      panel.style.display = 'block';
+      panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+
+    function cancelEdit() {
+      document.getElementById('editPanel').style.display = 'none';
+      document.getElementById('editId').value = '';
+      document.getElementById('editType').value = '客戶不在';
+      document.getElementById('editStopSeq').value = '';
+      document.getElementById('editContent').value = '';
+    }
+
+    async function saveEdit() {
+      const id = Number(document.getElementById('editId').value || 0);
+      const report_type = document.getElementById('editType').value;
+      const stop_seq = Number(document.getElementById('editStopSeq').value || 0);
+      const content = document.getElementById('editContent').value.trim();
+
+      if (!id) {
+        alert('找不到要編輯的回報 ID');
+        return;
+      }
+
+      if (!content) {
+        alert('請填寫回報內容');
+        return;
+      }
+
+      try {
+        const res = await fetch('/api/driver/report/update/', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            id,
+            report_type,
+            stop_seq,
+            content
+          })
+        });
+
+        const data = await res.json();
+
+        if (!res.ok || !data.ok) {
+          alert(data.message || '更新失敗');
+          return;
+        }
+
+        alert('更新成功');
+        cancelEdit();
+        await loadReports();
+      } catch (err) {
+        alert('更新失敗：' + err);
+      }
+    }
+
+    async function deleteReport(id) {
+      if (!confirm(`確定要刪除這筆回報嗎？\nID：${id}`)) {
+        return;
+      }
+
+      try {
+        const res = await fetch('/api/driver/report/delete/', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id })
+        });
+
+        const data = await res.json();
+
+        if (!res.ok || !data.ok) {
+          alert(data.message || '刪除失敗');
+          return;
+        }
+
+        alert('刪除成功');
+        await loadReports();
+      } catch (err) {
+        alert('刪除失敗：' + err);
+      }
+    }
+
+    function escapeHtml(text) {
+      return String(text)
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&#039;');
+    }
+
+    document.getElementById('refreshBtn').addEventListener('click', loadReports);
+    document.getElementById('driverFilter').addEventListener('input', applyFilters);
+    document.getElementById('typeFilter').addEventListener('change', applyFilters);
+
+    loadReports();
+  </script>
+</body>
+</html>
