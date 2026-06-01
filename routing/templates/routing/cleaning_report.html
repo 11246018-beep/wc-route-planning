@@ -384,8 +384,20 @@
 
       <a href="{% url 'driver_admin_page' %}" class="menu-item">
         <div class="icon-box"><i data-lucide="users-round" size="18"></i></div>
-        <span>帳號管理</span>
+        <span>司機帳號</span>
       </a>
+
+      {% if user.is_superuser %}
+      <a href="{% url 'account_management' %}" class="menu-item">
+        <div class="icon-box"><i data-lucide="shield-check" size="18"></i></div>
+        <span>管理者帳號</span>
+      </a>
+
+      <a href="{% url 'admin_action_logs' %}" class="menu-item">
+        <div class="icon-box"><i data-lucide="clipboard-list" size="18"></i></div>
+       <span>操作紀錄</span>
+      </a>
+      {% endif %}
 
       <a href="{% url 'data_list' %}" class="menu-item">
         <div class="icon-box"><i data-lucide="table" size="18"></i></div>

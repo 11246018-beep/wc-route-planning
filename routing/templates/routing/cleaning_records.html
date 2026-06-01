@@ -1,4 +1,4 @@
-{% load static %}
+﻿{% load static %}
 <!DOCTYPE html>
 <html lang="zh-Hant">
 <head>
@@ -671,7 +671,7 @@
     }
   </style>
 </head>
-<body>
+<body data-can-manage-records="{% if user.is_staff or user.is_superuser %}true{% else %}false{% endif %}">
   <aside id="soft-sidebar">
     <div class="sidebar-header">
       <div class="logo-box"><i data-lucide="layout-grid" size="18"></i></div>
@@ -695,8 +695,20 @@
 
       <a href="{% url 'driver_admin_page' %}" class="menu-item">
         <div class="icon-box"><i data-lucide="users-round" size="18"></i></div>
-        <span>帳號管理</span>
+        <span>司機帳號</span>
       </a>
+
+      {% if user.is_superuser %}
+      <a href="{% url 'account_management' %}" class="menu-item">
+        <div class="icon-box"><i data-lucide="shield-check" size="18"></i></div>
+        <span>管理者帳號</span>
+      </a>
+
+      <a href="{% url 'admin_action_logs' %}" class="menu-item">
+        <div class="icon-box"><i data-lucide="clipboard-list" size="18"></i></div>
+       <span>操作紀錄</span>
+      </a>
+      {% endif %}
 
       <a href="{% url 'data_list' %}" class="menu-item">
         <div class="icon-box"><i data-lucide="table" size="18"></i></div>
@@ -817,7 +829,7 @@
     <section class="table-wrap">
       <div class="table-header">
         <div>
-          <h3 class="table-title">清掃紀錄列表</h3>
+          <h3 class="table-title">清掃紀錄清單</h3>
           <div class="small-text">
             保留完整紀錄查詢功能，並支援查看照片與單筆詳細 AI 判定資訊。
           </div>
@@ -857,7 +869,7 @@
 
       <div class="modal-grid">
         <div class="modal-image-wrap" id="modalImageWrap">
-          <span class="muted">無圖片</span>
+          <span class="muted">無照片</span>
         </div>
 
         <div class="detail-list">
@@ -896,7 +908,7 @@
 
       <div class="location-compare">
         <div class="location-map-head">
-          <strong>拍照位置比對</strong>
+          <strong>位置比對</strong>
           <div class="location-legend">
             <span><i class="legend-dot" style="background:#2563eb;"></i>清理點位</span>
             <span><i class="legend-dot" style="background:#f97316;"></i>清潔前拍照位置</span>
@@ -913,7 +925,7 @@
   <script>
     lucide.createIcons();
 
-    const CAN_MANAGE_RECORDS = {{ user.is_staff|yesno:"true,false" }} || {{ user.is_superuser|yesno:"true,false" }};
+    const CAN_MANAGE_RECORDS = document.body.dataset.canManageRecords === 'true';
     let allRecords = [];
     let photoCompareMap = null;
     let photoCompareLayer = null;
@@ -1284,7 +1296,7 @@ function renderTable(records) {
   const tbody = document.getElementById('tableBody');
 
   if (!records.length) {
-    tbody.innerHTML = `<tr><td colspan="7" class="empty-box">查無資料</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="7" class="empty-box">載入中...</td></tr>`;
     return;
   }
 
@@ -1324,7 +1336,7 @@ function renderTable(records) {
   const rows = Object.values(grouped);
 
   if (!rows.length) {
-    tbody.innerHTML = `<tr><td colspan="7" class="empty-box">查無可整理的流程資料</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="7" class="empty-box">載入中...</td></tr>`;
     return;
   }
 
@@ -1387,7 +1399,7 @@ function renderTable(records) {
         <div>
           <div class="detail-label" style="margin-bottom:8px;">清潔前照片 · ${before ? escapeHtml(formatRecordDateTime(before.created_at)) : '-'}</div>
           <div class="modal-image-wrap" style="min-height:220px;">
-            ${before && before.image_url ? `<img src="${before.image_url}" alt="清潔前照片">` : '<span class="muted">無圖片</span>'}
+            ${before && before.image_url ? `<img src="${before.image_url}" alt="清潔前照片">` : '<span class="muted">無照片</span>'}
           </div>
         </div>
       `;
@@ -1396,7 +1408,7 @@ function renderTable(records) {
         <div>
           <div class="detail-label" style="margin-bottom:8px;">清潔後照片 · ${after ? escapeHtml(formatRecordDateTime(after.created_at)) : '-'}</div>
           <div class="modal-image-wrap" style="min-height:220px;">
-            ${after && after.image_url ? `<img src="${after.image_url}" alt="清潔後照片">` : '<span class="muted">無圖片</span>'}
+            ${after && after.image_url ? `<img src="${after.image_url}" alt="清潔後照片">` : '<span class="muted">無照片</span>'}
           </div>
         </div>
       `;
@@ -1558,7 +1570,7 @@ function renderTable(records) {
         const data = await res.json();
 
         if (!res.ok || !data.ok) {
-          tbody.innerHTML = `<tr><td colspan="7" class="empty-box">讀取失敗：${escapeHtml(data.message || '未知錯誤')}</td></tr>`;
+          tbody.innerHTML = `<tr><td colspan="7" class="empty-box">載入中...</td></tr>`;
           riskAreaBody.innerHTML = `<tr><td colspan="3" class="empty-box">讀取失敗</td></tr>`;
           driverRateBody.innerHTML = `<tr><td colspan="4" class="empty-box">讀取失敗</td></tr>`;
           return;
@@ -1573,7 +1585,7 @@ function renderTable(records) {
         renderTable(records);
         updateLastUpdateTime();
       } catch (err) {
-        tbody.innerHTML = `<tr><td colspan="7" class="empty-box">連線失敗：${escapeHtml(err)}</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="7" class="empty-box">載入中...</td></tr>`;
         riskAreaBody.innerHTML = `<tr><td colspan="3" class="empty-box">連線失敗</td></tr>`;
         driverRateBody.innerHTML = `<tr><td colspan="4" class="empty-box">連線失敗</td></tr>`;
       }
@@ -1674,3 +1686,4 @@ function renderTable(records) {
   </script>
 </body>
 </html>
+

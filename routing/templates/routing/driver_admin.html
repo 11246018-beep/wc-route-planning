@@ -421,7 +421,7 @@
     }
   </style>
 </head>
-<body>
+<body data-can-manage-drivers="{% if user.is_staff or user.is_superuser %}true{% else %}false{% endif %}">
   <aside id="soft-sidebar">
     <div class="sidebar-header">
       <div class="logo-box"><i data-lucide="layout-grid" size="18"></i></div>
@@ -445,8 +445,20 @@
 
       <a href="{% url 'driver_admin_page' %}" class="menu-item active">
         <div class="icon-box"><i data-lucide="users-round" size="18"></i></div>
-        <span>帳號管理</span>
+        <span>司機帳號</span>
       </a>
+
+      {% if user.is_superuser %}
+      <a href="{% url 'account_management' %}" class="menu-item">
+        <div class="icon-box"><i data-lucide="shield-check" size="18"></i></div>
+        <span>管理者帳號</span>
+      </a>
+
+      <a href="{% url 'admin_action_logs' %}" class="menu-item">
+        <div class="icon-box"><i data-lucide="clipboard-list" size="18"></i></div>
+       <span>操作紀錄</span>
+      </a>
+      {% endif %}
 
       <a href="{% url 'data_list' %}" class="menu-item">
         <div class="icon-box"><i data-lucide="table" size="18"></i></div>
@@ -545,7 +557,7 @@
 
         <div>
           <label>App 密碼</label>
-          <input id="formPassword" type="text" placeholder="輸入新的 App 密碼" />
+          <input id="formPassword" type="text" placeholder="新增必填；編輯時留空代表不變更密碼" />
         </div>
 
         <div>
@@ -618,7 +630,7 @@
   <script>
     lucide.createIcons();
 
-    const CAN_MANAGE_DRIVERS = {% if user.is_staff or user.is_superuser %}true{% else %}false{% endif %};
+    const CAN_MANAGE_DRIVERS = document.body.dataset.canManageDrivers === 'true';
     let allDrivers = [];
     let fixedSlots = [];
     let summaryData = null;
@@ -812,6 +824,7 @@
       if (!CAN_MANAGE_DRIVERS) { alert('權限不足：只讀人員不能新增司機帳號。'); return; }
       resetForm();
       document.getElementById('formTitle').textContent = '新增司機帳號';
+      document.getElementById('formPassword').placeholder = '新增司機時必填 App 密碼';
       window.scrollTo({ top: 0, behavior: 'smooth' });
     }
 
@@ -829,7 +842,8 @@
       document.getElementById('formDisplayName').value = driver.display_name || '';
       document.getElementById('formDepotId').value = driver.depot_id ?? '';
       document.getElementById('formMaxMinutes').value = driver.max_minutes ?? 540;
-      document.getElementById('formPassword').value = driver.password || '';
+      document.getElementById('formPassword').value = '';
+      document.getElementById('formPassword').placeholder = '留空代表不變更原本密碼';
       document.getElementById('formPhone').value = driver.phone || '';
       document.getElementById('formNote').value = driver.note || '';
       document.getElementById('formIsActive').value = String(driver.is_active);
@@ -848,6 +862,7 @@
       document.getElementById('formDepotId').value = '';
       document.getElementById('formMaxMinutes').value = '540';
       document.getElementById('formPassword').value = '';
+      document.getElementById('formPassword').placeholder = '新增必填；編輯時留空代表不變更密碼';
       document.getElementById('formPhone').value = '';
       document.getElementById('formNote').value = '';
       document.getElementById('formIsActive').value = 'true';
@@ -875,7 +890,7 @@
         return;
       }
 
-      if (!payload.password) {
+      if (!payload.id && !payload.password) {
         alert('請填寫 App 密碼');
         return;
       }
