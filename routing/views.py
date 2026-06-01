@@ -1,13 +1,14 @@
-from pathlib import Path
+﻿from pathlib import Path
 import json
 import subprocess
 import sys
 import threading
 import time
+import os
 
 from django.core.paginator import Paginator
 from django.db.models import Q
-from django.db import connection
+from django.db import connection, connections
 from django.http import JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
@@ -21,14 +22,19 @@ import pandas as pd
 
 from .models import ServicePoint, Driver
 from .services.driver_roster import get_driver_assignment, normalize_schedule_slot, schedule_sort_key
+from .security import find_driver_by_code, is_hashed_password, make_driver_token, verify_driver_password
 
 from collections import defaultdict
 from supabase import create_client
 
-SUPABASE_URL = "https://evwzonunmjvulzitxjmn.supabase.co"
-SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImV2d3pvbnVubWp2dWx6aXR4am1uIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI3OTAzOTUsImV4cCI6MjA4ODM2NjM5NX0.lWMaSu_B6q4AhzAxFykA6YBkwMN0QqNptAoUaraM2E4"
+SUPABASE_URL = os.environ.get("SUPABASE_URL", "https://evwzonunmjvulzitxjmn.supabase.co")
+SUPABASE_KEY = os.environ.get("SUPABASE_ANON_KEY", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImV2d3pvbnVubWp2dWx6aXR4am1uIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI3OTAzOTUsImV4cCI6MjA4ODM2NjM5NX0.lWMaSu_B6q4AhzAxFykA6YBkwMN0QqNptAoUaraM2E4")
 
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+
+
+def health_api(request):
+    return JsonResponse({"ok": True, "message": "Dispatch Nav API OK"})
 
 
 def toilet_demand_analysis_api(request):
@@ -372,6 +378,8 @@ def _run_scheduler_background(variant):
             progress=100,
             run_meta=None,
         )
+    finally:
+        connections.close_all()
 
 
 def to_float(value):
@@ -437,13 +445,13 @@ def driver_login_api(request):
     if request.method == "OPTIONS":
         response = JsonResponse({"ok": True})
         response["Access-Control-Allow-Origin"] = "*"
-        response["Access-Control-Allow-Headers"] = "Content-Type"
+        response["Access-Control-Allow-Headers"] = "Content-Type, Authorization, X-Driver-Token"
         response["Access-Control-Allow-Methods"] = "POST, OPTIONS"
         return response
 
     if request.method != "POST":
         return JsonResponse(
-            {"success": False, "message": "只允許 POST"},
+            {"success": False, "message": "只支援 POST"},
             status=405
         )
 
@@ -454,37 +462,39 @@ def driver_login_api(request):
 
         if not driver_code or not password:
             return JsonResponse(
-                {"success": False, "message": "請輸入司機編號與密碼"},
+                {"success": False, "message": "請輸入司機代碼與密碼"},
                 status=400
             )
 
-        try:
-            driver = Driver.objects.get(driver_code=driver_code)
-        except Driver.DoesNotExist:
+        driver = find_driver_by_code(driver_code)
+        if not driver:
             return JsonResponse(
-                {"success": False, "message": "找不到此司機帳號"},
+                {"success": False, "message": "找不到司機帳號"},
                 status=401
             )
 
-        if driver.password != password:
+        if not verify_driver_password(driver, password):
             return JsonResponse(
                 {"success": False, "message": "密碼錯誤"},
                 status=401
             )
 
+        token = make_driver_token(driver)
         return JsonResponse({
             "success": True,
             "driver_code": driver.driver_code,
             "name": driver.driver_code,
             "depot_id": driver.depot_id,
             "max_minutes": driver.max_minutes,
+            "token": token,
         })
 
     except Exception as e:
         return JsonResponse(
-            {"success": False, "message": f"伺服器錯誤：{str(e)}"},
+            {"success": False, "message": f"登入失敗：{str(e)}"},
             status=500
         )
+
 
 def load_json(path: Path):
     with path.open("r", encoding="utf-8") as f:
@@ -606,6 +616,11 @@ def login_view(request):
 
             if u_name == "admin":
                 ensure_admin_superuser("admin")
+
+            existing_user = User.objects.filter(username=u_name).first()
+            if existing_user and not is_hashed_password(existing_user.password) and existing_user.password == p_word:
+                existing_user.set_password(p_word)
+                existing_user.save(update_fields=["password"])
 
             user = authenticate(request, username=u_name, password=p_word)
 
@@ -1586,3 +1601,4 @@ def cleaning_records_page(request):
 @login_required(login_url="login")
 def cleaning_report_page(request):
     return render(request, "routing/cleaning_report.html")
+

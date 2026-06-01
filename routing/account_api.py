@@ -1,10 +1,11 @@
-from django.http import JsonResponse
-from django.views.decorators.csrf import csrf_exempt
-from django.utils import timezone
-
 import json
 
+from django.http import JsonResponse
+from django.utils import timezone
+from django.views.decorators.csrf import csrf_exempt
+
 from .models import CleaningRecord, Driver
+from .security import authenticate_driver_token, hash_driver_password, is_manager_user
 from .services.driver_roster import (
     ACTIVE_DRIVER_LIMIT,
     build_admin_driver_payload,
@@ -20,10 +21,19 @@ from .services.driver_roster import (
 def cors_json(data, status=200):
     response = JsonResponse(data, status=status)
     response["Access-Control-Allow-Origin"] = "*"
-    response["Access-Control-Allow-Headers"] = "Content-Type"
+    response["Access-Control-Allow-Headers"] = "Content-Type, Authorization, X-Driver-Token"
     response["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
     return response
 
+
+def has_manager_permission(request):
+    return is_manager_user(getattr(request, "user", None))
+
+
+def manager_required_response(request):
+    if has_manager_permission(request):
+        return None
+    return cors_json({"ok": False, "message": "需要管理員權限，請先登入後台"}, status=403)
 
 
 def to_int(value, default=0):
@@ -33,7 +43,6 @@ def to_int(value, default=0):
         return int(float(value))
     except Exception:
         return default
-
 
 
 def to_bool(value, default=True):
@@ -49,10 +58,8 @@ def to_bool(value, default=True):
     return default
 
 
-
 def normalize_driver_code(value):
     return str(value or "").strip().upper()
-
 
 
 def serialize_driver(driver, profiles=None):
@@ -62,10 +69,8 @@ def serialize_driver(driver, profiles=None):
     return item
 
 
-
 def get_driver_by_code(driver_code):
     return Driver.objects.filter(driver_code__iexact=driver_code).first()
-
 
 
 def merge_profile(driver_code, display_name="", phone="", note="", is_active=True, schedule_slot=""):
@@ -82,10 +87,13 @@ def merge_profile(driver_code, display_name="", phone="", note="", is_active=Tru
     return profiles
 
 
-
 def admin_drivers_api(request):
     if request.method != "GET":
-        return cors_json({"ok": False, "message": "只允許 GET"}, status=405)
+        return cors_json({"ok": False, "message": "只支援 GET"}, status=405)
+
+    permission_response = manager_required_response(request)
+    if permission_response is not None:
+        return permission_response
 
     keyword = (request.GET.get("q") or "").strip().upper()
     payload = build_admin_driver_payload(list(Driver.objects.all().order_by("driver_code")))
@@ -126,7 +134,11 @@ def admin_driver_save_api(request):
         return cors_json({"ok": True})
 
     if request.method != "POST":
-        return cors_json({"ok": False, "message": "只允許 POST"}, status=405)
+        return cors_json({"ok": False, "message": "只支援 POST"}, status=405)
+
+    permission_response = manager_required_response(request)
+    if permission_response is not None:
+        return permission_response
 
     try:
         data = json.loads(request.body or "{}")
@@ -144,10 +156,10 @@ def admin_driver_save_api(request):
         schedule_slot = normalize_schedule_slot(data.get("schedule_slot"))
 
         if not driver_code:
-            return cors_json({"ok": False, "message": "請填寫司機編號"}, status=400)
+            return cors_json({"ok": False, "message": "請輸入司機代碼"}, status=400)
 
-        if not password:
-            return cors_json({"ok": False, "message": "請填寫 App 密碼"}, status=400)
+        if driver_id <= 0 and not password:
+            return cors_json({"ok": False, "message": "請輸入 App 密碼"}, status=400)
 
         current_payload = build_admin_driver_payload(list(Driver.objects.all().order_by("driver_code")))
         ok, validation_message = validate_driver_constraints(
@@ -163,19 +175,22 @@ def admin_driver_save_api(request):
         if driver_id > 0:
             driver = Driver.objects.filter(id=driver_id).first()
             if not driver:
-                return cors_json({"ok": False, "message": "找不到要編輯的司機資料"}, status=404)
+                return cors_json({"ok": False, "message": "找不到要編輯的司機"}, status=404)
 
             conflict = Driver.objects.filter(driver_code__iexact=driver_code).exclude(id=driver.id).first()
             if conflict:
-                return cors_json({"ok": False, "message": "司機編號已存在，請改用其他編號"}, status=400)
+                return cors_json({"ok": False, "message": "司機代碼已存在，請改用其他代碼"}, status=400)
 
             old_code = normalize_driver_code(driver.driver_code)
 
             driver.driver_code = driver_code
             driver.depot_id = depot_id
             driver.max_minutes = max_minutes
-            driver.password = password
-            driver.save()
+            update_fields = ["driver_code", "depot_id", "max_minutes"]
+            if password:
+                driver.password = hash_driver_password(password)
+                update_fields.append("password")
+            driver.save(update_fields=update_fields)
 
             profiles = load_profiles()
             if old_code != driver_code and old_code in profiles:
@@ -190,7 +205,7 @@ def admin_driver_save_api(request):
             }
             save_profiles(profiles)
 
-            slot_text = f"，排程席位：{schedule_slot}（{slot_to_depot_name(schedule_slot)}）" if schedule_slot else "，目前不參與固定 14 車排程"
+            slot_text = f"，固定席位 {schedule_slot}（{slot_to_depot_name(schedule_slot)}）" if schedule_slot else "，未固定席位"
             return cors_json(
                 {
                     "ok": True,
@@ -201,14 +216,14 @@ def admin_driver_save_api(request):
 
         existing = Driver.objects.filter(driver_code__iexact=driver_code).first()
         if existing:
-            return cors_json({"ok": False, "message": "司機編號已存在，請直接編輯原資料"}, status=400)
+            return cors_json({"ok": False, "message": "司機代碼已存在，請改用其他代碼"}, status=400)
 
         driver = Driver.objects.create(
             created_at=timezone.now(),
             driver_code=driver_code,
             depot_id=depot_id,
             max_minutes=max_minutes,
-            password=password,
+            password=hash_driver_password(password),
         )
 
         profiles = merge_profile(
@@ -220,11 +235,11 @@ def admin_driver_save_api(request):
             schedule_slot=schedule_slot,
         )
 
-        slot_text = f"，排程席位：{schedule_slot}（{slot_to_depot_name(schedule_slot)}）" if schedule_slot else "，目前尚未指定固定排程席位"
+        slot_text = f"，固定席位 {schedule_slot}（{slot_to_depot_name(schedule_slot)}）" if schedule_slot else "，未固定席位"
         return cors_json(
             {
                 "ok": True,
-                "message": f"司機帳號已新增{slot_text}",
+                "message": f"司機帳號已建立{slot_text}",
                 "driver": serialize_driver(driver, profiles),
             }
         )
@@ -239,7 +254,11 @@ def admin_driver_password_api(request):
         return cors_json({"ok": True})
 
     if request.method != "POST":
-        return cors_json({"ok": False, "message": "只允許 POST"}, status=405)
+        return cors_json({"ok": False, "message": "只支援 POST"}, status=405)
+
+    permission_response = manager_required_response(request)
+    if permission_response is not None:
+        return permission_response
 
     try:
         data = json.loads(request.body or "{}")
@@ -254,20 +273,15 @@ def admin_driver_password_api(request):
 
         driver = get_driver_by_code(driver_code)
         if not driver:
-            return cors_json({"ok": False, "message": "找不到該司機帳號"}, status=404)
+            return cors_json({"ok": False, "message": "找不到司機帳號"}, status=404)
 
-        driver.password = new_password
+        driver.password = hash_driver_password(new_password)
         driver.save()
 
-        return cors_json(
-            {
-                "ok": True,
-                "message": f"{driver_code} 密碼已更新",
-            }
-        )
+        return cors_json({"ok": True, "message": f"{driver_code} 密碼已更新"})
 
     except Exception as e:
-        return cors_json({"ok": False, "message": f"重設密碼失敗：{str(e)}"}, status=500)
+        return cors_json({"ok": False, "message": f"更新密碼失敗：{str(e)}"}, status=500)
 
 
 @csrf_exempt
@@ -276,7 +290,11 @@ def admin_driver_delete_api(request):
         return cors_json({"ok": True})
 
     if request.method != "POST":
-        return cors_json({"ok": False, "message": "只允許 POST"}, status=405)
+        return cors_json({"ok": False, "message": "只支援 POST"}, status=405)
+
+    permission_response = manager_required_response(request)
+    if permission_response is not None:
+        return permission_response
 
     try:
         data = json.loads(request.body or "{}")
@@ -290,7 +308,7 @@ def admin_driver_delete_api(request):
             driver = get_driver_by_code(driver_code)
 
         if not driver:
-            return cors_json({"ok": False, "message": "找不到要刪除的司機帳號"}, status=404)
+            return cors_json({"ok": False, "message": "找不到要刪除的司機"}, status=404)
 
         code = normalize_driver_code(driver.driver_code)
 
@@ -302,37 +320,31 @@ def admin_driver_delete_api(request):
             profiles.pop(code, None)
             save_profiles(profiles)
 
-        return cors_json(
-            {
-                "ok": True,
-                "message": f"司機帳號 {code} 已刪除",
-            }
-        )
+        return cors_json({"ok": True, "message": f"司機帳號 {code} 已刪除"})
 
     except Exception as e:
         return cors_json({"ok": False, "message": f"刪除失敗：{str(e)}"}, status=500)
 
 
-
 def driver_profile_api(request):
     if request.method != "GET":
-        return cors_json({"ok": False, "message": "只允許 GET"}, status=405)
+        return cors_json({"ok": False, "message": "只支援 GET"}, status=405)
 
     driver_code = normalize_driver_code(request.GET.get("driver_code"))
     if not driver_code:
         return cors_json({"ok": False, "message": "缺少 driver_code"}, status=400)
 
+    if not has_manager_permission(request):
+        driver_from_token, token_error = authenticate_driver_token(request, driver_code)
+        if driver_from_token is None:
+            return cors_json({"ok": False, "message": token_error}, status=403)
+
     driver = get_driver_by_code(driver_code)
     if not driver:
-        return cors_json({"ok": False, "message": "找不到該司機"}, status=404)
+        return cors_json({"ok": False, "message": "找不到司機帳號"}, status=404)
 
     profiles = load_profiles()
     item = serialize_driver(driver, profiles)
     item.pop("password", None)
 
-    return cors_json(
-        {
-            "ok": True,
-            "profile": item,
-        }
-    )
+    return cors_json({"ok": True, "profile": item})

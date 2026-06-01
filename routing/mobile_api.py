@@ -1,6 +1,6 @@
-from django.http import FileResponse, JsonResponse
+﻿from django.http import FileResponse, JsonResponse
 from django.views.decorators.csrf import csrf_exempt
-from .models import Driver
+from .models import Driver, ServicePoint
 from django.utils import timezone
 from django.db import connection
 
@@ -9,7 +9,9 @@ import tempfile
 from django.conf import settings
 from ultralytics import YOLO
 
-from .views import OUTPUT_DIR, VARIANT_LABELS, load_variant_payload, to_float, to_int
+from .views import OUTPUT_DIR, VARIANT_LABELS, load_variant_payload, to_float, to_int, write_admin_log, is_manager
+from .security import authenticate_driver_token, find_driver_by_code, is_manager_user
+from .services.driver_roster import get_driver_assignment, normalize_schedule_slot
 
 import json
 from datetime import datetime
@@ -39,7 +41,7 @@ REPORTS_FILE = OUTPUT_DIR / "driver_reports.json"
 def cors_json(data, status=200):
     response = JsonResponse(data, status=status)
     response["Access-Control-Allow-Origin"] = "*"
-    response["Access-Control-Allow-Headers"] = "Content-Type"
+    response["Access-Control-Allow-Headers"] = "Content-Type, Authorization, X-Driver-Token"
     response["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
     return response
 
@@ -49,6 +51,63 @@ def normalize_variant(value):
     if value not in VARIANT_LABELS:
         return "normal"
     return value
+
+
+def require_driver_request(request, driver_code=None):
+    if is_manager_user(getattr(request, "user", None)):
+        return None, None
+    driver, error = authenticate_driver_token(request, driver_code)
+    if driver is None:
+        return None, cors_json({"ok": False, "message": error}, status=403)
+    return driver, None
+
+
+def ensure_driver_code_from_token(request, driver_code):
+    driver_code = (driver_code or "").strip().upper()
+    driver, error_response = require_driver_request(request, driver_code or None)
+    if error_response is not None:
+        return driver_code, error_response
+    if not driver_code and driver is not None:
+        driver_code = str(driver.driver_code or "").strip().upper()
+    return driver_code, None
+
+
+def valid_uploaded_image(image):
+    if not image:
+        return False, "缺少 image"
+    max_size = int(getattr(settings, "APP_IMAGE_MAX_UPLOAD_BYTES", 0) or 0)
+    if max_size > 0 and getattr(image, "size", 0) and image.size > max_size:
+        return False, "圖片檔案過大"
+
+    filename = (getattr(image, "name", "") or "").lower()
+    ext = os.path.splitext(filename)[1]
+    image_exts = {".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif"}
+    content_type = (getattr(image, "content_type", "") or "").lower()
+    generic_types = {"", "application/octet-stream", "binary/octet-stream"}
+    if content_type in generic_types and ext in image_exts:
+        return True, ""
+    if content_type and not content_type.startswith("image/"):
+        return False, "只允許上傳圖片檔案"
+    return True, ""
+
+
+def format_taipei_datetime(value):
+    if not value:
+        return ""
+    try:
+        if timezone.is_aware(value):
+            value = timezone.localtime(value)
+        return value.strftime("%Y-%m-%d %H:%M:%S")
+    except Exception:
+        return str(value)
+
+
+def first_value(record, *keys):
+    for key in keys:
+        value = record.get(key)
+        if value is not None and str(value).strip() != "":
+            return value
+    return None
 
 
 def find_driver_route(routes, driver_code, day):
@@ -62,6 +121,34 @@ def find_driver_route(routes, driver_code, day):
             return route
 
     return None
+
+
+def get_route_lookup_code(driver_code, routes):
+    """Resolve an app account to its fixed schedule slot when routes are slot-based."""
+    target_code = (driver_code or "").strip().upper()
+    assignment = get_driver_assignment(target_code)
+    schedule_slot = normalize_schedule_slot((assignment or {}).get("schedule_slot"))
+    direct_routes = [
+        route for route in routes
+        if str(route.get("driver") or "").strip().upper() == target_code
+    ]
+
+    if direct_routes and (
+        not schedule_slot
+        or schedule_slot == target_code
+        or any(normalize_schedule_slot(route.get("schedule_slot")) == schedule_slot for route in direct_routes)
+    ):
+        return target_code
+
+    if schedule_slot and any(
+        str(route.get("driver") or "").strip().upper() == schedule_slot for route in routes
+    ):
+        return schedule_slot
+
+    if direct_routes:
+        return target_code
+
+    return target_code
 
 
 def load_reports():
@@ -106,7 +193,7 @@ def find_report_index(reports, report_id):
 
 def driver_task_api(request):
     if request.method != "GET":
-        return JsonResponse({"ok": False, "message": "只允許 GET"}, status=405)
+        return JsonResponse({"ok": False, "message": "只支援 GET"}, status=405)
 
     driver_code = (request.GET.get("driver_code") or "").strip().upper()
     day = to_int(request.GET.get("day"), 1)
@@ -115,33 +202,38 @@ def driver_task_api(request):
     if not driver_code:
         return JsonResponse({"ok": False, "message": "缺少 driver_code"}, status=400)
 
+    _, auth_error = require_driver_request(request, driver_code)
+    if auth_error is not None:
+        return auth_error
     payload = load_variant_payload(variant)
     if not payload["ok"]:
         return JsonResponse(
             {
                 "ok": False,
-                "message": payload["warning"] or "找不到排程資料",
+                "message": payload["warning"] or "找不到路線資料",
                 "variant": variant,
             },
             status=404,
         )
 
     routes = payload["routes"]
-    matched_route = find_driver_route(routes, driver_code, day)
+    route_lookup_code = get_route_lookup_code(driver_code, routes)
+    matched_route = find_driver_route(routes, route_lookup_code, day)
 
     if matched_route is None:
         available_days = sorted(
             {
                 to_int(route.get("day"), 0)
                 for route in routes
-                if str(route.get("driver") or "").strip().upper() == driver_code
+                if str(route.get("driver") or "").strip().upper() == route_lookup_code
             }
         )
         return JsonResponse(
             {
                 "ok": False,
-                "message": f"找不到 {driver_code} 第 {day} 天的排程",
+                "message": f"找不到 {driver_code} 第 {day} 天的路線",
                 "driver_code": driver_code,
+                "schedule_slot": route_lookup_code if route_lookup_code != driver_code else "",
                 "day": day,
                 "variant": variant,
                 "available_days": available_days,
@@ -160,6 +252,7 @@ def driver_task_api(request):
             "warning": payload["warning"],
             "file_used": payload["file_used"],
             "driver_code": driver_code,
+            "schedule_slot": route_lookup_code if route_lookup_code != driver_code else "",
             "day": day,
             "route": {
                 "route_id": matched_route.get("route_id"),
@@ -188,7 +281,7 @@ def driver_report_api(request):
         return cors_json({"ok": True})
 
     if request.method != "POST":
-        return cors_json({"ok": False, "message": "只允許 POST"}, status=405)
+        return cors_json({"ok": False, "message": "只支援 POST"}, status=405)
 
     try:
         data = json.loads(request.body or "{}")
@@ -204,11 +297,14 @@ def driver_report_api(request):
         if not driver_code:
             return cors_json({"ok": False, "message": "缺少 driver_code"}, status=400)
 
+        _, auth_error = require_driver_request(request, driver_code)
+        if auth_error is not None:
+            return auth_error
         if not report_type:
             return cors_json({"ok": False, "message": "請選擇回報類型"}, status=400)
 
         if not content:
-            return cors_json({"ok": False, "message": "請填寫回報內容"}, status=400)
+            return cors_json({"ok": False, "message": "請輸入回報內容"}, status=400)
 
         reports = load_reports()
         report_id = get_next_report_id(reports)
@@ -235,23 +331,23 @@ def driver_report_api(request):
         return cors_json(
             {
                 "ok": True,
-                "message": "工作回報已送出",
+                "message": "回報已送出",
                 "report": new_report,
             }
         )
 
     except Exception as e:
-        return cors_json(
-            {"ok": False, "message": f"送出回報失敗：{str(e)}"},
-            status=500,
-        )
+        return cors_json({"ok": False, "message": f"送出回報失敗：{str(e)}"}, status=500)
 
 
 def driver_reports_api(request):
     if request.method != "GET":
-        return JsonResponse({"ok": False, "message": "只允許 GET"}, status=405)
+        return JsonResponse({"ok": False, "message": "只支援 GET"}, status=405)
 
     driver_code = (request.GET.get("driver_code") or "").strip().upper()
+    driver_code, auth_error = ensure_driver_code_from_token(request, driver_code)
+    if auth_error is not None:
+        return auth_error
     limit = to_int(request.GET.get("limit"), 10)
 
     reports = load_reports()
@@ -282,7 +378,12 @@ def driver_report_update_api(request):
         return cors_json({"ok": True})
 
     if request.method != "POST":
-        return cors_json({"ok": False, "message": "只允許 POST"}, status=405)
+        return cors_json({"ok": False, "message": "只支援 POST"}, status=405)
+
+    if not getattr(request, "user", None) or not request.user.is_authenticated:
+        return cors_json({"ok": False, "message": "請先登入後台"}, status=403)
+    if not is_manager(request.user):
+        return cors_json({"ok": False, "message": "需要管理員權限"}, status=403)
 
     try:
         data = json.loads(request.body or "{}")
@@ -293,19 +394,19 @@ def driver_report_update_api(request):
         status_value = (data.get("status") or "").strip()
 
         if report_id <= 0:
-            return cors_json({"ok": False, "message": "缺少有效的回報 id"}, status=400)
+            return cors_json({"ok": False, "message": "缺少回報 id"}, status=400)
 
         if not report_type:
             return cors_json({"ok": False, "message": "請選擇回報類型"}, status=400)
 
         if not content:
-            return cors_json({"ok": False, "message": "請填寫回報內容"}, status=400)
+            return cors_json({"ok": False, "message": "請輸入回報內容"}, status=400)
 
         reports = load_reports()
         idx = find_report_index(reports, report_id)
 
         if idx < 0:
-            return cors_json({"ok": False, "message": "找不到要編輯的回報資料"}, status=404)
+            return cors_json({"ok": False, "message": "找不到要編輯的回報"}, status=404)
 
         reports[idx]["report_type"] = report_type
         reports[idx]["content"] = content
@@ -316,20 +417,18 @@ def driver_report_update_api(request):
             reports[idx]["status"] = status_value
 
         save_reports(reports)
+        write_admin_log(request, "更新問題回報", report_id, {"driver_code": reports[idx].get("driver_code"), "report_type": reports[idx].get("report_type")})
 
         return cors_json(
             {
                 "ok": True,
-                "message": "工作回報已更新",
+                "message": "回報已更新",
                 "report": reports[idx],
             }
         )
 
     except Exception as e:
-        return cors_json(
-            {"ok": False, "message": f"更新失敗：{str(e)}"},
-            status=500,
-        )
+        return cors_json({"ok": False, "message": f"更新失敗：{str(e)}"}, status=500)
 
 
 @csrf_exempt
@@ -338,28 +437,34 @@ def driver_report_delete_api(request):
         return cors_json({"ok": True})
 
     if request.method != "POST":
-        return cors_json({"ok": False, "message": "只允許 POST"}, status=405)
+        return cors_json({"ok": False, "message": "只支援 POST"}, status=405)
+
+    if not getattr(request, "user", None) or not request.user.is_authenticated:
+        return cors_json({"ok": False, "message": "請先登入後台"}, status=403)
+    if not is_manager(request.user):
+        return cors_json({"ok": False, "message": "需要管理員權限"}, status=403)
 
     try:
         data = json.loads(request.body or "{}")
         report_id = to_int(data.get("id"), 0)
 
         if report_id <= 0:
-            return cors_json({"ok": False, "message": "缺少有效的回報 id"}, status=400)
+            return cors_json({"ok": False, "message": "缺少回報 id"}, status=400)
 
         reports = load_reports()
         idx = find_report_index(reports, report_id)
 
         if idx < 0:
-            return cors_json({"ok": False, "message": "找不到要刪除的回報資料"}, status=404)
+            return cors_json({"ok": False, "message": "找不到要刪除的回報"}, status=404)
 
         deleted_report = reports.pop(idx)
         save_reports(reports)
+        write_admin_log(request, "刪除問題回報", report_id, {"driver_code": deleted_report.get("driver_code"), "report_type": deleted_report.get("report_type")})
 
         return cors_json(
             {
                 "ok": True,
-                "message": "工作回報已刪除",
+                "message": "回報已刪除",
                 "deleted_report": deleted_report,
             }
         )
@@ -373,7 +478,7 @@ def driver_report_delete_api(request):
 
 def export_excel_api(request):
     if request.method != "GET":
-        return JsonResponse({"ok": False, "message": "只允許 GET"}, status=405)
+        return JsonResponse({"ok": False, "message": "只支援 GET"}, status=405)
 
     key = (request.GET.get("key") or "dispatch_latest").strip()
     filename = EXPORTABLE_FILES.get(key)
@@ -382,7 +487,7 @@ def export_excel_api(request):
         return JsonResponse(
             {
                 "ok": False,
-                "message": "找不到對應的匯出檔案 key",
+                "message": "找不到匯出檔案 key",
                 "available_keys": sorted(EXPORTABLE_FILES.keys()),
             },
             status=400,
@@ -393,7 +498,7 @@ def export_excel_api(request):
         return JsonResponse(
             {
                 "ok": False,
-                "message": f"找不到檔案：{filename}",
+                "message": f"找不到匯出檔案：{filename}",
             },
             status=404,
         )
@@ -403,32 +508,16 @@ def export_excel_api(request):
 
 def admin_cleaning_records_api(request):
     if request.method != "GET":
-        return cors_json({"ok": False, "message": "只允許 GET"}, status=405)
+        return cors_json({"ok": False, "message": "只支援 POST"}, status=405)
 
     driver_code = (request.GET.get("driver_code") or "").strip()
     status = (request.GET.get("status") or "").strip()
     photo_type = (request.GET.get("photo_type") or "").strip()
     date = (request.GET.get("date") or "").strip()
 
-    sql = """
-        SELECT
-            id,
-            driver_code,
-            photo_type,
-            public_url,
-            is_qualified,
-            review_status,
-            is_risk,
-            risk_score,
-            risk_reason,
-            stop_address,
-            created_at
-        FROM uploaded_photos
-        WHERE 1=1
-    """
+    sql = "SELECT * FROM uploaded_photos WHERE 1=1"
     params = []
 
-    # 篩選
     if driver_code:
         sql += " AND driver_code = %s"
         params.append(driver_code)
@@ -441,7 +530,7 @@ def admin_cleaning_records_api(request):
         sql += " AND photo_type = 'after' AND is_qualified = true"
     elif status == "不合格":
         sql += " AND photo_type = 'after' AND is_qualified = false"
-    elif status == "高風險":
+    elif status == "風險":
         sql += " AND is_risk = true"
 
     if date:
@@ -452,20 +541,42 @@ def admin_cleaning_records_api(request):
 
     with connection.cursor() as cursor:
         cursor.execute(sql, params)
+        column_names = [column[0] for column in cursor.description]
         rows = cursor.fetchall()
+
+    raw_records = [dict(zip(column_names, row)) for row in rows]
+    addresses = {
+        str(record.get("stop_address") or "").strip()
+        for record in raw_records
+        if str(record.get("stop_address") or "").strip()
+    }
+    point_coordinates = {}
+    if addresses:
+        for point in ServicePoint.objects.filter(address__in=addresses).values("address", "lat", "lon"):
+            address = str(point.get("address") or "").strip()
+            if address and address not in point_coordinates:
+                point_coordinates[address] = {
+                    "lat": point.get("lat"),
+                    "lon": point.get("lon"),
+                }
 
     records = []
 
-    for row in rows:
-        record_id = row[0]
-        driver_code = row[1]
-        photo_type = row[2]
-        public_url = row[3]
-        is_qualified = row[4]
-        review_status = row[5]
-        is_risk = row[6]
+    for row in raw_records:
+        record_id = row.get("id")
+        driver_code = row.get("driver_code")
+        photo_type = row.get("photo_type")
+        public_url = row.get("public_url")
+        is_qualified = row.get("is_qualified")
+        review_status = row.get("review_status")
+        is_risk = row.get("is_risk")
+        address = str(row.get("stop_address") or "").strip()
+        stored_point = point_coordinates.get(address, {})
+        point_lat = first_value(row, "point_lat", "stop_lat") or stored_point.get("lat")
+        point_lon = first_value(row, "point_lon", "stop_lon") or stored_point.get("lon")
+        photo_lat = first_value(row, "driver_lat", "photo_lat", "capture_lat", "captured_lat", "gps_lat")
+        photo_lon = first_value(row, "driver_lon", "photo_lon", "capture_lon", "captured_lon", "gps_lon")
 
-        # 狀態統一
         if photo_type == "after":
             if is_qualified is True:
                 status_text = "合格"
@@ -486,10 +597,15 @@ def admin_cleaning_records_api(request):
             "status": status_text,
             "review_status": review_status,
             "is_risk": is_risk,
-            "risk_score": row[7],
-            "risk_reason": row[8],
-            "stop_address": row[9],
-            "created_at": row[10].strftime("%Y-%m-%d %H:%M:%S") if row[10] else "",
+            "risk_score": row.get("risk_score"),
+            "risk_reason": row.get("risk_reason"),
+            "stop_address": address,
+            "created_at": format_taipei_datetime(row.get("created_at")),
+            "timezone": "Asia/Taipei",
+            "point_lat": point_lat,
+            "point_lon": point_lon,
+            "photo_lat": photo_lat,
+            "photo_lon": photo_lon,
         })
 
     return cors_json({
@@ -504,7 +620,12 @@ def admin_cleaning_record_delete_api(request):
         return cors_json({"ok": True})
 
     if request.method != "POST":
-        return cors_json({"ok": False, "message": "只允許 POST"}, status=405)
+        return cors_json({"ok": False, "message": "只支援 POST"}, status=405)
+
+    if not getattr(request, "user", None) or not request.user.is_authenticated:
+        return cors_json({"ok": False, "message": "請先登入後台"}, status=403)
+    if not is_manager(request.user):
+        return cors_json({"ok": False, "message": "需要管理員權限"}, status=403)
 
     try:
         payload = json.loads(request.body.decode("utf-8") or "{}")
@@ -517,7 +638,7 @@ def admin_cleaning_record_delete_api(request):
 
     ids = [str(v).strip() for v in raw_ids if str(v).strip()]
     if not ids:
-        return cors_json({"ok": False, "message": "缺少要刪除的紀錄 ID"}, status=400)
+        return cors_json({"ok": False, "message": "請選擇要刪除的紀錄 ID"}, status=400)
 
     try:
         with connection.cursor() as cursor:
@@ -527,10 +648,22 @@ def admin_cleaning_record_delete_api(request):
             )
             deleted_rows = cursor.fetchall()
 
+        deleted_ids = [str(row[0]) for row in deleted_rows]
+        write_admin_log(
+            request,
+            "刪除清掃紀錄",
+            ",".join(deleted_ids) if deleted_ids else ",".join(ids),
+            {
+                "requested_ids": ids,
+                "deleted_ids": deleted_ids,
+                "deleted_count": len(deleted_ids),
+            },
+        )
+
         return cors_json({
             "ok": True,
-            "deleted_count": len(deleted_rows),
-            "deleted_ids": [str(row[0]) for row in deleted_rows],
+            "deleted_count": len(deleted_ids),
+            "deleted_ids": deleted_ids,
         })
     except Exception as e:
         return cors_json({"ok": False, "message": str(e)}, status=500)
@@ -538,7 +671,7 @@ def admin_cleaning_record_delete_api(request):
 
 def admin_cleaning_summary_api(request):
     if request.method != "GET":
-        return cors_json({"ok": False, "message": "只允許 GET"}, status=405)
+        return cors_json({"ok": False, "message": "只支援 POST"}, status=405)
 
     with connection.cursor() as cursor:
         cursor.execute("""
@@ -606,7 +739,7 @@ def detect_cleaning_ai_api(request):
         return cors_json({"ok": True})
 
     if request.method != "POST":
-        return cors_json({"ok": False, "message": "只允許 POST"}, status=405)
+        return cors_json({"ok": False, "message": "只支援 POST"}, status=405)
 
     driver_code = (request.POST.get("driver_code") or "").strip().upper()
     photo_type = (request.POST.get("photo_type") or "before").strip().lower()
@@ -614,14 +747,17 @@ def detect_cleaning_ai_api(request):
     if not driver_code:
         return cors_json({"ok": False, "message": "缺少 driver_code"}, status=400)
 
-    try:
-        driver = Driver.objects.get(driver_code=driver_code)
-    except Driver.DoesNotExist:
-        return cors_json({"ok": False, "message": "找不到司機"}, status=404)
+    _, auth_error = require_driver_request(request, driver_code)
+    if auth_error is not None:
+        return auth_error
+    driver = find_driver_by_code(driver_code)
+    if not driver:
+        return cors_json({"ok": False, "message": "找不到司機帳號"}, status=404)
 
     image = request.FILES.get("image")
-    if not image:
-        return cors_json({"ok": False, "message": "缺少 image"}, status=400)
+    is_valid_image, image_error = valid_uploaded_image(image)
+    if not is_valid_image:
+        return cors_json({"ok": False, "message": image_error}, status=400)
 
     temp_file_path = None
 
@@ -662,7 +798,7 @@ def detect_cleaning_ai_api(request):
         if photo_type == "before":
             risk_score = overflow_bin * 3 + dirty_area * 2 + bottle + toiletpaper
             is_risk = risk_score > 8
-            reason = "環境過於髒亂" if is_risk else "環境狀況尚可"
+            reason = "環境狀況需注意" if is_risk else "環境狀況尚可"
 
             return cors_json({
                 "ok": True,
@@ -672,7 +808,7 @@ def detect_cleaning_ai_api(request):
                 "risk_score": risk_score,
                 "is_risk": is_risk,
                 "reason": reason,
-                "message": "辨識完成",
+                "message": "AI辨識完成",
             })
 
         else:
@@ -690,15 +826,16 @@ def detect_cleaning_ai_api(request):
                 "class_counts": class_counts,
                 "is_qualified": is_qualified,
                 "status": "合格" if is_qualified else "不合格",
-                "message": "辨識完成",
+                "message": "AI辨識完成",
             })
 
     except Exception as e:
         return cors_json({
             "ok": False,
-            "message": f"辨識失敗: {str(e)}"
+            "message": f"AI辨識失敗：{str(e)}"
         }, status=500)
 
     finally:
         if temp_file_path and os.path.exists(temp_file_path):
             os.remove(temp_file_path)
+
