@@ -6,6 +6,7 @@
   <title>Dispatch Nav | 問題回報</title>
   <script src="https://unpkg.com/lucide@latest"></script>
   <link href="https://fonts.googleapis.com/css?family=Open+Sans:300,400,600,700" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/responsive.css" />
   <style>
     :root {
       --primary: #4A90E2;
@@ -312,7 +313,7 @@
     }
   </style>
 </head>
-<body>
+<body data-can-edit-reports="{% if user.is_staff or user.is_superuser %}true{% else %}false{% endif %}">
   <aside id="soft-sidebar">
     <div class="sidebar-header">
       <div class="logo-box"><i data-lucide="layout-grid" size="18"></i></div>
@@ -336,12 +337,29 @@
 
       <a href="{% url 'driver_admin_page' %}" class="menu-item">
         <div class="icon-box"><i data-lucide="users-round" size="18"></i></div>
-        <span>帳號管理</span>
+        <span>司機帳號</span>
       </a>
+
+      {% if user.is_superuser %}
+      <a href="{% url 'account_management' %}" class="menu-item">
+        <div class="icon-box"><i data-lucide="shield-check" size="18"></i></div>
+        <span>管理者帳號</span>
+      </a>
+
+      <a href="{% url 'admin_action_logs' %}" class="menu-item">
+        <div class="icon-box"><i data-lucide="clipboard-list" size="18"></i></div>
+       <span>操作紀錄</span>
+      </a>
+      {% endif %}
 
       <a href="{% url 'data_list' %}" class="menu-item">
         <div class="icon-box"><i data-lucide="table" size="18"></i></div>
         <span>資料管理</span>
+      </a>
+
+      <a href="{% url 'cleaning_records_page' %}" class="menu-item">
+        <div class="icon-box"><i data-lucide="file-box" size="18"></i></div>
+        <span>清掃紀錄</span>
       </a>
 
       <a href="{% url 'login' %}" class="menu-item">
@@ -369,8 +387,7 @@
         <label for="typeFilter">回報類型篩選</label>
         <select id="typeFilter">
           <option value="">全部類型</option>
-          <option value="客戶不在">客戶不在</option>
-          <option value="地址有誤">地址有誤</option>
+                    <option value="地址有誤">地址有誤</option>
           <option value="無法進入">無法進入</option>
           <option value="設備異常">設備異常</option>
           <option value="臨時取消">臨時取消</option>
@@ -388,8 +405,8 @@
         <div class="summary-value" id="summaryTotal">0</div>
       </div>
       <div class="summary-card">
-        <div class="summary-label">客戶不在</div>
-        <div class="summary-value" id="summaryAbsent">0</div>
+        <div class="summary-label">地址有誤</div>
+        <div class="summary-value" id="summaryAddress">0</div>
       </div>
       <div class="summary-card">
         <div class="summary-label">設備異常</div>
@@ -401,6 +418,7 @@
       </div>
     </section>
 
+    {% if user.is_staff or user.is_superuser %}
     <section class="edit-panel" id="editPanel">
       <h3 style="margin-top:0;">編輯問題回報</h3>
       <input type="hidden" id="editId" />
@@ -408,8 +426,7 @@
         <div class="field" style="padding:0; box-shadow:none; border:none; background:transparent;">
           <label for="editType">回報類型</label>
           <select id="editType">
-            <option value="客戶不在">客戶不在</option>
-            <option value="地址有誤">地址有誤</option>
+                        <option value="地址有誤">地址有誤</option>
             <option value="無法進入">無法進入</option>
             <option value="設備異常">設備異常</option>
             <option value="臨時取消">臨時取消</option>
@@ -434,6 +451,7 @@
         <button type="button" class="small-btn save" onclick="saveEdit()">儲存修改</button>
       </div>
     </section>
+    {% endif %}
 
     <section class="report-list" id="reportList">
       <div class="empty-box">載入中...</div>
@@ -443,6 +461,7 @@
   <script>
     lucide.createIcons();
 
+    const CAN_EDIT_REPORTS = document.body.dataset.canEditReports === 'true';
     let allReports = [];
 
     function updateLastUpdateTime() {
@@ -495,7 +514,7 @@
 
     function renderSummary(reports) {
       document.getElementById('summaryTotal').textContent = reports.length;
-      document.getElementById('summaryAbsent').textContent = reports.filter(r => r.report_type === '客戶不在').length;
+      document.getElementById('summaryAddress').textContent = reports.filter(r => r.report_type === '地址有誤').length;
       document.getElementById('summaryDevice').textContent = reports.filter(r => r.report_type === '設備異常').length;
       document.getElementById('summaryTraffic').textContent = reports.filter(r => r.report_type === '交通延誤').length;
     }
@@ -522,21 +541,21 @@
           <div class="report-content">${escapeHtml(report.content || '')}</div>
 
           <div class="report-meta">
-            <div class="meta-chip">ID：${report.id || '-'}</div>
             <div class="meta-chip">司機：${escapeHtml(report.driver_code || '-')}</div>
             <div class="meta-chip">第幾天：${report.day || '-'}</div>
             <div class="meta-chip">第幾站：${report.stop_seq || '-'}</div>
-            <div class="meta-chip">路線：${escapeHtml(report.route_id || '-')}</div>
-            <div class="meta-chip">模式：${escapeHtml(report.variant || '-')}</div>
-            <div class="meta-chip">狀態：${escapeHtml(report.status || '-')}</div>
           </div>
 
+          ${CAN_EDIT_REPORTS ? `
           <div class="card-actions">
             <button type="button" class="small-btn edit"
               onclick='openEdit(${JSON.stringify(report)})'>編輯</button>
             <button type="button" class="small-btn delete"
               onclick="deleteReport(${report.id})">刪除</button>
-          </div>
+          </div>` : `
+          <div class="card-actions">
+            <span class="meta-chip">只讀模式：不可編輯或刪除</span>
+          </div>`}
         </article>
       `).join('');
 
@@ -544,9 +563,10 @@
     }
 
     function openEdit(report) {
+      if (!CAN_EDIT_REPORTS) { alert('權限不足：只讀人員不能編輯問題回報。'); return; }
       const panel = document.getElementById('editPanel');
       document.getElementById('editId').value = report.id || '';
-      document.getElementById('editType').value = report.report_type || '其他';
+      document.getElementById('editType').value = Array.from(document.getElementById('editType').options).some(opt => opt.value === (report.report_type || '')) ? report.report_type : '其他';
       document.getElementById('editStopSeq').value = report.stop_seq || 0;
       document.getElementById('editContent').value = report.content || '';
       panel.style.display = 'block';
@@ -556,12 +576,13 @@
     function cancelEdit() {
       document.getElementById('editPanel').style.display = 'none';
       document.getElementById('editId').value = '';
-      document.getElementById('editType').value = '客戶不在';
+      document.getElementById('editType').value = '地址有誤';
       document.getElementById('editStopSeq').value = '';
       document.getElementById('editContent').value = '';
     }
 
     async function saveEdit() {
+      if (!CAN_EDIT_REPORTS) { alert('權限不足：只讀人員不能儲存修改。'); return; }
       const id = Number(document.getElementById('editId').value || 0);
       const report_type = document.getElementById('editType').value;
       const stop_seq = Number(document.getElementById('editStopSeq').value || 0);
@@ -605,6 +626,7 @@
     }
 
     async function deleteReport(id) {
+      if (!CAN_EDIT_REPORTS) { alert('權限不足：只讀人員不能刪除問題回報。'); return; }
       if (!confirm(`確定要刪除這筆回報嗎？\nID：${id}`)) {
         return;
       }

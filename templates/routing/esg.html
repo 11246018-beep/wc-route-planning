@@ -1,0 +1,336 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ESG 永續分析</title>
+  <link href="https://fonts.googleapis.com/css?family=Open+Sans:300,400,600,700" rel="stylesheet">
+  <link rel="stylesheet" href="/static/responsive.css">
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <style>
+    :root {
+      --primary: #2563eb;
+      --green: #16a34a;
+      --soil: #7c4a28;
+      --bg: #f4f7fb;
+      --panel: #ffffff;
+      --muted: #64748b;
+      --border: #e5e7eb;
+      --text: #1f2937;
+      --shadow: 0 10px 30px rgba(15, 23, 42, 0.08);
+      --sidebar-width: 80px;
+      --sidebar-expanded: 260px;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Open Sans", "Microsoft JhengHei", Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+    }
+    #soft-sidebar {
+      position: fixed; top: 15px; left: 15px; bottom: 15px; width: var(--sidebar-width);
+      background: rgba(255,255,255,0.95); border: 1px solid rgba(255,255,255,0.6);
+      border-radius: 15px; box-shadow: var(--shadow); z-index: 1200;
+      transition: width .3s cubic-bezier(.4,0,.2,1); overflow: hidden;
+    }
+    #soft-sidebar:hover { width: var(--sidebar-expanded); }
+    .sidebar-header { padding: 25px 20px; display: flex; align-items: center; gap: 15px; min-width: 260px; }
+    .logo-box, .icon-box { width: 34px; height: 34px; border-radius: 8px; display: flex; align-items: center; justify-content: center; }
+    .logo-box { background: var(--primary); color: #fff; }
+    .sidebar-header span { opacity: 0; white-space: nowrap; font-weight: 700; transition: .25s; }
+    #soft-sidebar:hover .sidebar-header span, #soft-sidebar:hover .menu-item span { opacity: 1; }
+    .menu-list { padding: 10px 15px; display: flex; flex-direction: column; gap: 5px; }
+    .menu-item {
+      min-width: 230px; min-height: 46px; display: flex; align-items: center; gap: 15px;
+      padding: 8px 10px; border-radius: 10px; color: #64748b; text-decoration: none; font-weight: 700;
+    }
+    .menu-item:hover { background: #f8fafc; }
+    .menu-item.active { background: #ecfdf5; color: var(--green); }
+    .menu-item .icon-box { background: #fff; box-shadow: 0 4px 6px rgba(0,0,0,.05); }
+    .menu-item.active .icon-box { background: var(--green); color: #fff; }
+    .menu-item span { opacity: 0; white-space: nowrap; transition: .2s; font-size: 14px; }
+    #top-nav {
+      position: fixed; top: 15px; left: 110px; right: 15px; height: 60px;
+      background: rgba(255,255,255,0.95); border-radius: 12px; box-shadow: var(--shadow);
+      display: flex; align-items: center; justify-content: space-between; padding: 0 22px;
+      z-index: 900; transition: left .3s cubic-bezier(.4,0,.2,1);
+    }
+    body:has(#soft-sidebar:hover) #top-nav { left: 290px; }
+    .nav-brand { display: flex; align-items: center; gap: 8px; font-size: 18px; font-weight: 800; }
+    .company-pill { display: inline-flex; align-items: center; gap: 7px; color: var(--muted); font-size: 13px; font-weight: 700; }
+    .page { margin-left: 110px; padding: 96px 24px 36px; transition: margin-left .3s cubic-bezier(.4,0,.2,1); }
+    body:has(#soft-sidebar:hover) .page { margin-left: 290px; }
+    .toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 18px; }
+    h1 { font-size: 28px; margin: 0; letter-spacing: 0; }
+    .variant-tabs { display: flex; gap: 8px; flex-wrap: wrap; }
+    .variant-btn {
+      border: 1px solid var(--border); background: #fff; border-radius: 8px; padding: 10px 14px;
+      font-weight: 800; cursor: pointer; color: #475569;
+    }
+    .variant-btn.active { background: var(--green); color: #fff; border-color: var(--green); }
+    .grid { display: grid; grid-template-columns: minmax(0, 1.45fr) minmax(300px, .9fr); gap: 18px; align-items: stretch; }
+    .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; box-shadow: var(--shadow); }
+    .panel-head { padding: 18px 20px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+    .panel-title { font-weight: 800; display: flex; align-items: center; gap: 8px; }
+    .panel-body { padding: 20px; }
+    .hero {
+      min-height: 410px; overflow: hidden; position: relative;
+      background: linear-gradient(180deg, #effdf5 0%, #ffffff 58%);
+    }
+    .hero-kpi { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-bottom: 20px; }
+    .kpi { border: 1px solid #dbeafe; background: rgba(255,255,255,.85); border-radius: 8px; padding: 14px; }
+    .kpi .label { color: var(--muted); font-size: 12px; font-weight: 800; margin-bottom: 6px; }
+    .kpi .value { font-size: 24px; font-weight: 900; color: #0f172a; }
+    .forest-wrap { position: relative; min-height: 205px; padding: 24px 10px 0; }
+    .soil { position: absolute; left: 0; right: 0; bottom: 0; height: 46px; background: linear-gradient(180deg, #9a6038, var(--soil)); border-radius: 100% 100% 0 0 / 42% 42% 0 0; }
+    .forest { position: relative; z-index: 2; display: flex; align-items: flex-end; justify-content: center; flex-wrap: wrap; gap: 10px; min-height: 150px; padding-bottom: 22px; }
+    .tree { width: 42px; height: 92px; position: relative; animation: treeGrow .95s ease-out both; animation-delay: calc(var(--i) * 70ms); transform-origin: 50% 100%; }
+    .tree::before { content: ""; position: absolute; left: 18px; bottom: 0; width: 7px; height: 44px; border-radius: 5px; background: #8b5a2b; }
+    .tree::after {
+      content: ""; position: absolute; left: 3px; bottom: 30px; width: 36px; height: 42px;
+      border-radius: 50% 50% 45% 45%; background: linear-gradient(135deg, #22c55e, #15803d);
+      box-shadow: -10px 12px 0 -5px #16a34a, 10px 14px 0 -6px #4ade80;
+    }
+    @keyframes treeGrow {
+      from { transform: translateY(42px) scale(.35); opacity: 0; }
+      70% { transform: translateY(-4px) scale(1.04); opacity: 1; }
+      to { transform: translateY(0) scale(1); opacity: 1; }
+    }
+    .tree-note { text-align: center; color: var(--muted); font-weight: 700; margin-top: 12px; }
+    .equiv-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+    .equiv-card { border: 1px solid var(--border); border-radius: 8px; padding: 16px; background: #fff; min-height: 118px; }
+    .equiv-card .icon { color: var(--green); margin-bottom: 10px; }
+    .equiv-card .label { color: var(--muted); font-size: 12px; font-weight: 800; }
+    .equiv-card .value { font-size: 22px; font-weight: 900; margin-top: 6px; color: #0f172a; }
+    .stats-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+    .stat { background: #f8fafc; border: 1px solid var(--border); border-radius: 8px; padding: 14px; }
+    .stat .label { color: var(--muted); font-size: 12px; font-weight: 800; }
+    .stat .value { font-size: 18px; font-weight: 900; margin-top: 6px; }
+    .source-list { margin: 0; padding-left: 18px; line-height: 1.75; color: #475569; }
+    .muted { color: var(--muted); font-size: 13px; line-height: 1.7; }
+    .warning { display: none; margin-bottom: 14px; padding: 12px 14px; border-radius: 8px; background: #fff7ed; color: #9a3412; border: 1px solid #fed7aa; font-weight: 700; }
+    @media (max-width: 1050px) {
+      .grid { grid-template-columns: 1fr; }
+      .hero-kpi, .stats-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+    @media (max-width: 720px) {
+      #top-nav { left: 92px; right: 12px; }
+      .page { margin-left: 92px; padding: 90px 12px 24px; }
+      .hero-kpi, .stats-grid, .equiv-grid { grid-template-columns: 1fr; }
+      .nav-brand { font-size: 16px; }
+    }
+  </style>
+</head>
+<body>
+<aside id="soft-sidebar">
+  <div class="sidebar-header">
+    <div class="logo-box"><i data-lucide="layout-grid" size="18"></i></div>
+    <span>Dispatch Nav</span>
+  </div>
+  <div class="menu-list">
+    <a href="{% url 'home' %}" class="menu-item"><div class="icon-box"><i data-lucide="home" size="18"></i></div><span>主要地圖</span></a>
+    <a href="{% url 'live_monitor_page' %}" class="menu-item"><div class="icon-box"><i data-lucide="map-pinned" size="18"></i></div><span>即時監控</span></a>
+    <a href="{% url 'report_page' %}" class="menu-item"><div class="icon-box"><i data-lucide="triangle-alert" size="18"></i></div><span>問題回報</span></a>
+    <a href="{% url 'driver_admin_page' %}" class="menu-item"><div class="icon-box"><i data-lucide="users-round" size="18"></i></div><span>司機帳號</span></a>
+    <a href="{% url 'esg_page' %}" class="menu-item active"><div class="icon-box"><i data-lucide="leaf" size="18"></i></div><span>ESG 永續分析</span></a>
+    <a href="{% url 'ai_assistant_page' %}" class="menu-item"><div class="icon-box"><i data-lucide="sparkles" size="18"></i></div><span>AI 助理</span></a>
+    {% if user.is_superuser %}
+    <a href="{% url 'account_management' %}" class="menu-item"><div class="icon-box"><i data-lucide="shield-check" size="18"></i></div><span>管理者帳號</span></a>
+    {% if user.username != 'system_admin' %}
+    <a href="{% url 'company_settings' %}" class="menu-item"><div class="icon-box"><i data-lucide="sliders-horizontal" size="18"></i></div><span>營運設定</span></a>
+    {% endif %}
+    {% if user.username == 'system_admin' %}
+    <a href="{% url 'company_management' %}" class="menu-item"><div class="icon-box"><i data-lucide="building-2" size="18"></i></div><span>公司管理</span></a>
+    {% endif %}
+    <a href="{% url 'admin_action_logs' %}" class="menu-item"><div class="icon-box"><i data-lucide="clipboard-list" size="18"></i></div><span>操作紀錄</span></a>
+    {% endif %}
+    <a href="{% url 'data_list' %}" class="menu-item"><div class="icon-box"><i data-lucide="table" size="18"></i></div><span>資料管理</span></a>
+    <a href="{% url 'cleaning_records_page' %}" class="menu-item"><div class="icon-box"><i data-lucide="file-box" size="18"></i></div><span>清掃紀錄</span></a>
+    <a href="{% url 'logout' %}" class="menu-item"><div class="icon-box"><i data-lucide="log-out" size="14"></i></div><span>登出</span></a>
+  </div>
+</aside>
+
+<nav id="top-nav">
+  <div class="nav-brand"><i data-lucide="leaf"></i> ESG 永續分析</div>
+  <div class="company-pill"><i data-lucide="building-2" size="14"></i>{{ company.name|default:"目前公司" }}</div>
+</nav>
+
+<main class="page">
+  <div class="toolbar">
+    <div>
+      <h1>路線最佳化減碳成果</h1>
+      <div class="muted">依目前登入公司的路線輸出與 ESG 設定即時換算。</div>
+    </div>
+    <div class="variant-tabs">
+      <button class="variant-btn active" data-variant="normal" type="button">不跨縣市</button>
+      <button class="variant-btn" data-variant="cross" type="button">可跨縣市</button>
+      <button class="variant-btn" data-variant="compact" type="button">跨縣市精簡版</button>
+    </div>
+  </div>
+
+  <div id="warningBox" class="warning"></div>
+
+  <div class="grid">
+    <section class="panel hero">
+      <div class="panel-head">
+        <div class="panel-title"><i data-lucide="sprout"></i> 本次減碳成果</div>
+        <div class="muted" id="variantLabel">不跨縣市</div>
+      </div>
+      <div class="panel-body">
+        <div class="hero-kpi">
+          <div class="kpi"><div class="label">減少 CO2e</div><div class="value" id="savedCo2">-</div></div>
+          <div class="kpi"><div class="label">相當於種植</div><div class="value" id="treeCount">-</div></div>
+          <div class="kpi"><div class="label">減少里程</div><div class="value" id="savedDistance">-</div></div>
+        </div>
+        <div class="forest-wrap">
+          <div class="forest" id="forest"></div>
+          <div class="soil"></div>
+        </div>
+        <div class="tree-note" id="treeNote">載入中...</div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head">
+        <div class="panel-title"><i data-lucide="scale"></i> 生活化換算</div>
+      </div>
+      <div class="panel-body">
+        <div class="equiv-grid">
+          <div class="equiv-card"><i class="icon" data-lucide="car"></i><div class="label">約少開汽車距離</div><div class="value" id="carKm">-</div></div>
+          <div class="equiv-card"><i class="icon" data-lucide="fuel"></i><div class="label">約少消耗汽油</div><div class="value" id="gasolineLiter">-</div></div>
+          <div class="equiv-card"><i class="icon" data-lucide="package"></i><div class="label">約等於 500ml PET 瓶碳排</div><div class="value" id="petBottle">-</div></div>
+          <div class="equiv-card"><i class="icon" data-lucide="smartphone-charging"></i><div class="label">約等於手機充電碳排</div><div class="value" id="phoneCharge">-</div></div>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <section class="panel" style="margin-top:18px;">
+    <div class="panel-head">
+      <div class="panel-title"><i data-lucide="bar-chart-3"></i> 路線與碳排數據</div>
+      <div class="muted" id="fileUsed">-</div>
+    </div>
+    <div class="panel-body">
+      <div class="stats-grid">
+        <div class="stat"><div class="label">路線數</div><div class="value" id="routeCount">-</div></div>
+        <div class="stat"><div class="label">停靠點數</div><div class="value" id="stopCount">-</div></div>
+        <div class="stat"><div class="label">本方案總里程</div><div class="value" id="totalDistance">-</div></div>
+        <div class="stat"><div class="label">本方案碳排</div><div class="value" id="totalCo2">-</div></div>
+        <div class="stat"><div class="label">基準里程</div><div class="value" id="baselineDistance">-</div></div>
+        <div class="stat"><div class="label">基準碳排</div><div class="value" id="baselineCo2">-</div></div>
+        <div class="stat"><div class="label">節省比例</div><div class="value" id="savedPct">-</div></div>
+        <div class="stat"><div class="label">排放係數</div><div class="value" id="factor">-</div></div>
+      </div>
+      <p class="muted" id="esgNote" style="margin:16px 0 0;">-</p>
+    </div>
+  </section>
+
+  <section class="panel" style="margin-top:18px;">
+    <div class="panel-head">
+      <div class="panel-title"><i data-lucide="book-open-text"></i> 換算來源</div>
+    </div>
+    <div class="panel-body">
+      <ul class="source-list" id="sourceList"><li>載入中...</li></ul>
+    </div>
+  </section>
+</main>
+
+<script>
+lucide.createIcons();
+
+const els = Object.fromEntries([
+  "warningBox", "variantLabel", "savedCo2", "treeCount", "savedDistance", "forest", "treeNote",
+  "carKm", "gasolineLiter", "petBottle", "phoneCharge", "fileUsed", "routeCount", "stopCount",
+  "totalDistance", "totalCo2", "baselineDistance", "baselineCo2", "savedPct", "factor", "esgNote", "sourceList"
+].map(id => [id, document.getElementById(id)]));
+
+function fmt(value, digits = 1, suffix = "") {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return "-";
+  return `${num.toLocaleString("zh-TW", { maximumFractionDigits: digits, minimumFractionDigits: digits })}${suffix}`;
+}
+
+function fmtInt(value, suffix = "") {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return "-";
+  return `${Math.round(num).toLocaleString("zh-TW")}${suffix}`;
+}
+
+function renderForest(count, multiplier) {
+  els.forest.innerHTML = "";
+  const safeCount = Math.max(0, Math.min(Number(count) || 0, 18));
+  for (let i = 0; i < safeCount; i += 1) {
+    const tree = document.createElement("div");
+    tree.className = "tree";
+    tree.style.setProperty("--i", i);
+    els.forest.appendChild(tree);
+  }
+  if (!safeCount) {
+    els.treeNote.textContent = "目前沒有可具象化的減碳量。";
+  } else if ((Number(multiplier) || 1) > 1) {
+    els.treeNote.textContent = `畫面每棵樹約代表 ${fmtInt(multiplier)} 棵樹的一年吸收量。`;
+  } else {
+    els.treeNote.textContent = "每棵樹約代表 1 棵樹的一年吸收量。";
+  }
+}
+
+async function loadEsg(variant = "normal") {
+  els.warningBox.style.display = "none";
+  try {
+    const resp = await fetch(`{% url 'api_esg_summary' %}?variant=${encodeURIComponent(variant)}`, { credentials: "same-origin" });
+    const data = await resp.json();
+    if (!resp.ok || !data.ok) {
+      els.warningBox.textContent = data.warning || "目前找不到此模式的路線輸出，請先重新計算最佳路徑。";
+      els.warningBox.style.display = "block";
+    }
+    const esg = data.esg || {};
+    const eq = data.equivalents || {};
+    els.variantLabel.textContent = data.label || variant;
+    els.fileUsed.textContent = data.file_used ? `資料來源：${data.file_used}` : "尚未產生路線檔";
+    els.savedCo2.textContent = fmt(esg.saved_co2_kg, 1, " kg");
+    els.treeCount.textContent = fmt(eq.tree_count_year, 1, " 棵");
+    els.savedDistance.textContent = fmt(esg.saved_distance_km, 1, " km");
+    els.carKm.textContent = fmt(eq.car_km_equivalent, 1, " km");
+    els.gasolineLiter.textContent = fmt(eq.gasoline_liter_equivalent, 1, " L");
+    els.petBottle.textContent = fmtInt(eq.pet_bottle_500ml_equivalent, " 支");
+    els.phoneCharge.textContent = fmtInt(eq.smartphone_charge_equivalent, " 次");
+    els.routeCount.textContent = fmtInt(esg.route_count);
+    els.stopCount.textContent = fmtInt(esg.stop_count);
+    els.totalDistance.textContent = fmt(esg.total_distance_km, 1, " km");
+    els.totalCo2.textContent = fmt(esg.estimated_co2_kg, 1, " kg");
+    els.baselineDistance.textContent = fmt(esg.baseline_distance_km, 1, " km");
+    els.baselineCo2.textContent = fmt(esg.baseline_co2_kg, 1, " kg");
+    els.savedPct.textContent = fmt(esg.saved_pct, 1, "%");
+    els.factor.textContent = fmt(esg.emission_factor_kg_per_km, 3, " kg/km");
+    els.esgNote.textContent = `${esg.note || ""} ${eq.note || ""}`.trim();
+    renderForest(eq.tree_display_count, eq.tree_multiplier);
+
+    const sources = eq.sources || {};
+    els.sourceList.innerHTML = "";
+    Object.values(sources).forEach(text => {
+      const li = document.createElement("li");
+      li.textContent = text;
+      els.sourceList.appendChild(li);
+    });
+    if (!els.sourceList.children.length) els.sourceList.innerHTML = "<li>目前沒有來源說明。</li>";
+    lucide.createIcons();
+  } catch (err) {
+    els.warningBox.textContent = `ESG 資料載入失敗：${err.message || err}`;
+    els.warningBox.style.display = "block";
+  }
+}
+
+document.querySelectorAll(".variant-btn").forEach(btn => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll(".variant-btn").forEach(item => item.classList.remove("active"));
+    btn.classList.add("active");
+    loadEsg(btn.dataset.variant || "normal");
+  });
+});
+
+loadEsg("normal");
+</script>
+</body>
+</html>

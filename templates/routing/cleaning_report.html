@@ -7,6 +7,7 @@
   <script src="https://unpkg.com/lucide@latest"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <link href="https://fonts.googleapis.com/css?family=Open+Sans:300,400,600,700" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/responsive.css" />
   <style>
     :root {
       --primary: #4A90E2;
@@ -224,9 +225,80 @@
       padding: 18px;
     }
 
+    .wide-panel {
+      max-width: 1500px;
+      margin: 0 auto 16px;
+    }
+
     .panel h3 {
       margin: 0 0 10px;
       font-size: 18px;
+    }
+
+    .panel-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+      margin-bottom: 10px;
+    }
+
+    .panel-head h3 {
+      margin: 0;
+    }
+
+    .esg-layout {
+      display: grid;
+      grid-template-columns: minmax(0, 1.1fr) minmax(280px, 0.9fr);
+      gap: 16px;
+      align-items: stretch;
+    }
+
+    .esg-card-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+      margin-bottom: 14px;
+    }
+
+    .esg-card {
+      background: #ffffff;
+      border: 1px solid #e5e7eb;
+      border-radius: 14px;
+      padding: 14px;
+    }
+
+    .esg-label {
+      color: #64748b;
+      font-size: 12px;
+      font-weight: 800;
+      margin-bottom: 8px;
+    }
+
+    .esg-value {
+      color: #0f172a;
+      font-size: 24px;
+      font-weight: 800;
+      line-height: 1.2;
+    }
+
+    .formula-box {
+      background: #f8fafc;
+      border: 1px solid #e2e8f0;
+      border-radius: 14px;
+      padding: 14px;
+      font-size: 13px;
+      line-height: 1.8;
+      color: #475569;
+    }
+
+    .formula-box strong {
+      color: #0f172a;
+    }
+
+    .btn.primary {
+      background: var(--primary);
     }
 
     .panel-note {
@@ -348,6 +420,10 @@
       .chart-grid {
         grid-template-columns: 1fr;
       }
+      .esg-layout,
+      .esg-card-grid {
+        grid-template-columns: 1fr;
+      }
     }
 
     @media (max-width: 800px) {
@@ -384,8 +460,20 @@
 
       <a href="{% url 'driver_admin_page' %}" class="menu-item">
         <div class="icon-box"><i data-lucide="users-round" size="18"></i></div>
-        <span>帳號管理</span>
+        <span>司機帳號</span>
       </a>
+
+      {% if user.is_superuser %}
+      <a href="{% url 'account_management' %}" class="menu-item">
+        <div class="icon-box"><i data-lucide="shield-check" size="18"></i></div>
+        <span>管理者帳號</span>
+      </a>
+
+      <a href="{% url 'admin_action_logs' %}" class="menu-item">
+        <div class="icon-box"><i data-lucide="clipboard-list" size="18"></i></div>
+       <span>操作紀錄</span>
+      </a>
+      {% endif %}
 
       <a href="{% url 'data_list' %}" class="menu-item">
         <div class="icon-box"><i data-lucide="table" size="18"></i></div>
@@ -427,6 +515,46 @@
       <div class="summary-card">
         <div class="summary-label">需重清次數</div>
         <div class="summary-value" id="summaryRecleanCount">0</div>
+      </div>
+    </section>
+
+    <section class="panel wide-panel">
+      <div class="panel-head">
+        <h3>ESG 效益分析</h3>
+        <button id="btnExportEsgReport" class="btn primary" type="button">
+          <i data-lucide="download"></i> 匯出 ESG 報告
+        </button>
+      </div>
+      <div class="panel-note">
+        以舊路線排程作為比較基準，將最佳化後路線里程換算成預估碳排與減碳效益，提供比賽簡報與廠商導入評估使用。
+      </div>
+      <div class="esg-layout">
+        <div>
+          <div class="esg-card-grid">
+            <div class="esg-card">
+              <div class="esg-label">舊路線總里程</div>
+              <div id="esgBaselineDistance" class="esg-value">-</div>
+            </div>
+            <div class="esg-card">
+              <div class="esg-label">新路線總里程</div>
+              <div id="esgTotalDistance" class="esg-value">-</div>
+            </div>
+            <div class="esg-card">
+              <div class="esg-label">節省里程</div>
+              <div id="esgSavedDistance" class="esg-value">-</div>
+            </div>
+            <div class="esg-card">
+              <div class="esg-label">預估減碳</div>
+              <div id="esgSavedCo2" class="esg-value">-</div>
+            </div>
+          </div>
+          <div id="esgFormulaText" class="formula-box">
+            載入 ESG 資料中...
+          </div>
+        </div>
+        <div class="chart-wrap">
+          <canvas id="esgChart"></canvas>
+        </div>
       </div>
     </section>
 
@@ -480,6 +608,8 @@
     let driverChartInstance = null;
     let trendChartInstance = null;
     let pointChartInstance = null;
+    let esgChartInstance = null;
+    let latestEsgSummary = null;
 
     function updateLastUpdateTime() {
       const now = new Date();
@@ -494,6 +624,18 @@
         .replaceAll('>', '&gt;')
         .replaceAll('"', '&quot;')
         .replaceAll("'", '&#039;');
+    }
+
+    function fmtNum(value, digits=1) {
+      const num = Number(value);
+      if (!Number.isFinite(num)) return '-';
+      return num.toFixed(digits);
+    }
+
+    function fmtMetric(value, digits=1, suffix='') {
+      const num = Number(value);
+      if (!Number.isFinite(num)) return '-';
+      return `${fmtNum(num, digits)}${suffix}`;
     }
 
     function formatDateTime(value) {
@@ -808,9 +950,101 @@
         }
       });
     }
-    
-          
-      
+
+    function renderEsgSummary(esg) {
+      latestEsgSummary = esg || null;
+
+      document.getElementById('esgBaselineDistance').textContent = esg ? fmtMetric(esg.baseline_distance_km, 1, ' km') : '-';
+      document.getElementById('esgTotalDistance').textContent = esg ? fmtMetric(esg.total_distance_km, 1, ' km') : '-';
+      document.getElementById('esgSavedDistance').textContent = esg ? fmtMetric(esg.saved_distance_km, 1, ' km') : '-';
+      document.getElementById('esgSavedCo2').textContent = esg ? fmtMetric(esg.saved_co2_kg, 1, ' kg') : '-';
+
+      const formulaEl = document.getElementById('esgFormulaText');
+      if (!esg) {
+        formulaEl.textContent = '目前尚未載入 ESG 資料，請確認首頁路線資料是否已產生。';
+      } else {
+        formulaEl.innerHTML = `
+          <strong>計算公式：</strong>節省里程 = 舊路線總里程 - 新路線總里程。<br>
+          <strong>預估減碳：</strong>${fmtMetric(esg.saved_distance_km, 1, ' km')} × ${fmtNum(esg.emission_factor_kg_per_km, 3)} kg CO₂/km = ${fmtMetric(esg.saved_co2_kg, 1, ' kg CO₂')}。<br>
+          <strong>效益摘要：</strong>本次路線最佳化約降低 ${fmtNum(esg.saved_pct, 1)}%，預估油耗 ${fmtMetric(esg.estimated_fuel_liter, 1, ' L')}，可作為 ESG 與永續營運展示數據。
+        `;
+      }
+
+      if (esgChartInstance) esgChartInstance.destroy();
+      esgChartInstance = new Chart(document.getElementById('esgChart'), {
+        type: 'bar',
+        data: {
+          labels: ['舊路線總里程', '新路線總里程', '節省里程'],
+          datasets: [{
+            label: '公里數',
+            data: [
+              Number(esg?.baseline_distance_km || 0),
+              Number(esg?.total_distance_km || 0),
+              Number(esg?.saved_distance_km || 0)
+            ],
+            backgroundColor: ['rgba(239, 68, 68, 0.35)', 'rgba(74, 144, 226, 0.45)', 'rgba(22, 163, 74, 0.45)'],
+            borderColor: ['#ef4444', '#4A90E2', '#16a34a'],
+            borderWidth: 2
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: { display: false },
+            tooltip: {
+              callbacks: {
+                label: ctx => `${Number(ctx.raw || 0).toFixed(1)} km`
+              }
+            }
+          },
+          scales: {
+            y: { beginAtZero: true }
+          }
+        }
+      });
+    }
+
+    async function loadEsgSummary() {
+      try {
+        const res = await fetch('/api/routes/options/?variant=normal', { credentials: 'same-origin' });
+        const data = await res.json();
+        renderEsgSummary(data.esg || null);
+      } catch (err) {
+        renderEsgSummary(null);
+      }
+    }
+
+    function exportEsgReport() {
+      if (!latestEsgSummary) {
+        alert('目前沒有可匯出的 ESG 資料。');
+        return;
+      }
+
+      const esg = latestEsgSummary;
+      const rows = [
+        ['項目', '數值', '單位'],
+        ['舊路線總里程', esg.baseline_distance_km, 'km'],
+        ['新路線總里程', esg.total_distance_km, 'km'],
+        ['節省里程', esg.saved_distance_km, 'km'],
+        ['預估碳排', esg.estimated_co2_kg, 'kg CO2'],
+        ['預估減碳', esg.saved_co2_kg, 'kg CO2'],
+        ['降低比例', esg.saved_pct, '%'],
+        ['碳排係數', esg.emission_factor_kg_per_km, 'kg CO2/km'],
+        ['計算公式', `節省里程 x 碳排係數 = ${esg.saved_distance_km} x ${esg.emission_factor_kg_per_km}`, '']
+      ];
+      const csv = rows.map(row => row.map(cell => `"${String(cell ?? '').replaceAll('"', '""')}"`).join(',')).join('\n');
+      const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `ESG_Effect_Report_${new Date().toISOString().slice(0, 10)}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    }
+
     async function loadReport() {
       try {
         const [recordRes, expansionRes] = await Promise.all([
@@ -841,12 +1075,14 @@
         renderDriverChart(flows);
         renderTrendChart(records);
         renderPointChart(records);
+        await loadEsgSummary();
         updateLastUpdateTime();
       } catch (err) {
         alert(`連線失敗：${err}`);
       }
     }
 
+    document.getElementById('btnExportEsgReport').addEventListener('click', exportEsgReport);
     loadReport();
   </script>
 </body>

@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Dispatch Nav | 公司營運設定</title>
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <link href="https://fonts.googleapis.com/css?family=Open+Sans:300,400,600,700" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/responsive.css" />
+  <style>
+    :root {
+      --primary:#4A90E2;
+      --dark:#111827;
+      --text:#344767;
+      --muted:#67748e;
+      --line:#e5e7eb;
+      --soft:#f8fafc;
+      --danger:#dc2626;
+      --success:#16a34a;
+      --warning:#f59e0b;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Open Sans", "Microsoft JhengHei", sans-serif;
+      background: #f3f6fb;
+      color: var(--text);
+    }
+    .page { max-width: 1280px; margin: 28px auto; padding: 0 22px 42px; }
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 22px;
+    }
+    .brand { display: flex; align-items: center; gap: 12px; }
+    .brand-icon {
+      width: 44px; height: 44px; border-radius: 14px;
+      background: #e8f1ff; color: var(--primary);
+      display: flex; align-items: center; justify-content: center;
+    }
+    h1 { margin: 0; color: var(--dark); font-size: 28px; }
+    .subtitle { margin: 6px 0 0; color: var(--muted); line-height: 1.65; }
+    .actions { display: flex; gap: 10px; flex-wrap: wrap; }
+    .btn-link, button {
+      display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+      border: 0; border-radius: 14px; padding: 11px 16px;
+      font-weight: 800; text-decoration: none; cursor: pointer; min-height: 44px;
+    }
+    .btn-link { color: var(--text); background: white; border: 1px solid var(--line); box-shadow: 0 6px 20px rgba(15,23,42,.06); }
+    .btn-primary { color: white; background: var(--primary); }
+    .btn-dark { color: white; background: #1f2937; }
+    .btn-soft { color: var(--text); background: #eef3ff; border: 1px solid #dbe7ff; }
+    .btn-danger { color: white; background: var(--danger); }
+    .btn-mini { min-height: 38px; padding: 8px 12px; border-radius: 12px; font-size: 13px; }
+    .alert {
+      border-radius: 18px; padding: 14px 18px; margin: 0 0 16px;
+      font-weight: 800; border: 1px solid transparent;
+      transition: opacity .35s ease, transform .35s ease, max-height .35s ease, margin .35s ease, padding .35s ease;
+    }
+    .alert.ok { background:#dcfce7; color:#166534; border-color:#bbf7d0; }
+    .alert.error { background:#fee2e2; color:#991b1b; border-color:#fecaca; }
+    .alert.is-hidden {
+      opacity: 0; transform: translateY(-6px); max-height: 0; margin: 0;
+      padding-top: 0; padding-bottom: 0; overflow: hidden; border-width: 0;
+    }
+    .grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 18px; }
+    .card {
+      background: white; border: 1px solid var(--line); border-radius: 24px;
+      box-shadow: 0 14px 34px rgba(15,23,42,.08); overflow: hidden;
+    }
+    .card-head {
+      padding: 22px 24px; border-bottom: 1px solid var(--line);
+      display: flex; align-items: flex-start; justify-content: space-between; gap: 12px;
+    }
+    .card-title { margin: 0; color: var(--dark); font-size: 22px; }
+    .hint { margin: 6px 0 0; color: var(--muted); line-height: 1.7; }
+    .card-body { padding: 22px 24px; }
+    .form-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+    .field { display: flex; flex-direction: column; gap: 7px; }
+    .field.full { grid-column: 1 / -1; }
+    label { font-size: 13px; color: var(--muted); font-weight: 800; }
+    input, select {
+      width: 100%; border: 1px solid var(--line); border-radius: 14px;
+      padding: 12px 14px; font-size: 15px; color: var(--dark);
+      background: white; min-height: 46px;
+    }
+    .check-row { flex-direction: row; align-items: center; gap: 10px; }
+    .check-row input { width: auto; min-height: auto; }
+    .notice {
+      border: 1px solid #fde68a; background: #fffbeb; color: #92400e;
+      border-radius: 16px; padding: 12px 14px; font-weight: 700; line-height: 1.6;
+    }
+    .depot-layout { display: grid; grid-template-columns: .9fr 1.1fr; gap: 18px; align-items: start; }
+    .depot-list { display: grid; gap: 10px; }
+    .depot-card {
+      border: 1px solid var(--line); border-radius: 18px; padding: 14px 16px;
+      background: #fbfdff; display: flex; justify-content: space-between; gap: 12px;
+    }
+    .depot-card strong { color: var(--dark); }
+    .depot-meta { color: var(--muted); font-size: 13px; line-height: 1.55; margin-top: 5px; }
+    .depot-actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; align-content: flex-start; }
+    .badge {
+      display: inline-flex; align-items: center; border-radius: 999px;
+      padding: 6px 10px; font-size: 12px; font-weight: 900; white-space: nowrap;
+    }
+    .badge.on { background:#dcfce7; color:#166534; }
+    .badge.off { background:#fee2e2; color:#991b1b; }
+    @media (max-width: 920px) {
+      .topbar, .card-head, .depot-card { flex-direction: column; align-items: stretch; }
+      .form-grid, .depot-layout { grid-template-columns: 1fr; }
+      .page { margin: 16px auto; padding: 0 12px 28px; }
+      .depot-actions { justify-content: flex-start; }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <div class="topbar">
+      <div class="brand">
+        <div class="brand-icon"><i data-lucide="sliders-horizontal"></i></div>
+        <div>
+          <h1>公司營運設定</h1>
+          <p class="subtitle">{{ company.name }} 的排程限制、倉庫與碳排參數。只有公司高階管理者可以調整。</p>
+        </div>
+      </div>
+      <div class="actions">
+        <a class="btn-link" href="{% url 'account_management' %}"><i data-lucide="shield-check"></i>帳號審核</a>
+        <a class="btn-link" href="{% url 'home' %}"><i data-lucide="map"></i>返回首頁</a>
+        <a class="btn-link" href="{% url 'logout' %}"><i data-lucide="log-out"></i>登出</a>
+      </div>
+    </div>
+
+    {% if message %}<div class="alert ok" data-flash>{{ message }}</div>{% endif %}
+    {% if error %}<div class="alert error" data-flash>{{ error }}</div>{% endif %}
+
+    <section class="grid">
+      <div class="card">
+        <div class="card-head">
+          <div>
+            <h2 class="card-title">營運參數</h2>
+            <p class="hint">這些設定會在重新計算路線時帶入，調整後請回首頁按「重新計算最佳路徑」。</p>
+          </div>
+        </div>
+        <div class="card-body">
+          <form method="post" action="{% url 'company_settings_action' %}" class="form-grid">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="save_schedule_settings" />
+            <div class="field">
+              <label>預設路線模式</label>
+              <select name="default_route_variant">
+                <option value="normal" {% if settings.default_route_variant == "normal" %}selected{% endif %}>不跨縣市</option>
+                <option value="compact" {% if settings.default_route_variant == "compact" %}selected{% endif %}>可跨縣市</option>
+                <option value="cross" {% if settings.default_route_variant == "cross" %}selected{% endif %}>跨縣市完整模式</option>
+              </select>
+            </div>
+            <div class="field">
+              <label>司機人數上限</label>
+              <input name="driver_limit" type="number" min="1" value="{{ settings.driver_limit|default:14 }}" />
+            </div>
+            <div class="field">
+              <label>排程天數</label>
+              <input name="schedule_days" type="number" min="1" value="{{ settings.schedule_days|default:6 }}" />
+            </div>
+            <div class="field">
+              <label>每日工時上限（分鐘）</label>
+              <input name="daily_work_minutes" type="number" min="1" value="{{ settings.daily_work_minutes|default:540 }}" />
+            </div>
+            <div class="field">
+              <label>預設服務時間（分鐘）</label>
+              <input name="default_service_minutes" type="number" min="0" value="{{ settings.default_service_minutes|default:10 }}" />
+            </div>
+            <div class="field">
+              <label>碳排係數（kg/km）</label>
+              <input name="co2_kg_per_km" type="number" min="0.001" step="0.001" value="{{ settings.co2_kg_per_km|default:0.21 }}" />
+            </div>
+            <div class="field">
+              <label>主要倉庫名稱</label>
+              <input name="depot_name" value="{{ settings.depot_name|default:'' }}" placeholder="例如：總部" />
+            </div>
+            <div class="field">
+              <label>主要倉庫緯度</label>
+              <input name="depot_lat" type="number" step="0.000001" value="{{ settings.depot_lat|default:'' }}" />
+            </div>
+            <div class="field">
+              <label>主要倉庫經度</label>
+              <input name="depot_lon" type="number" step="0.000001" value="{{ settings.depot_lon|default:'' }}" />
+            </div>
+            <div class="field full">
+              <label>主要倉庫地址</label>
+              <input name="depot_address" value="{{ settings.depot_address|default:'' }}" placeholder="例如：臺北市中正區濟南路一段321號" />
+            </div>
+            <div class="field full">
+              <button class="btn-dark" type="submit"><i data-lucide="save"></i>儲存營運參數</button>
+            </div>
+          </form>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <div>
+            <h2 class="card-title">多場站出發點</h2>
+            <p class="hint">先建立各公司的出發場站資料。主要場站會和上方倉庫同步；其他場站可供下一階段多場站路線分派使用。</p>
+          </div>
+        </div>
+        <div class="card-body depot-layout">
+          <form method="post" action="{% url 'company_settings_action' %}" class="form-grid" id="depotForm">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="save_depot" />
+            <input type="hidden" name="depot_id" id="depotId" value="" />
+            <div class="field">
+              <label>場站代碼</label>
+              <input name="code" id="depotCode" placeholder="例如：north" required />
+            </div>
+            <div class="field">
+              <label>場站名稱</label>
+              <input name="name" id="depotName" placeholder="例如：北區場站" required />
+            </div>
+            <div class="field">
+              <label>排序</label>
+              <input name="sort_order" id="depotSort" type="number" min="1" value="2" />
+            </div>
+            <div class="field">
+              <label>緯度</label>
+              <input name="lat" id="depotLat" type="number" step="0.000001" />
+            </div>
+            <div class="field">
+              <label>經度</label>
+              <input name="lon" id="depotLon" type="number" step="0.000001" />
+            </div>
+            <label class="field check-row">
+              <input type="checkbox" name="is_active" id="depotActive" checked />
+              啟用此場站
+            </label>
+            <div class="field full">
+              <label>地址</label>
+              <input name="address" id="depotAddress" placeholder="場站地址" />
+            </div>
+            <div class="field full">
+              <button class="btn-primary" type="submit"><i data-lucide="map-pin-plus"></i>儲存場站</button>
+              <button class="btn-soft" type="button" onclick="resetDepotForm()"><i data-lucide="rotate-ccw"></i>清空表單</button>
+            </div>
+            <div class="field full notice">
+              目前重新計算仍會使用「主要倉庫」作為單一出發點。若要真正多場站派車，下一步會把點位依最近場站或指定場站分群，再分別排程。
+            </div>
+          </form>
+
+          <div class="depot-list">
+            {% for depot in depots %}
+            <div class="depot-card">
+              <div>
+                <strong>{{ depot.name }}</strong>
+                <span class="badge {% if depot.is_active %}on{% else %}off{% endif %}">{% if depot.is_active %}啟用{% else %}停用{% endif %}</span>
+                <div class="depot-meta">
+                  代碼：{{ depot.code }}，排序：{{ depot.sort_order }}<br />
+                  座標：{% if depot.lat and depot.lon %}{{ depot.lat }}, {{ depot.lon }}{% else %}尚未填寫{% endif %}<br />
+                  地址：{{ depot.address|default:"-" }}
+                </div>
+              </div>
+              <div class="depot-actions">
+                <button
+                  class="btn-soft btn-mini"
+                  type="button"
+                  data-id="{{ depot.id }}"
+                  data-code="{{ depot.code }}"
+                  data-name="{{ depot.name }}"
+                  data-address="{{ depot.address }}"
+                  data-lat="{{ depot.lat|default:'' }}"
+                  data-lon="{{ depot.lon|default:'' }}"
+                  data-sort="{{ depot.sort_order }}"
+                  data-active="{% if depot.is_active %}1{% else %}0{% endif %}"
+                  onclick="fillDepotForm(this)"
+                ><i data-lucide="pencil"></i>編輯</button>
+                {% if depot.code != "main" %}
+                <form method="post" action="{% url 'company_settings_action' %}" onsubmit="return confirm('確定刪除這個場站？');">
+                  {% csrf_token %}
+                  <input type="hidden" name="action" value="delete_depot" />
+                  <input type="hidden" name="depot_id" value="{{ depot.id }}" />
+                  <button class="btn-danger btn-mini" type="submit"><i data-lucide="trash-2"></i>刪除</button>
+                </form>
+                {% endif %}
+              </div>
+            </div>
+            {% empty %}
+            <div class="depot-card"><strong>目前尚未建立場站。</strong></div>
+            {% endfor %}
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    function fillDepotForm(button) {
+      document.getElementById("depotId").value = button.dataset.id || "";
+      document.getElementById("depotCode").value = button.dataset.code || "";
+      document.getElementById("depotName").value = button.dataset.name || "";
+      document.getElementById("depotAddress").value = button.dataset.address || "";
+      document.getElementById("depotLat").value = button.dataset.lat || "";
+      document.getElementById("depotLon").value = button.dataset.lon || "";
+      document.getElementById("depotSort").value = button.dataset.sort || "1";
+      document.getElementById("depotActive").checked = button.dataset.active === "1";
+      document.getElementById("depotForm").scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+    function resetDepotForm() {
+      document.getElementById("depotId").value = "";
+      document.getElementById("depotCode").value = "";
+      document.getElementById("depotName").value = "";
+      document.getElementById("depotAddress").value = "";
+      document.getElementById("depotLat").value = "";
+      document.getElementById("depotLon").value = "";
+      document.getElementById("depotSort").value = "2";
+      document.getElementById("depotActive").checked = true;
+    }
+    setTimeout(() => {
+      document.querySelectorAll("[data-flash]").forEach((item) => item.classList.add("is-hidden"));
+      const url = new URL(window.location.href);
+      if (url.searchParams.has("message") || url.searchParams.has("error")) {
+        url.searchParams.delete("message");
+        url.searchParams.delete("error");
+        window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
+      }
+    }, 4000);
+    lucide.createIcons();
+  </script>
+</body>
+</html>

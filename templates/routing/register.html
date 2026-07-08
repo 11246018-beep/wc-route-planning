@@ -4,141 +4,384 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Dispatch Nav | 智慧派工系統 - 註冊</title>
+  {% load static %}
   <script src="https://unpkg.com/lucide@latest"></script>
   <link href="https://fonts.googleapis.com/css?family=Open+Sans:300,400,600,700" rel="stylesheet" />
   <style>
     :root {
       --primary: #4A90E2;
-      --primary-dark: #1a5ab5;
       --text-main: #344767;
-      --soft-shadow: 0 20px 27px 0 rgba(0, 0, 0, 0.1);
+      --text-soft: #67748e;
+      --soft-shadow: 0 20px 27px 0 rgba(0, 0, 0, 0.12);
+      --card-bg: rgba(255, 255, 255, 0.88);
+      --nav-bg: rgba(255, 255, 255, 0.82);
+      --white-line: rgba(255, 255, 255, 0.5);
     }
 
-    * { box-sizing: border-box; }
+    * {
+      box-sizing: border-box;
+    }
 
-    body, html {
-      margin: 0; padding: 0; height: 100%;
+    html, body {
+      margin: 0;
+      padding: 0;
+      min-height: 100%;
       font-family: "Open Sans", sans-serif;
-      background: linear-gradient(180deg, #e3f2fd 0%, #4A90E2 50%, #669ae2  100%);
+      background: linear-gradient(180deg, #e3f2fd 0%, #4A90E2 52%, #669ae2 100%);
       background-attachment: fixed;
-      overflow: hidden;
+      overflow-x: hidden;
     }
 
-    /* 你的核心裝飾：大圓形 */
     body::before {
-      content: ""; position: absolute; top: -10%; left: -10%;
-      width: 40%; height: 60%; background: rgba(255, 255, 255, 0.1);
-      border-radius: 50%; z-index: 0; pointer-events: none;
+      content: "";
+      position: fixed;
+      top: -90px;
+      left: -120px;
+      width: 520px;
+      height: 520px;
+      border-radius: 50%;
+      background: rgba(255, 255, 255, 0.12);
+      filter: blur(8px);
+      z-index: 0;
+      pointer-events: none;
     }
 
-    /* 頂部導航列 (保持一致) */
+    body::after {
+      content: "";
+      position: fixed;
+      right: -120px;
+      bottom: -120px;
+      width: 420px;
+      height: 420px;
+      border-radius: 50%;
+      background: rgba(255, 255, 255, 0.08);
+      filter: blur(10px);
+      z-index: 0;
+      pointer-events: none;
+    }
+
     #top-nav {
-      position: fixed; top: 20px; left: 50%; transform: translateX(-50%);
-      width: 90%; max-width: 1100px; height: 60px;
-      z-index: 1000; background: rgba(255, 255, 255, 0.8);
-      backdrop-filter: blur(15px); border-radius: 50px;
-      display: flex; align-items: center; padding: 0 30px;
-      justify-content: space-between; border: 1px solid rgba(255, 255, 255, 0.4);
-      box-shadow: 0 4px 12px rgba(0,0,0,0.05);
+      position: fixed;
+      top: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: min(92%, 1100px);
+      height: 60px;
+      z-index: 1000;
+      background: var(--nav-bg);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      border-radius: 999px;
+      border: 1px solid var(--white-line);
+      box-shadow: 0 10px 30px rgba(29, 78, 137, 0.10);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 18px 0 24px;
     }
 
-    .nav-brand { font-weight: 700; color: var(--text-main); font-size: 18px; }
-    .nav-menu { display: flex; gap: 25px; }
-    .nav-link { 
-      color: var(--text-main); text-decoration: none; font-size: 13px; 
-      font-weight: 600; display: flex; align-items: center; gap: 5px; 
+    .nav-brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      font-size: 17px;
+      font-weight: 700;
+      color: var(--text-main);
+      letter-spacing: 0.2px;
+    }
+
+    .nav-brand-logo {
+      width: 36px;
+      height: 36px;
+      object-fit: contain;
+      display: block;
+      flex-shrink: 0;
+    }
+
+    .nav-brand-text {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .nav-divider {
+      color: #9aa7bd;
+      font-weight: 600;
+    }
+
+    .nav-action {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 18px;
+      border-radius: 999px;
+      text-decoration: none;
+      color: white;
+      font-size: 13px;
+      font-weight: 700;
+      background: #344767;
+      transition: transform 0.2s ease, opacity 0.2s ease;
+      box-shadow: 0 8px 18px rgba(52, 71, 103, 0.18);
+    }
+
+    .nav-action:hover {
+      transform: translateY(-1px);
+      opacity: 0.95;
     }
 
     .content-wrapper {
-      height: 100%; display: flex; align-items: center; justify-content: center;
-      position: relative; z-index: 10;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 110px 20px 40px;
+      position: relative;
+      z-index: 1;
     }
 
     .login-card {
-      background: rgba(255, 255, 255, 0.9);
-      backdrop-filter: blur(15px);
-      padding: 40px; border-radius: 24px;
+      width: 100%;
+      max-width: 440px;
+      background: var(--card-bg);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      border: 1px solid rgba(255, 255, 255, 0.58);
+      border-radius: 28px;
       box-shadow: var(--soft-shadow);
-      width: 100%; max-width: 420px;
+      padding: 34px 38px 32px;
       text-align: center;
     }
 
-    .login-card h2 { margin-bottom: 8px; color: var(--text-main); }
-    .login-card p { color: #67748e; margin-bottom: 24px; font-size: 14px; }
+    .logo-wrap {
+      display: flex;
+      justify-content: center;
+      margin-bottom: 18px;
+    }
 
-    /* 讓提示文字靠左 */
+    .logo-wrap img {
+      width: 104px;
+      height: 104px;
+      object-fit: contain;
+      display: block;
+    }
+
+    .login-card h2 {
+      color: var(--text-main);
+      font-size: 28px;
+      font-weight: 700;
+      margin: 0 0 10px;
+    }
+
+    .login-card p {
+      color: var(--text-soft);
+      margin: 0 0 30px;
+      font-size: 15px;
+    }
+
     .form-group {
-    margin-bottom: 20px;
-    display: flex;
-    flex-direction: column;
-    align-items: flex-start; /* 確保 label 靠左 */
+      margin-bottom: 20px;
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      text-align: left;
     }
 
     .form-group label {
-    font-weight: 700;
-    color: var(--text-main);
-    margin-bottom: 8px;
-    font-size: 14px;
+      font-weight: 700;
+      color: var(--text-main);
+      margin-bottom: 8px;
+      font-size: 14px;
     }
 
-    /* 核心：將圖示與格子水平排列 */
     .input-wrapper {
-    display: flex;
-    align-items: center; /* 垂直方向置中對齊 */
-    width: 100%;
-    gap: 15px; /* 圖示與格子之間的距離 */
+      display: flex;
+      align-items: center;
+      width: 100%;
+      gap: 14px;
     }
 
-    /* 圖示樣式 */
     .input-wrapper i {
-    color: #344767;
-    flex-shrink: 0; /* 防止圖示被壓縮 */
+      color: #344767;
+      flex-shrink: 0;
     }
 
-    /* 輸入框格子樣式 */
-    input {
-    flex: 1; /* 讓格子佔滿剩餘空間 */
-    padding: 12px 15px;
-    border: 1px solid #d2d6da;
-    border-radius: 12px;
-    font-size: 15px;
-    background: rgba(255, 255, 255, 0.9);
-    outline: none;
-    transition: all 0.2s ease;
+    .password-wrapper {
+      position: relative;
     }
 
-    input:focus {
-    border-color: var(--primary);
-    box-shadow: 0 0 0 3px rgba(74, 144, 226, 0.15);
+    .password-wrapper input {
+      padding-right: 48px;
     }
+
+    .toggle-password {
+      position: absolute;
+      right: 10px;
+      top: 50%;
+      transform: translateY(-50%);
+      width: 36px;
+      height: 36px;
+      border: none;
+      border-radius: 10px;
+      background: transparent;
+      color: #64748b;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      transition: background .2s ease, color .2s ease;
+    }
+
+    .toggle-password:hover {
+      background: #eef3ff;
+      color: var(--primary);
+    }
+
+    .toggle-password i {
+      color: currentColor;
+    }
+
+    input, select {
+      flex: 1;
+      padding: 13px 15px;
+      border: 1px solid #d2d6da;
+      border-radius: 14px;
+      font-size: 15px;
+      background: rgba(255, 255, 255, 0.96);
+      outline: none;
+      transition: all 0.2s ease;
+      color: var(--text-main);
+    }
+
+    select {
+      width: 100%;
+      appearance: none;
+    }
+
+    input:focus, select:focus {
+      border-color: var(--primary);
+      box-shadow: 0 0 0 3px rgba(74, 144, 226, 0.15);
+    }
+
     .btn-login {
-      width: 100%; padding: 14px; border: none; border-radius: 12px;
+      width: 100%;
+      padding: 15px;
+      border: none;
+      border-radius: 14px;
       background: linear-gradient(310deg, #21d4fd 0%, #2178dd 100%);
-      color: white; font-weight: 700; font-size: 16px;
-      cursor: pointer; margin-top: 10px; transition: transform 0.2s;
+      color: white;
+      font-weight: 700;
+      font-size: 16px;
+      cursor: pointer;
+      margin-top: 10px;
+      box-shadow: 0 8px 20px rgba(33, 120, 221, 0.28);
+      transition: transform 0.2s ease, box-shadow 0.2s ease;
     }
-    .btn-login:hover { transform: translateY(-1px); }
 
-    .footer-link { margin-top: 20px; font-size: 14px; color: #67748e; }
-    .footer-link a { color: var(--primary); font-weight: 600; text-decoration: none; }
+    .btn-login:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 12px 24px rgba(33, 120, 221, 0.33);
+    }
+
+    .footer-link {
+      margin-top: 22px;
+      font-size: 14px;
+      color: var(--text-soft);
+    }
+
+    .footer-link a {
+      color: var(--primary);
+      font-weight: 700;
+      text-decoration: none;
+    }
+
+    @media (max-width: 640px) {
+      #top-nav {
+        width: calc(100% - 24px);
+        padding: 0 12px 0 16px;
+      }
+
+      .nav-brand {
+        gap: 10px;
+      }
+
+      .nav-brand-logo {
+        width: 32px;
+        height: 32px;
+      }
+
+      .nav-brand-text {
+        gap: 6px;
+        font-size: 15px;
+      }
+
+      .nav-brand-text .system-subtitle {
+        display: none;
+      }
+
+      .nav-action {
+        padding: 9px 14px;
+        font-size: 12px;
+      }
+
+      .login-card {
+        padding: 28px 22px 24px;
+        border-radius: 24px;
+      }
+
+      .logo-wrap img {
+        width: 88px;
+        height: 88px;
+      }
+
+      .login-card h2 {
+        font-size: 24px;
+      }
+    }
   </style>
 </head>
 <body>
 
   <nav id="top-nav">
-    <div class="nav-brand">Dispatch Nav</div>
-    <div class="nav-menu">
-      <a href="{% url 'login' %}" class="nav-link"><i data-lucide="log-in" size="16"></i> 登入</a>
+    <div class="nav-brand">
+      <img src="{% static 'images/dispatch_nav_logo.png' %}" alt="Dispatch Nav Logo" class="nav-brand-logo">
+      <div class="nav-brand-text">
+        <span>Dispatch Nav</span>
+        <span class="nav-divider">|</span>
+        <span class="system-subtitle">智慧派工系統</span>
+      </div>
     </div>
+
+    <a href="{% url 'login' %}" class="nav-action">
+      <i data-lucide="log-in" size="16"></i>
+      登入
+    </a>
   </nav>
 
   <div class="content-wrapper">
     <div class="login-card">
-      <h2>建立管理員</h2>
-      <p>請設定新的管理員帳號與密碼</p>
-      
+      <div class="logo-wrap">
+        <img src="{% static 'images/dispatch_nav_logo.png' %}" alt="Dispatch Nav Logo">
+      </div>
+
+      <h2>申請管理者帳號</h2>
+      <p></p>
+
       <form id="registerForm">
         {% csrf_token %}
+        <div class="form-group">
+          <label>申請加入公司</label>
+          <div class="input-wrapper">
+            <i data-lucide="building-2" size="20"></i>
+            <select id="companyKey" required>
+              <option value="">請選擇公司</option>
+              {% for company in company_options %}
+                <option value="{{ company.key }}">{{ company.name }}</option>
+              {% endfor %}
+            </select>
+          </div>
+        </div>
+
         <div class="form-group">
           <label>管理員帳號 Manager ID</label>
           <div class="input-wrapper">
@@ -146,49 +389,74 @@
             <input type="text" id="reg_user" placeholder="輸入管理員帳號" required>
           </div>
         </div>
-        
+
         <div class="form-group">
           <label>設定密碼 Password</label>
-          <div class="input-wrapper">
+          <div class="input-wrapper password-wrapper">
             <i data-lucide="lock" size="20"></i>
             <input type="password" id="reg_password" placeholder="輸入密碼" required>
+            <button type="button" class="toggle-password" data-target="reg_password" aria-label="顯示密碼">
+              <i data-lucide="eye" size="20"></i>
+            </button>
           </div>
         </div>
-        
-        <button type="submit" class="btn-login">確認註冊</button>
+
+        <button type="submit" class="btn-login">送出申請</button>
       </form>
-      
+
       <div class="footer-link">
         已有帳號？ <a href="{% url 'login' %}">返回登入頁面</a>
       </div>
     </div>
   </div>
 
-  <script src="https://unpkg.com/lucide@latest"></script>
   <script>
     lucide.createIcons();
 
+    document.querySelectorAll('.toggle-password').forEach((button) => {
+      const input = document.getElementById(button.dataset.target);
+      if (!input) return;
+      const show = () => {
+        input.type = 'text';
+        button.innerHTML = '<i data-lucide="eye-off" size="20"></i>';
+        lucide.createIcons();
+      };
+      const hide = () => {
+        input.type = 'password';
+        button.innerHTML = '<i data-lucide="eye" size="20"></i>';
+        lucide.createIcons();
+      };
+      button.addEventListener('mousedown', show);
+      button.addEventListener('mouseup', hide);
+      button.addEventListener('mouseleave', hide);
+      button.addEventListener('touchstart', (e) => { e.preventDefault(); show(); }, { passive: false });
+      button.addEventListener('touchend', hide);
+      button.addEventListener('click', (e) => e.preventDefault());
+    });
+
     document.getElementById('registerForm').onsubmit = async function(e) {
       e.preventDefault();
-      
+
       const username = document.getElementById('reg_user').value;
       const password = document.getElementById('reg_password').value;
+      const companyKey = document.getElementById('companyKey').value;
 
       const response = await fetch("{% url 'register' %}", {
         method: "POST",
-        headers: { 
-            "Content-Type": "application/json", 
-            "X-CSRFToken": "{{ csrf_token }}" 
+        headers: {
+          "Content-Type": "application/json",
+          "X-CSRFToken": "{{ csrf_token }}"
         },
         body: JSON.stringify({
-            username: username,
-            password: password
+          username: username,
+          password: password,
+          company_key: companyKey
         })
       });
 
       const result = await response.json();
       if (result.success) {
-        alert("註冊成功！請重新登入");
+        alert(result.message || "帳號申請已送出，請等待高階管理者審核後再登入。");
         window.location.href = "{% url 'login' %}";
       } else {
         alert(result.message);

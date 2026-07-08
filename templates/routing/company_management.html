@@ -1,0 +1,436 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Dispatch Nav | 公司管理</title>
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <link href="https://fonts.googleapis.com/css?family=Open+Sans:300,400,600,700" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/responsive.css" />
+  <style>
+    :root {
+      --primary:#4A90E2;
+      --dark:#111827;
+      --text:#344767;
+      --muted:#67748e;
+      --line:#e5e7eb;
+      --soft:#f8fafc;
+      --success:#16a34a;
+      --danger:#dc2626;
+      --warning:#f59e0b;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Open Sans", "Microsoft JhengHei", sans-serif;
+      background: #f3f6fb;
+      color: var(--text);
+    }
+    .page { max-width: 1380px; margin: 28px auto; padding: 0 22px 42px; }
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 22px;
+    }
+    .brand { display: flex; align-items: center; gap: 12px; }
+    .brand-icon {
+      width: 44px;
+      height: 44px;
+      border-radius: 14px;
+      background: #e8f1ff;
+      color: var(--primary);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    h1 { margin: 0; color: var(--dark); font-size: 28px; }
+    .subtitle { margin: 6px 0 0; color: var(--muted); line-height: 1.6; }
+    .actions { display: flex; gap: 10px; flex-wrap: wrap; }
+    .btn-link, button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      border: 0;
+      border-radius: 14px;
+      padding: 11px 16px;
+      font-weight: 800;
+      text-decoration: none;
+      cursor: pointer;
+      min-height: 44px;
+    }
+    .btn-link { color: var(--text); background: white; border: 1px solid var(--line); box-shadow: 0 6px 20px rgba(15,23,42,.06); }
+    .btn-primary { color: white; background: var(--primary); }
+    .btn-dark { color: white; background: #1f2937; }
+    .btn-soft { color: var(--text); background: #eef3ff; border: 1px solid #dbe7ff; }
+    .btn-danger { color: white; background: var(--danger); }
+    .btn-mini { min-height: 38px; padding: 8px 12px; border-radius: 12px; font-size: 13px; }
+    .alert {
+      border-radius: 18px;
+      padding: 14px 18px;
+      margin: 0 0 16px;
+      font-weight: 800;
+      border: 1px solid transparent;
+      transition: opacity .35s ease, transform .35s ease, max-height .35s ease, margin .35s ease, padding .35s ease;
+    }
+    .alert.ok { background:#dcfce7; color:#166534; border-color:#bbf7d0; }
+    .alert.error { background:#fee2e2; color:#991b1b; border-color:#fecaca; }
+    .alert.is-hidden {
+      opacity: 0;
+      transform: translateY(-6px);
+      max-height: 0;
+      margin: 0;
+      padding-top: 0;
+      padding-bottom: 0;
+      overflow: hidden;
+      border-width: 0;
+    }
+    .grid { display: grid; grid-template-columns: 1.05fr .95fr; gap: 18px; align-items: start; }
+    .card {
+      background: white;
+      border: 1px solid var(--line);
+      border-radius: 24px;
+      box-shadow: 0 14px 34px rgba(15,23,42,.08);
+      overflow: hidden;
+    }
+    .card-head {
+      padding: 22px 24px;
+      border-bottom: 1px solid var(--line);
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .card-title { margin: 0; color: var(--dark); font-size: 22px; }
+    .hint { margin: 6px 0 0; color: var(--muted); line-height: 1.65; }
+    .card-body { padding: 22px 24px; }
+    .form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+    .field { display: flex; flex-direction: column; gap: 7px; }
+    .field.full { grid-column: 1 / -1; }
+    label { font-size: 13px; color: var(--muted); font-weight: 800; }
+    input, select {
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 12px 14px;
+      font-size: 15px;
+      color: var(--dark);
+      background: white;
+      min-height: 46px;
+    }
+    .check-row { flex-direction: row; align-items: center; gap: 10px; }
+    .check-row input { width: auto; min-height: auto; }
+    .table-wrap { overflow: auto; }
+    table { width: 100%; border-collapse: collapse; min-width: 780px; }
+    th { background:#eef3ff; color:#243b64; text-align:left; padding:14px 16px; font-size:13px; }
+    td { border-top:1px solid var(--line); padding:14px 16px; vertical-align: top; }
+    .name { font-weight: 900; color: var(--dark); }
+    .sub { color: var(--muted); font-size: 13px; margin-top: 4px; line-height: 1.5; }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      border-radius: 999px;
+      padding: 6px 10px;
+      font-size: 12px;
+      font-weight: 900;
+      white-space: nowrap;
+    }
+    .badge.on { background:#dcfce7; color:#166534; }
+    .badge.off { background:#fee2e2; color:#991b1b; }
+    .badge.kind { background:#eaf2ff; color:#1d4ed8; }
+    .assign-grid { display: grid; grid-template-columns: 1fr 1fr auto; gap: 12px; align-items: end; }
+    .user-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; align-items: end; }
+    .settings-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; align-items: end; }
+    .user-form-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+    .list { display: grid; gap: 10px; margin-top: 18px; max-height: 420px; overflow: auto; padding-right: 4px; }
+    .mini-card {
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      padding: 14px 16px;
+      background: #fbfdff;
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .mini-card strong { color: var(--dark); }
+    .mini-card .right { text-align: right; color: var(--muted); font-size: 13px; line-height: 1.55; }
+    .manager-card { display: block; }
+    .settings-box {
+      margin-top: 18px;
+      border: 1px solid var(--line);
+      border-radius: 20px;
+      padding: 16px;
+      background: #f8fbff;
+    }
+    .section-mini-title {
+      margin: 0 0 10px;
+      color: var(--dark);
+      font-size: 17px;
+      font-weight: 900;
+    }
+    .manager-card-head {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 12px;
+    }
+    .manager-card-head .right { text-align: right; }
+    @media (max-width: 960px) {
+      .grid, .form-grid, .assign-grid, .user-form-grid, .settings-grid { grid-template-columns: 1fr; }
+      .topbar, .card-head, .mini-card { flex-direction: column; align-items: stretch; }
+      .page { margin: 16px auto; padding: 0 12px 28px; }
+      .mini-card .right { text-align: left; }
+      .manager-card-head, .user-form-actions { flex-direction: column; align-items: stretch; }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <div class="topbar">
+      <div class="brand">
+        <div class="brand-icon"><i data-lucide="building-2"></i></div>
+        <div>
+          <h1>公司管理</h1>
+          <p class="subtitle">平台層管理公司租戶與公司管理者帳號；各公司的司機與資料由公司端自行管理。</p>
+        </div>
+      </div>
+      <div class="actions">
+        <a class="btn-link" href="{% url 'logout' %}"><i data-lucide="log-out"></i>登出</a>
+      </div>
+    </div>
+
+    {% if message %}<div class="alert ok" data-flash>{{ message }}</div>{% endif %}
+    {% if error %}<div class="alert error" data-flash>{{ error }}</div>{% endif %}
+
+    <section class="grid">
+      <div class="card">
+        <div class="card-head">
+          <div>
+            <h2 class="card-title">公司情境</h2>
+            <p class="hint">目前系統已有正式的公司隔離資料表。新增公司後，可把帳號與司機切換到不同情境。</p>
+          </div>
+          <form method="post" action="{% url 'company_management_action' %}">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="create_generic_demo" />
+            <button class="btn-dark" type="submit"><i data-lucide="sparkles"></i>建立通用展示公司</button>
+          </form>
+        </div>
+        <div class="card-body">
+          <form method="post" action="{% url 'company_management_action' %}" class="form-grid">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="save_company" />
+            <input type="hidden" name="company_id" id="companyId" value="" />
+            <div class="field">
+              <label for="companyKey">公司代碼</label>
+              <input id="companyKey" name="key" placeholder="例如 generic_demo" required />
+            </div>
+            <div class="field">
+              <label for="companyName">公司名稱</label>
+              <input id="companyName" name="name" placeholder="例如 Dispatch Nav 通用展示公司" required />
+            </div>
+            <div class="field">
+              <label for="industryType">產業類型</label>
+              <select id="industryType" name="industry_type">
+                {% for value,label in industry_choices %}
+                  <option value="{{ value }}">{{ label }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <label class="field check-row">
+              <input id="companyActive" type="checkbox" name="is_active" checked />
+              啟用此公司
+            </label>
+            <div class="field full">
+              <button class="btn-primary" type="submit"><i data-lucide="save"></i>儲存公司</button>
+            </div>
+          </form>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>公司</th>
+                <th>產業</th>
+                <th>狀態</th>
+                <th>已綁定</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in company_rows %}
+              <tr>
+                <td>
+                  <div class="name">{{ row.obj.name }}</div>
+                  <div class="sub">{{ row.obj.key }}</div>
+                </td>
+                <td><span class="badge kind">{{ row.industry_label }}</span></td>
+                <td>
+                  {% if row.obj.is_active %}
+                    <span class="badge on">啟用</span>
+                  {% else %}
+                    <span class="badge off">停用</span>
+                  {% endif %}
+                </td>
+                <td>
+                  <div>管理者 {{ row.user_count }} 位，司機 {{ row.driver_count }} 位</div>
+                  <div class="sub">管理者：{{ row.users_preview|default:"尚未綁定" }}</div>
+                  <div class="sub">司機：{{ row.drivers_preview|default:"尚未綁定" }}</div>
+                </td>
+                <td>
+                  <button
+                    class="btn-soft"
+                    type="button"
+                    data-company-id="{{ row.obj.id }}"
+                    data-key="{{ row.obj.key }}"
+                    data-name="{{ row.obj.name }}"
+                    data-industry="{{ row.obj.industry_type }}"
+                    data-active="{% if row.obj.is_active %}1{% else %}0{% endif %}"
+                    onclick="fillCompanyForm(this)"
+                  ><i data-lucide="pencil"></i>編輯</button>
+                </td>
+              </tr>
+              {% empty %}
+              <tr><td colspan="5">目前沒有公司資料。</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <div>
+            <h2 class="card-title">公司管理者帳號</h2>
+            <p class="hint">先選公司，再新增、編輯或刪除該公司的管理者。司機帳號由各公司進自己的司機帳號頁管理。</p>
+          </div>
+        </div>
+        <div class="card-body">
+          <form method="get" action="{% url 'company_management' %}" class="assign-grid">
+            <div class="field">
+              <label for="selectedCompany">目前管理公司</label>
+              <select id="selectedCompany" name="company" onchange="this.form.submit()">
+                {% for row in company_rows %}
+                  <option value="{{ row.obj.id }}" {% if selected_company and row.obj.id == selected_company.id %}selected{% endif %}>
+                    {{ row.obj.name }}
+                  </option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="field">
+              <label>目前公司代碼</label>
+              <input value="{{ selected_company.key|default:'-' }}" disabled />
+            </div>
+            <button class="btn-soft" type="submit">切換公司</button>
+          </form>
+
+          {% if selected_company %}
+          <form method="post" action="{% url 'company_management_action' %}" class="user-form-grid" style="margin-top:18px;">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="create_company_user" />
+            <input type="hidden" name="company_id" value="{{ selected_company.id }}" />
+            <div class="field">
+              <label for="newUsername">新增管理者帳號</label>
+              <input id="newUsername" name="username" placeholder="例如 manager_a" required />
+            </div>
+            <div class="field">
+              <label for="newPassword">初始密碼</label>
+              <input id="newPassword" name="password" type="password" placeholder="請輸入密碼" required />
+            </div>
+            <div class="field">
+              <label for="newRole">權限角色</label>
+              <select id="newRole" name="role">
+                <option value="manager">管理者</option>
+                <option value="super">高階管理者</option>
+                <option value="viewer">只讀人員</option>
+              </select>
+            </div>
+            <button class="btn-primary" type="submit"><i data-lucide="user-plus"></i>新增管理者</button>
+          </form>
+
+          <div class="list">
+            {% for row in company_users %}
+            <div class="mini-card manager-card">
+              <div class="manager-card-head">
+                <div>
+                  <strong>{{ row.login_name }}</strong>
+                  <div class="sub">{{ row.role }}</div>
+                </div>
+                <div class="right">{{ selected_company.name }}</div>
+              </div>
+
+              <form method="post" action="{% url 'company_management_action' %}" class="user-form-grid">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="update_company_user" />
+                <input type="hidden" name="user_id" value="{{ row.obj.id }}" />
+                <input type="hidden" name="company_id" value="{{ selected_company.id }}" />
+                <div class="field">
+                  <label>角色</label>
+                  <select name="role">
+                    <option value="viewer" {% if not row.obj.is_staff and not row.obj.is_superuser %}selected{% endif %}>只讀人員</option>
+                    <option value="manager" {% if row.obj.is_staff and not row.obj.is_superuser %}selected{% endif %}>管理者</option>
+                    <option value="super" {% if row.obj.is_superuser %}selected{% endif %}>高階管理者</option>
+                  </select>
+                </div>
+                <div class="field">
+                  <label>移到公司</label>
+                  <select name="target_company_id">
+                    {% for company_row in company_rows %}
+                      {% if company_row.obj.is_active %}
+                      <option value="{{ company_row.obj.id }}" {% if company_row.obj.id == selected_company.id %}selected{% endif %}>{{ company_row.obj.name }}</option>
+                      {% endif %}
+                    {% endfor %}
+                  </select>
+                </div>
+                <div class="field">
+                  <label>重設密碼（可留空）</label>
+                  <input name="password" type="password" placeholder="不修改就留空" />
+                </div>
+                <div class="user-form-actions">
+                  <button class="btn-primary btn-mini" type="submit">儲存變更</button>
+                </div>
+              </form>
+
+              <form method="post" action="{% url 'company_management_action' %}" onsubmit="return confirm('確定刪除 {{ row.login_name }} 嗎？');" style="margin-top:10px;">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="delete_company_user" />
+                <input type="hidden" name="user_id" value="{{ row.obj.id }}" />
+                <input type="hidden" name="company_id" value="{{ selected_company.id }}" />
+                <button class="btn-danger btn-mini" type="submit"><i data-lucide="trash-2"></i>刪除管理者</button>
+              </form>
+            </div>
+            {% empty %}
+            <div class="mini-card"><strong>這家公司目前沒有管理者帳號。</strong></div>
+            {% endfor %}
+          </div>
+          {% else %}
+          <div class="mini-card"><strong>請先建立一間公司。</strong></div>
+          {% endif %}
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    function fillCompanyForm(button) {
+      document.getElementById("companyId").value = button.dataset.companyId || "";
+      document.getElementById("companyKey").value = button.dataset.key || "";
+      document.getElementById("companyName").value = button.dataset.name || "";
+      document.getElementById("industryType").value = button.dataset.industry || "generic_dispatch";
+      document.getElementById("companyActive").checked = button.dataset.active === "1";
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }
+    setTimeout(() => {
+      document.querySelectorAll("[data-flash]").forEach((item) => item.classList.add("is-hidden"));
+      const url = new URL(window.location.href);
+      if (url.searchParams.has("message") || url.searchParams.has("error")) {
+        url.searchParams.delete("message");
+        url.searchParams.delete("error");
+        window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
+      }
+    }, 4000);
+    lucide.createIcons();
+  </script>
+</body>
+</html>

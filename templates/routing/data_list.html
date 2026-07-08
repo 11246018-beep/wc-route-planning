@@ -2,9 +2,11 @@
 <html lang="zh-Hant">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>資料管理</title>
     <script src="https://unpkg.com/lucide@latest"></script>
     <link href="https://fonts.googleapis.com/css?family=Open+Sans:300,400,600,700" rel="stylesheet" />
+    <link rel="stylesheet" href="/static/responsive.css" />
     <style>
         :root {
             --primary: #4A90E2;
@@ -203,6 +205,10 @@
         .btn.orange { background: #ea580c; }
         .btn.red { background: #dc2626; }
         .btn.purple { background: #7c3aed; }
+        .btn:disabled {
+            background: #cbd5e1;
+            cursor: not-allowed;
+        }
 
         .toolbar {
             display: flex;
@@ -271,6 +277,28 @@
             font-size: 13px;
         }
         .nowrap { white-space: nowrap; }
+        .bulk-bar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            flex-wrap: wrap;
+            margin-bottom: 12px;
+            padding: 12px 14px;
+            background: #fff7ed;
+            border: 1px solid #fed7aa;
+            border-radius: 14px;
+        }
+        .bulk-left {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            flex-wrap: wrap;
+            font-weight: 700;
+            color: #9a3412;
+        }
+        .select-cell { width: 48px; text-align: center; }
+        input[type="checkbox"] { width: 18px; height: 18px; cursor: pointer; }
     </style>
 </head>
 <body>
@@ -297,12 +325,29 @@
 
             <a href="{% url 'driver_admin_page' %}" class="menu-item">
                 <div class="icon-box"><i data-lucide="users-round" size="18"></i></div>
-                <span>帳號管理</span>
+                <span>司機帳號</span>
             </a>
+
+            {% if user.is_superuser %}
+            <a href="{% url 'account_management' %}" class="menu-item">
+                <div class="icon-box"><i data-lucide="shield-check" size="18"></i></div>
+                <span>管理者帳號</span>
+            </a>
+
+            <a href="{% url 'admin_action_logs' %}" class="menu-item">
+                 <div class="icon-box"><i data-lucide="clipboard-list" size="18"></i></div>
+                <span>操作紀錄</span>
+            </a>
+            {% endif %}
 
             <a href="{% url 'data_list' %}" class="menu-item active">
                 <div class="icon-box"><i data-lucide="table" size="18"></i></div>
                 <span>資料管理</span>
+            </a>
+
+            <a href="{% url 'cleaning_records_page' %}" class="menu-item">
+                <div class="icon-box"><i data-lucide="file-box" size="18"></i></div>
+                <span>清掃紀錄</span>
             </a>
 
             <a href="{% url 'login' %}" class="menu-item">
@@ -322,8 +367,10 @@
                 <h1>資料管理中心</h1>
 
                 <div class="btn-group">
+                    {% if user.is_staff or user.is_superuser %}
                     <a class="btn green" href="/data/add/">新增資料</a>
                     <a class="btn orange" href="/data/import/">匯入 Excel / CSV</a>
+                    {% endif %}
                     <a class="btn purple" href="/api/export/excel/?key=dispatch_latest">下載總排程 Excel</a>
                 </div>
             </div>
@@ -379,11 +426,30 @@
                 </div>
             </form>
 
-            <div class="muted">欄位名稱已改成較易讀的中文，但實際仍對應 Supabase 的 service_points 資料表。</div>
+            <div class="muted"></div>
+
+            {% if deleted_count %}
+            <div class="bulk-bar">
+                <div class="bulk-left">已刪除 {{ deleted_count }} 筆點位。</div>
+            </div>
+            {% endif %}
+
+            {% if user.is_staff or user.is_superuser %}
+            <form id="bulkDeleteForm" method="post" action="{% url 'data_bulk_delete' %}">
+                {% csrf_token %}
+                <div class="bulk-bar">
+                    <div class="bulk-left">
+                        <label><input type="checkbox" id="selectAllRows"> 全選此頁</label>
+                        <span id="selectedCount">已選取 0 筆</span>
+                    </div>
+                    <button class="btn red" id="bulkDeleteBtn" type="submit" disabled>刪除所選點位</button>
+                </div>
+            {% endif %}
 
             <table>
                 <thead>
                     <tr>
+                        {% if user.is_staff or user.is_superuser %}<th class="select-cell">選取</th>{% endif %}
                         <th class="nowrap">點位ID</th>
                         <th>客戶名稱</th>
                         <th>所屬場站</th>
@@ -392,12 +458,15 @@
                         <th class="nowrap">週次1</th>
                         <th class="nowrap">週次2</th>
                         <th>座標</th>
-                        <th class="nowrap">操作</th>
+                        {% if user.is_staff or user.is_superuser %}<th class="nowrap">操作</th>{% endif %}
                     </tr>
                 </thead>
                 <tbody>
                     {% for row in page_obj %}
                     <tr>
+                        {% if user.is_staff or user.is_superuser %}
+                        <td class="select-cell"><input type="checkbox" class="row-check" name="ids" value="{{ row.id }}"></td>
+                        {% endif %}
                         <td>{{ row.id }}</td>
                         <td>{{ row.client_name }}</td>
                         <td>{{ row.depot }}</td>
@@ -406,20 +475,25 @@
                         <td>{{ row.weekly_1 }}</td>
                         <td>{{ row.weekly_2 }}</td>
                         <td>{{ row.lat }}, {{ row.lon }}</td>
+                        {% if user.is_staff or user.is_superuser %}
                         <td>
                             <div class="actions">
                                 <a class="btn" href="/data/edit/{{ row.id }}/">編輯</a>
                                 <a class="btn red" href="/data/delete/{{ row.id }}/">刪除</a>
                             </div>
                         </td>
+                        {% endif %}
                     </tr>
                     {% empty %}
                     <tr>
-                        <td colspan="9">沒有符合條件的資料</td>
+                        <td colspan="{% if user.is_staff or user.is_superuser %}10{% else %}8{% endif %}">沒有符合條件的資料</td>
                     </tr>
                     {% endfor %}
                 </tbody>
             </table>
+            {% if user.is_staff or user.is_superuser %}
+            </form>
+            {% endif %}
 
             <div class="pagination">
                 {% if page_obj.has_previous %}
@@ -437,6 +511,47 @@
         </div>
     </div>
 
-    <script>lucide.createIcons();</script>
+    <script>
+        lucide.createIcons();
+        const selectAllRows = document.getElementById('selectAllRows');
+        const rowChecks = Array.from(document.querySelectorAll('.row-check'));
+        const selectedCount = document.getElementById('selectedCount');
+        const bulkDeleteBtn = document.getElementById('bulkDeleteBtn');
+        const bulkDeleteForm = document.getElementById('bulkDeleteForm');
+
+        function updateBulkState() {
+            if (!selectedCount || !bulkDeleteBtn) return;
+            const checkedCount = rowChecks.filter(item => item.checked).length;
+            selectedCount.textContent = `已選取 ${checkedCount} 筆`;
+            bulkDeleteBtn.disabled = checkedCount === 0;
+            if (selectAllRows) {
+                selectAllRows.checked = rowChecks.length > 0 && checkedCount === rowChecks.length;
+                selectAllRows.indeterminate = checkedCount > 0 && checkedCount < rowChecks.length;
+            }
+        }
+
+        if (selectAllRows) {
+            selectAllRows.addEventListener('change', () => {
+                rowChecks.forEach(item => { item.checked = selectAllRows.checked; });
+                updateBulkState();
+            });
+        }
+
+        rowChecks.forEach(item => item.addEventListener('change', updateBulkState));
+
+        if (bulkDeleteForm) {
+            bulkDeleteForm.addEventListener('submit', event => {
+                const checkedCount = rowChecks.filter(item => item.checked).length;
+                if (checkedCount === 0) {
+                    event.preventDefault();
+                    return;
+                }
+                const ok = window.confirm(`確定要刪除已選取的 ${checkedCount} 筆點位嗎？此動作無法復原。`);
+                if (!ok) event.preventDefault();
+            });
+        }
+
+        updateBulkState();
+    </script>
 </body>
 </html>

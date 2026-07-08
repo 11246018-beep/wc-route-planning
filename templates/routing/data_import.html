@@ -2,9 +2,11 @@
 <html lang="zh-Hant">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>匯入 Excel / CSV</title>
     <script src="https://unpkg.com/lucide@latest"></script>
     <link href="https://fonts.googleapis.com/css?family=Open+Sans:300,400,600,700" rel="stylesheet" />
+    <link rel="stylesheet" href="/static/responsive.css" />
     <style>
         :root {
             --primary: #4A90E2;
@@ -214,6 +216,11 @@
                 <span>資料管理</span>
             </a>
 
+            <a href="{% url 'cleaning_records_page' %}" class="menu-item">
+                <div class="icon-box"><i data-lucide="file-box" size="18"></i></div>
+                <span>清掃紀錄</span>
+            </a>
+            
             <a href="{% url 'login' %}" class="menu-item">
                 <div class="icon-box"><i data-lucide="log-out" size="14"></i></div>
                 <span>登出</span>
@@ -245,7 +252,6 @@
                     <li>緯度 / lat</li>
                     <li>經度 / lon</li>
                 </ul>
-                <p>如果有 ID，系統會優先更新原資料。沒有 ID，系統會新增新資料。</p>
             </div>
 
             {% if error_message %}

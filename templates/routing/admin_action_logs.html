@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Dispatch Nav | 操作紀錄</title>
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <link href="https://fonts.googleapis.com/css?family=Open+Sans:300,400,600,700" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/responsive.css" />
+  <style>
+    :root { --primary:#4A90E2; --text:#344767; --muted:#67748e; --line:#e5e7eb; }
+    * { box-sizing:border-box; }
+    body { margin:0; font-family:"Open Sans", "Noto Sans TC", sans-serif; background:#f3f6fb; color:var(--text); }
+    .page { max-width:1200px; margin:28px auto; padding:0 22px; }
+    .topbar { display:flex; align-items:center; justify-content:space-between; gap:16px; margin-bottom:22px; }
+    .brand { display:flex; align-items:center; gap:12px; font-weight:800; font-size:24px; }
+    .icon { width:42px; height:42px; border-radius:14px; background:#e8f1ff; color:var(--primary); display:flex; align-items:center; justify-content:center; }
+    .btn-link { display:inline-flex; align-items:center; gap:8px; padding:11px 16px; border-radius:14px; text-decoration:none; color:var(--text); background:white; border:1px solid var(--line); font-weight:700; box-shadow:0 6px 20px rgba(15,23,42,.06); }
+    .card { background:white; border:1px solid var(--line); border-radius:24px; box-shadow:0 14px 34px rgba(15,23,42,.08); overflow:hidden; }
+    .card-head { padding:24px 26px; border-bottom:1px solid var(--line); }
+    .filter-panel { display:grid; grid-template-columns: 1.2fr 1fr 1fr auto; gap:12px; padding:18px 26px; border-bottom:1px solid var(--line); background:#fbfdff; align-items:end; }
+    .filter-field { display:flex; flex-direction:column; gap:7px; }
+    .filter-field label { font-size:13px; font-weight:800; color:#475569; }
+    .filter-input, .filter-select { width:100%; border:1px solid #d8dee9; border-radius:14px; padding:11px 13px; color:var(--text); background:white; font-size:14px; outline:none; }
+    .filter-input:focus, .filter-select:focus { border-color:var(--primary); box-shadow:0 0 0 3px rgba(74,144,226,.14); }
+    .filter-actions { display:flex; gap:10px; align-items:center; }
+    .btn-filter { border:none; border-radius:14px; padding:12px 16px; font-weight:800; cursor:pointer; background:#344767; color:white; white-space:nowrap; }
+    .btn-clear { border:1px solid var(--line); border-radius:14px; padding:11px 16px; font-weight:800; cursor:pointer; background:white; color:#475569; white-space:nowrap; }
+    .filter-summary { padding:0 26px 14px; color:var(--muted); font-size:13px; background:#fbfdff; }
+    h1 { margin:0 0 8px; font-size:26px; color:#111827; }
+    .hint { margin:0; color:var(--muted); line-height:1.7; }
+    .table-wrap { max-height: calc(100vh - 230px); overflow:auto; }
+    table { width:100%; border-collapse:collapse; min-width:960px; }
+    th { position:sticky; top:0; background:#eef3ff; color:#243b64; text-align:left; padding:15px 16px; font-size:14px; z-index:1; }
+    td { padding:14px 16px; border-top:1px solid var(--line); vertical-align:top; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size:13px; color:#475569; }
+    .action { font-weight:800; color:#111827; }
+    pre { margin:0; white-space:pre-wrap; word-break:break-word; }
+    @media (max-width: 860px) {
+      .topbar { align-items:flex-start; flex-direction:column; }
+      .filter-panel { grid-template-columns: 1fr; }
+      .filter-actions { justify-content:flex-start; }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <div class="topbar">
+      <div class="brand"><div class="icon"><i data-lucide="clipboard-list"></i></div>Dispatch Nav 操作紀錄</div>
+      <div>
+        <a class="btn-link" href="{% url 'account_management' %}"><i data-lucide="shield-check"></i>帳號管理</a>
+        <a class="btn-link" href="{% url 'home' %}"><i data-lucide="map"></i>返回首頁</a>
+      </div>
+    </div>
+    <section class="card">
+      <div class="card-head">
+        <h1>管理端操作紀錄</h1>
+        <p class="hint">公司管理者只會看到所屬公司的紀錄；平台系統管理員可查看全部紀錄。</p>
+      </div>
+      <div class="filter-panel">
+        <div class="filter-field">
+          <label for="filterAccount">搜尋帳號 / 目標</label>
+          <input id="filterAccount" class="filter-input" type="search" placeholder="例如 admin、manager、P01">
+        </div>
+        <div class="filter-field">
+          <label for="filterAction">篩選操作</label>
+          <select id="filterAction" class="filter-select">
+            <option value="">全部操作</option>
+          </select>
+        </div>
+        <div class="filter-field">
+          <label for="filterRole">篩選角色</label>
+          <select id="filterRole" class="filter-select">
+            <option value="">全部角色</option>
+          </select>
+        </div>
+        <div class="filter-actions">
+          <button type="button" class="btn-filter" id="applyFilter">套用</button>
+          <button type="button" class="btn-clear" id="clearFilter">清除</button>
+        </div>
+      </div>
+      <div class="filter-summary" id="filterSummary">顯示全部操作紀錄</div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>時間</th>
+              <th>帳號</th>
+              <th>公司</th>
+              <th>角色</th>
+              <th>操作</th>
+              <th>目標</th>
+              <th>IP</th>
+              <th>詳細資料</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for item in logs %}
+            <tr class="log-row" data-account="{{ item.username }} {{ item.target }}" data-action="{{ item.action }}" data-role="{{ item.role }}">
+              <td class="mono">{{ item.time }}</td>
+              <td>{{ item.username }}</td>
+              <td>{{ item.company_name|default:"-" }}</td>
+              <td>{{ item.role }}</td>
+              <td class="action">{{ item.action }}</td>
+              <td>{{ item.target }}</td>
+              <td class="mono">{{ item.ip }}</td>
+              <td><pre>{{ item.extra }}</pre></td>
+            </tr>
+            {% empty %}
+            <tr><td colspan="8">目前沒有可顯示的操作紀錄。</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+  <script>
+    lucide.createIcons();
+
+    const rows = Array.from(document.querySelectorAll('.log-row'));
+    const accountInput = document.getElementById('filterAccount');
+    const actionSelect = document.getElementById('filterAction');
+    const roleSelect = document.getElementById('filterRole');
+    const summary = document.getElementById('filterSummary');
+
+    function fillSelect(select, attrName) {
+      const values = [...new Set(rows.map(row => (row.dataset[attrName] || '').trim()).filter(Boolean))].sort();
+      values.forEach(value => {
+        const option = document.createElement('option');
+        option.value = value;
+        option.textContent = value;
+        select.appendChild(option);
+      });
+    }
+
+    fillSelect(actionSelect, 'action');
+    fillSelect(roleSelect, 'role');
+
+    function applyFilters() {
+      const keyword = (accountInput.value || '').trim().toLowerCase();
+      const action = actionSelect.value;
+      const role = roleSelect.value;
+      let visibleCount = 0;
+
+      rows.forEach(row => {
+        const accountText = (row.dataset.account || '').toLowerCase();
+        const actionText = row.dataset.action || '';
+        const roleText = row.dataset.role || '';
+        const matchesKeyword = !keyword || accountText.includes(keyword);
+        const matchesAction = !action || actionText === action;
+        const matchesRole = !role || roleText === role;
+        const show = matchesKeyword && matchesAction && matchesRole;
+        row.style.display = show ? '' : 'none';
+        if (show) visibleCount += 1;
+      });
+
+      summary.textContent = `目前顯示 ${visibleCount} / ${rows.length} 筆操作紀錄`;
+    }
+
+    document.getElementById('applyFilter').addEventListener('click', applyFilters);
+    document.getElementById('clearFilter').addEventListener('click', () => {
+      accountInput.value = '';
+      actionSelect.value = '';
+      roleSelect.value = '';
+      applyFilters();
+    });
+    accountInput.addEventListener('input', applyFilters);
+    actionSelect.addEventListener('change', applyFilters);
+    roleSelect.addEventListener('change', applyFilters);
+    applyFilters();
+  </script>
+</body>
+</html>

@@ -1,0 +1,247 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI 智慧管理助理</title>
+  <link href="https://fonts.googleapis.com/css?family=Open+Sans:300,400,600,700" rel="stylesheet">
+  <link rel="stylesheet" href="/static/responsive.css">
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <style>
+    :root {
+      --primary: #3b82f6;
+      --accent: #10b981;
+      --sidebar-width: 80px;
+      --sidebar-expanded: 260px;
+      --bg: #f5f7fb;
+      --panel: #ffffff;
+      --text-main: #1f2937;
+      --text-muted: #6b7280;
+      --border: #e5e7eb;
+      --shadow: 0 10px 30px rgba(15, 23, 42, 0.08);
+    }
+    body { margin: 0; font-family: "Open Sans", sans-serif; background: var(--bg); color: var(--text-main); }
+    #soft-sidebar {
+      position: fixed; top: 0; bottom: 0; left: 0; width: var(--sidebar-width);
+      background: rgba(255,255,255,0.95); border-right: 1px solid var(--border);
+      z-index: 1200; transition: width .25s ease; overflow: hidden; box-shadow: var(--shadow);
+    }
+    #soft-sidebar:hover { width: var(--sidebar-expanded); }
+    .sidebar-header { padding: 24px 20px; display: flex; align-items: center; gap: 14px; min-width: 260px; }
+    .logo-box, .icon-box { width: 36px; height: 36px; border-radius: 8px; display: flex; align-items: center; justify-content: center; }
+    .logo-box { background: var(--primary); color: white; }
+    .sidebar-header span { font-weight: 700; opacity: 0; transition: .25s; white-space: nowrap; }
+    #soft-sidebar:hover .sidebar-header span { opacity: 1; }
+    .menu-list { padding: 8px 14px; }
+    .menu-item { height: 46px; display: flex; align-items: center; gap: 14px; color: #64748b; text-decoration: none; border-radius: 8px; margin-bottom: 6px; padding: 0 8px; min-width: 220px; }
+    .menu-item:hover, .menu-item.active { background: #eff6ff; color: var(--primary); }
+    .menu-item span { opacity: 0; transition: .25s; white-space: nowrap; font-weight: 600; font-size: 14px; }
+    #soft-sidebar:hover .menu-item span { opacity: 1; }
+    #top-nav {
+      position: fixed; left: 110px; right: 30px; top: 20px; height: 64px;
+      background: rgba(255,255,255,0.9); border: 1px solid rgba(255,255,255,0.75);
+      border-radius: 8px; box-shadow: var(--shadow); z-index: 900;
+      display: flex; align-items: center; justify-content: space-between; padding: 0 24px;
+      transition: left .25s ease;
+    }
+    body:has(#soft-sidebar:hover) #top-nav { left: 290px; }
+    .nav-brand { display: flex; align-items: center; gap: 10px; font-size: 18px; font-weight: 700; }
+    .nav-right { color: var(--text-muted); font-size: 13px; }
+    .page { margin-left: 110px; padding: 112px 30px 40px; transition: margin-left .25s ease; }
+    body:has(#soft-sidebar:hover) .page { margin-left: 290px; }
+    .layout { display: grid; grid-template-columns: minmax(320px, 430px) minmax(0, 1fr); gap: 18px; align-items: start; }
+    .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; box-shadow: var(--shadow); }
+    .panel-head { padding: 18px 20px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; }
+    .panel-title { font-size: 16px; font-weight: 700; display: flex; align-items: center; gap: 8px; }
+    .panel-body { padding: 18px 20px; }
+    textarea {
+      width: 100%; min-height: 160px; resize: vertical; box-sizing: border-box;
+      border: 1px solid var(--border); border-radius: 8px; padding: 14px;
+      font: inherit; line-height: 1.6; color: var(--text-main); outline: none; background: #fbfdff;
+    }
+    textarea:focus { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(59,130,246,.12); }
+    .quick-list { display: grid; gap: 8px; margin-top: 14px; }
+    .quick-btn, .ask-btn {
+      border: 1px solid var(--border); border-radius: 8px; background: #fff; color: var(--text-main);
+      min-height: 40px; padding: 9px 12px; display: inline-flex; align-items: center; gap: 8px;
+      cursor: pointer; font-weight: 600; text-align: left;
+    }
+    .quick-btn:hover { border-color: var(--primary); color: var(--primary); background: #eff6ff; }
+    .ask-btn { background: var(--primary); color: white; border-color: var(--primary); justify-content: center; width: 100%; margin-top: 14px; }
+    .ask-btn:disabled { opacity: .65; cursor: wait; }
+    .answer { white-space: pre-wrap; line-height: 1.8; min-height: 280px; color: #111827; }
+    .meta-grid { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 12px; margin-bottom: 16px; }
+    .meta-card { background: #f8fafc; border: 1px solid var(--border); border-radius: 8px; padding: 12px; }
+    .meta-label { color: var(--text-muted); font-size: 12px; margin-bottom: 4px; }
+    .meta-value { font-weight: 700; font-size: 14px; overflow-wrap: anywhere; }
+    .evidence-list { margin: 0; padding-left: 18px; color: var(--text-muted); line-height: 1.7; }
+    .badge { display: inline-flex; align-items: center; gap: 6px; color: #047857; background: #ecfdf5; padding: 5px 9px; border-radius: 999px; font-size: 12px; font-weight: 700; }
+    .badge.mock { color: #92400e; background: #fffbeb; }
+    @media (max-width: 900px) {
+      #top-nav { left: 92px; right: 14px; }
+      .page { margin-left: 92px; padding: 104px 14px 28px; }
+      .layout { grid-template-columns: 1fr; }
+      .meta-grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+<aside id="soft-sidebar">
+  <div class="sidebar-header">
+    <div class="logo-box"><i data-lucide="layout-grid" size="18"></i></div>
+    <span>Dispatch Nav</span>
+  </div>
+  <div class="menu-list">
+    <a href="{% url 'home' %}" class="menu-item"><div class="icon-box"><i data-lucide="home" size="18"></i></div><span>主要地圖</span></a>
+    <a href="{% url 'live_monitor_page' %}" class="menu-item"><div class="icon-box"><i data-lucide="map-pinned" size="18"></i></div><span>即時監控</span></a>
+    <a href="{% url 'report_page' %}" class="menu-item"><div class="icon-box"><i data-lucide="triangle-alert" size="18"></i></div><span>問題回報</span></a>
+    <a href="{% url 'driver_admin_page' %}" class="menu-item"><div class="icon-box"><i data-lucide="users-round" size="18"></i></div><span>司機帳號</span></a>
+    <a href="{% url 'esg_page' %}" class="menu-item"><div class="icon-box"><i data-lucide="leaf" size="18"></i></div><span>ESG 永續分析</span></a>
+    <a href="{% url 'ai_assistant_page' %}" class="menu-item active"><div class="icon-box"><i data-lucide="sparkles" size="18"></i></div><span>AI 助理</span></a>
+    {% if user.is_superuser %}
+    <a href="{% url 'account_management' %}" class="menu-item"><div class="icon-box"><i data-lucide="shield-check" size="18"></i></div><span>管理者帳號</span></a>
+    {% if user.username != 'system_admin' %}
+    <a href="{% url 'company_settings' %}" class="menu-item"><div class="icon-box"><i data-lucide="sliders-horizontal" size="18"></i></div><span>營運設定</span></a>
+    {% endif %}
+    {% if user.username == 'system_admin' %}
+    <a href="{% url 'company_management' %}" class="menu-item"><div class="icon-box"><i data-lucide="building-2" size="18"></i></div><span>公司管理</span></a>
+    {% endif %}
+    <a href="{% url 'admin_action_logs' %}" class="menu-item"><div class="icon-box"><i data-lucide="clipboard-list" size="18"></i></div><span>操作紀錄</span></a>
+    {% endif %}
+    <a href="{% url 'data_list' %}" class="menu-item"><div class="icon-box"><i data-lucide="table" size="18"></i></div><span>資料管理</span></a>
+    <a href="{% url 'cleaning_records_page' %}" class="menu-item"><div class="icon-box"><i data-lucide="file-box" size="18"></i></div><span>清掃紀錄</span></a>
+    <a href="{% url 'logout' %}" class="menu-item"><div class="icon-box"><i data-lucide="log-out" size="14"></i></div><span>登出</span></a>
+  </div>
+</aside>
+
+<nav id="top-nav">
+  <div class="nav-brand"><i data-lucide="sparkles"></i> AI 智慧管理助理</div>
+  <div class="nav-right" id="topStatus">待命</div>
+</nav>
+
+<main class="page">
+  <div class="layout">
+    <section class="panel">
+      <div class="panel-head">
+        <div class="panel-title"><i data-lucide="message-square-text"></i> 提問</div>
+      </div>
+      <div class="panel-body">
+        <textarea id="questionInput" placeholder="請輸入問題"></textarea>
+        <input
+          type="password"
+          id="geminiApiKey"
+          placeholder="請輸入 Gemini API Key（不會儲存）"
+          style="width:100%; box-sizing:border-box; margin-top:12px; border:1px solid var(--border); border-radius:8px; padding:12px; font:inherit; background:#fbfdff;"
+        >
+        <div class="quick-list">
+          <button class="quick-btn" type="button" data-question="哪些點位連續三次使用量偏高？"><i data-lucide="droplets"></i>哪些點位連續三次使用量偏高？</button>
+          <button class="quick-btn" type="button" data-question="今日派工是否有超時風險？哪位司機今日工作量最高？"><i data-lucide="route"></i>今日派工是否有超時風險？</button>
+          <button class="quick-btn" type="button" data-question="本次新路線比舊路線減少多少碳排？哪一條路線碳排最高？"><i data-lucide="leaf"></i>本次減少多少碳排？</button>
+        </div>
+        <button class="ask-btn" id="askBtn" type="button"><i data-lucide="send"></i>送出問題</button>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head">
+        <div class="panel-title"><i data-lucide="bot"></i> 回答</div>
+        <span class="badge mock" id="modeBadge">Demo fallback</span>
+      </div>
+      <div class="panel-body">
+        <div class="meta-grid">
+          <div class="meta-card"><div class="meta-label">查詢時間</div><div class="meta-value" id="queryTime">-</div></div>
+          <div class="meta-card"><div class="meta-label">模型</div><div class="meta-value" id="modelName">-</div></div>
+          <div class="meta-card"><div class="meta-label">類型</div><div class="meta-value" id="questionType">-</div></div>
+        </div>
+        <div class="answer" id="answerBox">尚未提問。</div>
+      </div>
+    </section>
+
+    <section class="panel" style="grid-column: 1 / -1;">
+      <div class="panel-head">
+        <div class="panel-title"><i data-lucide="database"></i> 查詢依據</div>
+      </div>
+      <div class="panel-body">
+        <ul class="evidence-list" id="evidenceList"><li>-</li></ul>
+      </div>
+    </section>
+  </div>
+</main>
+
+<script>
+  lucide.createIcons();
+
+  function getCookie(name) {
+    const value = `; ${document.cookie}`;
+    const parts = value.split(`; ${name}=`);
+    if (parts.length === 2) return parts.pop().split(';').shift();
+    return '';
+  }
+
+  const questionInput = document.getElementById('questionInput');
+  const askBtn = document.getElementById('askBtn');
+  const answerBox = document.getElementById('answerBox');
+  const evidenceList = document.getElementById('evidenceList');
+  const topStatus = document.getElementById('topStatus');
+  const modeBadge = document.getElementById('modeBadge');
+  const queryTime = document.getElementById('queryTime');
+  const modelName = document.getElementById('modelName');
+  const questionType = document.getElementById('questionType');
+
+  document.querySelectorAll('.quick-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      questionInput.value = btn.dataset.question || '';
+      questionInput.focus();
+    });
+  });
+
+  async function askAssistant() {
+    const question = questionInput.value.trim();
+    if (!question) return;
+    askBtn.disabled = true;
+    topStatus.textContent = '查詢中';
+    answerBox.textContent = '正在整理資料...';
+    evidenceList.innerHTML = '<li>查詢中</li>';
+    try {
+      const resp = await fetch("{% url 'api_ai_assistant_ask' %}", {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-CSRFToken': getCookie('csrftoken')
+        },
+        body: JSON.stringify({ 
+          question,
+          api_key: document.getElementById('geminiApiKey').value.trim()
+        })
+      });
+      const data = await resp.json();
+      if (!resp.ok || !data.ok) throw new Error(data.message || 'AI 查詢失敗');
+      answerBox.textContent = data.answer || '目前資料不足，無法判斷。';
+      queryTime.textContent = data.query_time || '-';
+      modelName.textContent = data.model || '-';
+      questionType.textContent = data.question_type || '-';
+      modeBadge.textContent = data.mock ? 'Demo fallback' : 'Gemini';
+      modeBadge.className = data.mock ? 'badge mock' : 'badge';
+      evidenceList.innerHTML = '';
+      (data.evidence || []).forEach(item => {
+        const li = document.createElement('li');
+        li.textContent = item;
+        evidenceList.appendChild(li);
+      });
+      if (!evidenceList.children.length) evidenceList.innerHTML = '<li>目前資料不足，無法判斷。</li>';
+      topStatus.textContent = '完成';
+    } catch (err) {
+      answerBox.textContent = `查詢失敗：${err.message || err}`;
+      evidenceList.innerHTML = '<li>查詢失敗</li>';
+      topStatus.textContent = '失敗';
+    } finally {
+      askBtn.disabled = false;
+      lucide.createIcons();
+    }
+  }
+
+  askBtn.addEventListener('click', askAssistant);
+</script>
+</body>
+</html>
