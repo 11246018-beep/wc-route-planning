@@ -44,7 +44,8 @@ sys.stdout.reconfigure(encoding='utf-8')
 
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "route_system.settings")
 django.setup()
-from routing.models import ServicePoint
+from routing.models import CompanyProfile, ServicePoint, ServicePointCompanyProfile
+from routing.tenant import resolve_company_key
 import html  # HTML特殊字元轉義
 import re  # 正則表達式處理
 from dataclasses import dataclass  # 資料類別定義
@@ -163,17 +164,31 @@ REAL_ANCHORS = REAL_ANCHORS.rename(columns={'name': 'IC_Name', 'lat': 'Lat', 'lo
 # ==========================================
 # 2. 資料處理核心函式 (Data Processing Core)
 # ==========================================
-def load_from_database():
+def load_from_database(company_key=None, user=None):
     """
     從 Django 資料庫讀取 ServicePoint
     """
     print("\n>>> 從資料庫讀取 ServicePoint ...")
 
-    qs = ServicePoint.objects.all().values()
+    resolved_company_key, company_key_source = resolve_company_key(company_key, user=user)
+    company = CompanyProfile.objects.filter(key=resolved_company_key, is_active=True).first()
+    if not company:
+        raise ValueError(f"找不到有效公司 company_key={resolved_company_key}，停止讀取 service_points。")
+
+    point_ids = list(
+        ServicePointCompanyProfile.objects.filter(company=company)
+        .values_list("service_point_id", flat=True)
+    )
+    qs = ServicePoint.objects.filter(id__in=point_ids)
+    print(f"    company_key: {resolved_company_key}")
+    print(f"    company_key 來源: {company_key_source}")
+    print(f"    公司隔離：{company.name} ({company.key})，關聯點位 {len(point_ids)} 筆")
+
+    qs = qs.values()
 
     df = pd.DataFrame(list(qs))
 
-    print(f"✓ 成功讀取 {len(df)} 筆資料")
+    print(f"✓ 成功讀取 {len(df)} 筆資料（company_key={resolved_company_key}）")
 
     return df
 def load_and_process_data(raw_df):
@@ -270,11 +285,22 @@ def load_and_process_data(raw_df):
 
     # 定義聚合規則 (Aggregation Rules)
     # 每個欄位的合併邏輯需仔細設計以保留關鍵資訊
+    def join_unique_text(values, sep=","):
+        cleaned = []
+        for value in values:
+            if pd.isna(value):
+                continue
+            text = str(value).strip()
+            if not text or text.lower() == "nan":
+                continue
+            cleaned.append(text)
+        return sep.join(sorted(set(cleaned)))
+
     agg_rules = {
         # 字串類欄位：保留所有唯一值並排序
-        'Original_ID': lambda x: ' | '.join(sorted(set(x))),  # 客戶ID用 | 分隔
-        'order_id': lambda x: ','.join(sorted(set(filter(None, x)))),  # 訂單號用逗號分隔
-        'floor': lambda x: ','.join(sorted(set(filter(None, x)))),  # 樓層資訊
+        'Original_ID': lambda x: join_unique_text(x, ' | '),  # 客戶ID用 | 分隔
+        'order_id': lambda x: join_unique_text(x, ','),       # 工單 ID
+        'floor': lambda x: join_unique_text(x, ','),          # 樓層資訊
 
         # 數值類欄位：加總
         'S_Time_Raw': 'sum',  # 同地點服務時間累加 (例如：3台設備各10分鐘 -> 30分鐘)

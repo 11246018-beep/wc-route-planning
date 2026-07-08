@@ -4,9 +4,12 @@ from datetime import datetime
 from pathlib import Path
 from collections import defaultdict
 import json
+import os
 import re
 
 import pandas as pd
+
+from .driver_roster import normalize_schedule_slot, slot_to_depot_code
 
 
 MAX_MINUTES = 540
@@ -31,6 +34,19 @@ DEPOT_INFO = {
         "lon": None,
     },
 }
+
+
+def custom_depot_info():
+    lat = to_float(os.environ.get("DISPATCH_DEPOT_LAT"), None)
+    lon = to_float(os.environ.get("DISPATCH_DEPOT_LON"), None)
+    if lat is None or lon is None:
+        return None
+    return {
+        "code": "Custom",
+        "name": os.environ.get("DISPATCH_DEPOT_NAME") or "自訂倉庫",
+        "lat": lat,
+        "lon": lon,
+    }
 
 
 def load_json(path: Path):
@@ -82,15 +98,30 @@ def clean_text(value, default=""):
 
 
 def driver_label(code):
+    custom_depot = custom_depot_info()
     s = str(code or "").upper()
     if s.startswith("P") and s[1:].isdigit():
+        if custom_depot:
+            return f"{s}｜{custom_depot['name']}{s[1:].lstrip('0') or '0'}"
         return f"{s}｜平鎮{s[1:].lstrip('0') or '0'}"
     if s.startswith("W") and s[1:].isdigit():
         return f"{s}｜五股{s[1:].lstrip('0') or '0'}"
     return s
 
 
-def infer_depot_from_driver(driver_code):
+def infer_depot_from_driver(driver_code, schedule_slot="", depot_code=""):
+    custom_depot = custom_depot_info()
+    if custom_depot:
+        return custom_depot.copy()
+
+    if depot_code in DEPOT_INFO:
+        return DEPOT_INFO[depot_code].copy()
+
+    slot = normalize_schedule_slot(schedule_slot) or normalize_schedule_slot(driver_code)
+    slot_depot = slot_to_depot_code(slot)
+    if slot_depot in DEPOT_INFO:
+        return DEPOT_INFO[slot_depot].copy()
+
     s = str(driver_code or "").upper()
     if s.startswith("W"):
         return DEPOT_INFO["Wugu"].copy()
@@ -116,7 +147,11 @@ def build_normal_routes_from_routes_new(schedule_rows):
             key=lambda r: (to_int(r.get("seq")), clean_text(r.get("task_id")))
         )
 
-        depot = infer_depot_from_driver(driver)
+        depot = infer_depot_from_driver(
+            driver,
+            schedule_slot=clean_text(items[0].get("schedule_slot")),
+            depot_code=clean_text(items[0].get("depot_code")),
+        )
 
         stops = []
         service_total = 0.0
@@ -150,6 +185,7 @@ def build_normal_routes_from_routes_new(schedule_rows):
                     "service_min": service_min,
                     "travel_time_min": travel_time_min,
                     "travel_dist_km": travel_dist_km,
+                    "schedule_slot": clean_text(item.get("schedule_slot")) or None,
                 }
             )
 
@@ -160,6 +196,7 @@ def build_normal_routes_from_routes_new(schedule_rows):
                 "route_id": f"NORMAL-{driver}-D{day:02d}",
                 "driver": driver,
                 "driver_label": clean_text(items[0].get("driver_label")) or driver_label(driver),
+                "schedule_slot": clean_text(items[0].get("schedule_slot")) or None,
                 "day": day,
                 "depot": depot,
                 "stop_count": len(stops),
@@ -187,6 +224,17 @@ def build_normal_routes_from_routes_new(schedule_rows):
     return payload
 
 
+def load_normal_summary_meta(output_dir: Path):
+    summary_path = output_dir / "normal_schedule_summary.json"
+    if not summary_path.exists():
+        return {}
+    try:
+        data = load_json(summary_path)
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
 def load_normal_routes_and_refresh(output_dir: Path):
     routes_new_path = output_dir / "routes_new.json"
     routes_normal_path = output_dir / "routes_normal.json"
@@ -195,6 +243,9 @@ def load_normal_routes_and_refresh(output_dir: Path):
         raw = load_json(routes_new_path)
         if isinstance(raw, list) and raw:
             payload = build_normal_routes_from_routes_new(raw)
+            summary_meta = load_normal_summary_meta(output_dir)
+            if summary_meta:
+                payload["meta"].update(summary_meta)
             routes_normal_path.write_text(
                 json.dumps(payload, ensure_ascii=False, indent=2),
                 encoding="utf-8",

@@ -7,11 +7,49 @@ import os
 import sqlite3
 import math
 import folium.plugins
+import time
 from collections import defaultdict
 
+try:
+    from routing.services.routing_cost_provider import RoutingCostProvider
+except ImportError:
+    from routing_cost_provider import RoutingCostProvider
 
-DAY_COUNT = 6
-MAX_MINUTES = 540
+
+def env_int(name, default):
+    try:
+        value = os.environ.get(name)
+        if value is None or str(value).strip() == "":
+            return default
+        return max(int(float(value)), 1)
+    except Exception:
+        return default
+
+
+def env_float(name, default=None):
+    try:
+        value = os.environ.get(name)
+        if value is None or str(value).strip() == "":
+            return default
+        return float(value)
+    except Exception:
+        return default
+
+
+DAY_COUNT = env_int("DISPATCH_SCHEDULE_DAYS", 6)
+MAX_MINUTES = env_int("DISPATCH_DAILY_WORK_MINUTES", 540)
+DEFAULT_SERVICE_MINUTES = env_int("DISPATCH_DEFAULT_SERVICE_MINUTES", 10)
+SAMPLE_NODES = env_int("DISPATCH_SAMPLE_NODES", 0) if os.environ.get("DISPATCH_SAMPLE_NODES") else 0
+OSRM_ROUTE_TIMEOUT = env_float("DISPATCH_OSRM_ROUTE_TIMEOUT", 12)
+TWO_OPT_MAX_ITERATIONS = env_int("DISPATCH_TWO_OPT_MAX_ITERATIONS", 20)
+TWO_OPT_MAX_SECONDS = env_float("DISPATCH_TWO_OPT_MAX_SECONDS", 15)
+MEMORY_FALLBACK_CANDIDATE_THRESHOLD = env_int("DISPATCH_MEMORY_FALLBACK_CANDIDATE_THRESHOLD", 80)
+NN_PREFILTER_THRESHOLD = env_int("DISPATCH_NN_PREFILTER_THRESHOLD", 200)
+NN_MAX_SCAN_CANDIDATES = env_int("DISPATCH_NN_MAX_SCAN_CANDIDATES", 200)
+
+
+def log(message):
+    print(f"[phase2-normal] {message}", flush=True)
 
 
 class OSRMClient:
@@ -23,26 +61,38 @@ class OSRMClient:
             CREATE TABLE IF NOT EXISTS batch_cache
             (hash TEXT PRIMARY KEY, duration REAL, distance REAL, geometry TEXT)
         ''')
+        self.cursor.execute("PRAGMA table_info(batch_cache)")
+        columns = {row[1] for row in self.cursor.fetchall()}
+        if 'legs' not in columns:
+            self.cursor.execute("ALTER TABLE batch_cache ADD COLUMN legs TEXT")
         self.conn.commit()
 
     def get_route_batch(self, coords):
         if len(coords) < 2:
-            return {'duration': 0, 'distance': 0, 'geometry': None}
+            return {'duration': 0, 'distance': 0, 'geometry': None, 'legs': [], 'source': 'Empty Route'}
 
         import hashlib
         c_str = "|".join([f"{round(lat,5)},{round(lon,5)}" for lat, lon in coords])
         c_hash = hashlib.md5(c_str.encode()).hexdigest()
 
-        self.cursor.execute("SELECT duration, distance, geometry FROM batch_cache WHERE hash=?", (c_hash,))
+        self.cursor.execute("SELECT duration, distance, geometry, legs FROM batch_cache WHERE hash=?", (c_hash,))
         row = self.cursor.fetchone()
         if row:
-            return {'duration': row[0], 'distance': row[1], 'geometry': json.loads(row[2])}
+            log(f"OSRM Route cache hit: stops={len(coords) - 1}")
+            return {
+                'duration': row[0],
+                'distance': row[1],
+                'geometry': json.loads(row[2]) if row[2] else None,
+                'legs': json.loads(row[3]) if row[3] else [],
+                'source': 'Route Cache',
+            }
 
         coord_string = ";".join([f"{lon},{lat}" for lat, lon in coords])
         url = f"http://router.project-osrm.org/route/v1/driving/{coord_string}?overview=full&geometries=geojson"
 
         try:
-            resp = requests.get(url, timeout=15)
+            log(f"OSRM Route 驗證開始: stops={len(coords) - 1}, timeout={OSRM_ROUTE_TIMEOUT}s")
+            resp = requests.get(url, timeout=OSRM_ROUTE_TIMEOUT)
             if resp.status_code == 200:
                 data = resp.json()
                 if data.get('code') == 'Ok' and data.get('routes'):
@@ -50,24 +100,51 @@ class OSRMClient:
                     duration_min = route['duration'] / 60.0
                     distance_km = route['distance'] / 1000.0
                     geometry = route['geometry']
+                    legs = route.get('legs', [])
 
                     self.cursor.execute(
-                        "INSERT OR REPLACE INTO batch_cache VALUES (?, ?, ?, ?)",
-                        (c_hash, duration_min, distance_km, json.dumps(geometry))
+                        """
+                        INSERT OR REPLACE INTO batch_cache
+                        (hash, duration, distance, geometry, legs)
+                        VALUES (?, ?, ?, ?, ?)
+                        """,
+                        (c_hash, duration_min, distance_km, json.dumps(geometry), json.dumps(legs))
                     )
                     self.conn.commit()
-                    return {'duration': duration_min, 'distance': distance_km, 'geometry': geometry}
+                    log(
+                        f"OSRM Route 驗證完成: distance={distance_km:.2f}km, "
+                        f"duration={duration_min:.2f}min, legs={len(legs)}"
+                    )
+                    return {
+                        'duration': duration_min,
+                        'distance': distance_km,
+                        'geometry': geometry,
+                        'legs': legs,
+                        'source': 'OSRM Route',
+                    }
+                log(f"OSRM Route 回應不可用: code={data.get('code')} message={data.get('message', '')}")
+            else:
+                log(f"OSRM Route HTTP 失敗: status={resp.status_code}")
         except Exception as e:
-            print(f"OSRM Batch Error: {e}")
+            log(f"OSRM Route Error: {type(e).__name__}: {e}; 改用 Haversine fallback")
 
         # fallback: haversine
-        dist_km = sum([
-            haversine(coords[i][0], coords[i][1], coords[i+1][0], coords[i+1][1])
-            for i in range(len(coords) - 1)
-        ]) * 1.3
+        fallback_legs = []
+        dist_km = 0.0
+        for i in range(len(coords) - 1):
+            leg_dist = haversine(coords[i][0], coords[i][1], coords[i+1][0], coords[i+1][1]) * 1.3
+            leg_duration = (leg_dist / 40.0) * 60.0
+            dist_km += leg_dist
+            fallback_legs.append({'distance': leg_dist * 1000.0, 'duration': leg_duration * 60.0})
         duration_min = (dist_km / 40.0) * 60.0
         geom = {"type": "LineString", "coordinates": [[lon, lat] for lat, lon in coords]}
-        return {'duration': duration_min, 'distance': dist_km, 'geometry': geom}
+        return {
+            'duration': duration_min,
+            'distance': dist_km,
+            'geometry': geom,
+            'legs': fallback_legs,
+            'source': 'Haversine Route Fallback',
+        }
 
 
 def parse_county(addr):
@@ -133,15 +210,154 @@ def get_depot(depot_str):
 
 
 def driver_label(code):
+    custom_name = os.environ.get('DISPATCH_DEPOT_NAME') if os.environ.get('DISPATCH_DEPOT_LAT') and os.environ.get('DISPATCH_DEPOT_LON') else ''
     s = str(code or '').upper()
     if s.startswith('P') and s[1:].isdigit():
+        if custom_name:
+            return f"{s}｜{custom_name}{s[1:].lstrip('0') or '0'}"
         return f"{s}｜平鎮{s[1:].lstrip('0') or '0'}"
     if s.startswith('W') and s[1:].isdigit():
         return f"{s}｜五股{s[1:].lstrip('0') or '0'}"
     return s
 
 
-def build_candidate_route_for_county(task_candidates, depot_lat, depot_lon, osrm):
+def coord_of(item):
+    return (float(item['lat']), float(item['lon']))
+
+
+def coord_cache_key(coord):
+    return (round(float(coord[0]), 5), round(float(coord[1]), 5))
+
+
+def cheap_distance_from(coord, item):
+    return haversine(coord[0], coord[1], float(item['lat']), float(item['lon']))
+
+
+def make_local_cost_getter(cost_provider, persist_fallback=True):
+    local_cache = {}
+    stats = {"calls": 0, "local_hits": 0}
+
+    def get_cost(origin, dest):
+        key = (coord_cache_key(origin), coord_cache_key(dest))
+        if key in local_cache:
+            stats["local_hits"] += 1
+            return local_cache[key]
+        stats["calls"] += 1
+        cost = cost_provider.get_cost(origin, dest, persist_fallback=persist_fallback)
+        local_cache[key] = cost
+        return cost
+
+    return get_cost, stats, local_cache
+
+
+def build_two_opt_cost_cache(route_pts, get_cost, max_seconds):
+    started = time.time()
+    pair_costs = {}
+    cost_calls = 0
+    precompute_timeout = False
+
+    coords = [coord_of(pt) for pt in route_pts]
+    for origin in coords:
+        for dest in coords:
+            if time.time() - started > max_seconds:
+                precompute_timeout = True
+                return pair_costs, cost_calls, precompute_timeout
+            key = (origin, dest)
+            if key in pair_costs:
+                continue
+            if origin == dest:
+                pair_costs[key] = 0.0
+                continue
+            pair_costs[key] = get_cost(origin, dest)['duration']
+            cost_calls += 1
+
+    return pair_costs, cost_calls, precompute_timeout
+
+
+def run_two_opt(route_pts, get_cost, context_label='', cost_stats=None):
+    label = f" ({context_label})" if context_label else ""
+    started = time.time()
+    max_seconds = TWO_OPT_MAX_SECONDS if TWO_OPT_MAX_SECONDS and TWO_OPT_MAX_SECONDS > 0 else 15
+    max_iterations = max(TWO_OPT_MAX_ITERATIONS, 1)
+
+    pair_costs, two_opt_cost_calls, precompute_timeout = build_two_opt_cost_cache(
+        route_pts,
+        get_cost,
+        max_seconds=max_seconds,
+    )
+
+    def pair_duration(a, b):
+        nonlocal two_opt_cost_calls
+        origin = coord_of(a)
+        dest = coord_of(b)
+        key = (origin, dest)
+        if key not in pair_costs:
+            pair_costs[key] = get_cost(origin, dest)['duration']
+            two_opt_cost_calls += 1
+        return pair_costs[key]
+
+    def current_path_cost():
+        return sum(pair_duration(route_pts[idx], route_pts[idx + 1]) for idx in range(len(route_pts) - 1))
+
+    iterations = 0
+    improvements = 0
+    stopped_by = ''
+    improved = True
+
+    while improved:
+        elapsed = time.time() - started
+        if elapsed >= max_seconds:
+            stopped_by = 'timeout'
+            break
+        if iterations >= max_iterations:
+            stopped_by = 'max_iterations'
+            break
+
+        iterations += 1
+        improved = False
+
+        for i in range(1, len(route_pts) - 1):
+            if time.time() - started >= max_seconds:
+                stopped_by = 'timeout'
+                break
+            for j in range(i + 1, len(route_pts)):
+                if time.time() - started >= max_seconds:
+                    stopped_by = 'timeout'
+                    break
+                if j - i == 1:
+                    continue
+
+                cur_dist = (
+                    pair_duration(route_pts[i - 1], route_pts[i]) +
+                    pair_duration(route_pts[j - 1], route_pts[j])
+                )
+                new_dist = (
+                    pair_duration(route_pts[i - 1], route_pts[j - 1]) +
+                    pair_duration(route_pts[i], route_pts[j])
+                )
+
+                if new_dist < cur_dist - 0.001:
+                    route_pts[i:j] = route_pts[i:j][::-1]
+                    improved = True
+                    improvements += 1
+            if stopped_by:
+                break
+
+    final_cost = current_path_cost() if route_pts else 0.0
+    elapsed = time.time() - started
+    provider_calls = cost_stats["calls"] if cost_stats else two_opt_cost_calls
+    local_hits = cost_stats["local_hits"] if cost_stats else 0
+    log(
+        f"2-Opt 完成{label}: stops={len(route_pts) - 1}, iterations={iterations}, "
+        f"improvements={improvements}, elapsed={elapsed:.2f}s, "
+        f"two_opt_cost_lookups={two_opt_cost_calls}, cost_provider_calls={provider_calls}, "
+        f"local_cache_hits={local_hits}, final_cost={final_cost:.2f}, "
+        f"stopped_by={stopped_by or 'completed'}, precompute_timeout={precompute_timeout}"
+    )
+    return route_pts
+
+
+def build_candidate_route_for_county(task_candidates, depot_lat, depot_lon, osrm, cost_provider, context_label=''):
     """
     task_candidates: 同倉、同縣市、未分配、且該 day 尚未拜訪過同 node 的點
     回傳:
@@ -157,31 +373,93 @@ def build_candidate_route_for_county(task_candidates, depot_lat, depot_lon, osrm
     if not task_candidates:
         return None
 
-    # 1) 先用 haversine greedy 建初始路線
+    label = f" ({context_label})" if context_label else ""
+    log(f"候選路線開始{label}: candidates={len(task_candidates)}")
+    depot_coord = (depot_lat, depot_lon)
+    log(f"OSRM Table 預熱開始{label}: locations={len(task_candidates) + 1}")
+    cost_provider.warm_costs([depot_coord] + [(t['lat'], t['lon']) for t in task_candidates])
+    log(f"OSRM Table 預熱完成{label}: stats={cost_provider.stats_json()}")
+    persist_fallback = len(task_candidates) + 1 <= MEMORY_FALLBACK_CANDIDATE_THRESHOLD
+    get_local_cost, local_cost_stats, local_cost_cache = make_local_cost_getter(
+        cost_provider,
+        persist_fallback=persist_fallback,
+    )
+    if not persist_fallback:
+        log(
+            f"大型候選群組啟用記憶體 fallback{label}: candidates={len(task_candidates)}, "
+            f"threshold={MEMORY_FALLBACK_CANDIDATE_THRESHOLD}"
+        )
+
+    # 1) 先用 OSRM Table/cache greedy 建初始路線
+    log(f"NN/Greedy 開始{label}")
     current_route_tasks = []
     current_lat, current_lon = depot_lat, depot_lon
     est_day_total = 0.0
     remaining = list(task_candidates)
+    nn_scanned_candidates = 0
+    nn_prefilter_rounds = 0
+    nn_full_scan_rounds = 0
+    nn_started = time.time()
 
     while remaining:
-        remaining.sort(key=lambda t: (t['lat'] - current_lat) ** 2 + (t['lon'] - current_lon) ** 2)
+        current_coord = (current_lat, current_lon)
+        indexed_remaining = list(enumerate(remaining))
+        used_prefilter = (
+            NN_MAX_SCAN_CANDIDATES > 0
+            and len(remaining) > NN_PREFILTER_THRESHOLD
+            and len(remaining) > NN_MAX_SCAN_CANDIDATES
+        )
+        if used_prefilter:
+            indexed_remaining = sorted(
+                indexed_remaining,
+                key=lambda pair: cheap_distance_from(current_coord, pair[1])
+            )[:NN_MAX_SCAN_CANDIDATES]
+            nn_prefilter_rounds += 1
+        else:
+            nn_full_scan_rounds += 1
+
+        ordered_candidates = sorted(
+            indexed_remaining,
+            key=lambda pair: get_local_cost(current_coord, coord_of(pair[1]))['duration']
+        )
+        nn_scanned_candidates += len(ordered_candidates)
 
         cand = None
         cand_idx = -1
         best_est_time = 0.0
 
-        for idx, t_cand in enumerate(remaining):
+        for idx, t_cand in ordered_candidates:
             if any(r['node_id'] == t_cand['node_id'] for r in current_route_tasks):
                 continue
 
-            est_dist = haversine(current_lat, current_lon, t_cand['lat'], t_cand['lon']) * 1.3
-            est_time = (est_dist / 40.0) * 60.0
+            leg_cost = get_local_cost(current_coord, coord_of(t_cand))
+            est_time = leg_cost['duration']
 
             if est_day_total + est_time + t_cand['service_time'] <= MAX_MINUTES:
                 cand = t_cand
                 cand_idx = idx
                 best_est_time = est_time
                 break
+
+        if not cand and used_prefilter:
+            nn_full_scan_rounds += 1
+            ordered_candidates = sorted(
+                enumerate(remaining),
+                key=lambda pair: get_local_cost(current_coord, coord_of(pair[1]))['duration']
+            )
+            nn_scanned_candidates += len(ordered_candidates)
+            for idx, t_cand in ordered_candidates:
+                if any(r['node_id'] == t_cand['node_id'] for r in current_route_tasks):
+                    continue
+
+                leg_cost = get_local_cost(current_coord, coord_of(t_cand))
+                est_time = leg_cost['duration']
+
+                if est_day_total + est_time + t_cand['service_time'] <= MAX_MINUTES:
+                    cand = t_cand
+                    cand_idx = idx
+                    best_est_time = est_time
+                    break
 
         if not cand:
             break
@@ -192,55 +470,60 @@ def build_candidate_route_for_county(task_candidates, depot_lat, depot_lon, osrm
         remaining.pop(cand_idx)
 
     if not current_route_tasks:
+        log(f"NN/Greedy 完成{label}: 無可行站點")
         return None
+    log(
+        f"NN/Greedy 完成{label}: selected={len(current_route_tasks)}, "
+        f"elapsed={time.time() - nn_started:.2f}s, "
+        f"scanned_candidates={nn_scanned_candidates}, "
+        f"prefilter_rounds={nn_prefilter_rounds}, full_scan_rounds={nn_full_scan_rounds}, "
+        f"max_scan={NN_MAX_SCAN_CANDIDATES}, "
+        f"cost_provider_calls={local_cost_stats['calls']}, "
+        f"local_cache_hits={local_cost_stats['local_hits']}, "
+        f"local_cache_size={len(local_cost_cache)}"
+    )
 
-    # 2) 2-opt 優化
+    # 2) 2-opt 優化：使用 OSRM Table/cache 的道路時間，不再用直線距離
+    log(f"2-Opt 開始{label}: stops={len(current_route_tasks)}")
     route_pts = [{'lat': depot_lat, 'lon': depot_lon}] + current_route_tasks[:]
-    improved = True
-    while improved:
-        improved = False
-        for i in range(1, len(route_pts) - 1):
-            for j in range(i + 1, len(route_pts)):
-                if j - i == 1:
-                    continue
-
-                cur_dist = (
-                    haversine(route_pts[i-1]['lat'], route_pts[i-1]['lon'], route_pts[i]['lat'], route_pts[i]['lon']) +
-                    haversine(route_pts[j-1]['lat'], route_pts[j-1]['lon'], route_pts[j]['lat'], route_pts[j]['lon'])
-                )
-                new_dist = (
-                    haversine(route_pts[i-1]['lat'], route_pts[i-1]['lon'], route_pts[j-1]['lat'], route_pts[j-1]['lon']) +
-                    haversine(route_pts[i]['lat'], route_pts[i]['lon'], route_pts[j]['lat'], route_pts[j]['lon'])
-                )
-
-                if new_dist < cur_dist - 0.001:
-                    route_pts[i:j] = route_pts[i:j][::-1]
-                    improved = True
-
+    route_pts = run_two_opt(route_pts, get_local_cost, context_label=context_label, cost_stats=local_cost_stats)
     current_route_tasks = route_pts[1:]
 
     # 3) 用 OSRM 精算，若超時則逐步移除邊際成本最高的點
     while current_route_tasks:
         coords = [(depot_lat, depot_lon)] + [(t['lat'], t['lon']) for t in current_route_tasks]
+        estimated_route_cost = cost_provider.route_cost(coords)
         route_res = osrm.get_route_batch(coords)
         osrm_duration = route_res['duration']
         total_service = sum(t['service_time'] for t in current_route_tasks)
         total_time = osrm_duration + total_service
 
         if total_time <= MAX_MINUTES:
+            log(
+                f"候選路線接受{label}: stops={len(current_route_tasks)}, "
+                f"estimated_drive={estimated_route_cost['duration']:.1f}, "
+                f"osrm_drive={osrm_duration:.1f}, total={total_time:.1f}, "
+                f"source={estimated_route_cost['source']}"
+            )
             return {
                 'tasks': current_route_tasks,
                 'route_res': route_res,
                 'osrm_duration': osrm_duration,
                 'total_service': total_service,
                 'total_time': total_time,
+                'estimated_duration': estimated_route_cost['duration'],
+                'estimated_distance': estimated_route_cost['distance'],
+                'cost_source': estimated_route_cost['source'],
+                'used_fallback': estimated_route_cost['used_fallback'],
             }
 
         # 嚴格版：如果只剩 1 站還超時，不可硬塞
         if len(current_route_tasks) == 1:
+            log(f"候選路線放棄{label}: 單站仍超過 {MAX_MINUTES} 分鐘")
             return None
 
-        # 拔掉邊際成本最高的點
+        # 拔掉邊際成本最高的點：使用 OSRM Table/cache 的道路時間
+        log(f"候選路線超時{label}: total={total_time:.1f}; 開始移除邊際成本最高點")
         best_drop_idx = -1
         max_saved_time = -1
 
@@ -253,16 +536,15 @@ def build_candidate_route_for_county(task_candidates, depot_lat, depot_lon, osrm
             if k < len(route_pts) - 1:
                 next_pt = route_pts[k + 1]
                 dist_before = (
-                    haversine(prev_pt['lat'], prev_pt['lon'], curr_pt['lat'], curr_pt['lon']) +
-                    haversine(curr_pt['lat'], curr_pt['lon'], next_pt['lat'], next_pt['lon'])
+                    get_local_cost(coord_of(prev_pt), coord_of(curr_pt))['duration'] +
+                    get_local_cost(coord_of(curr_pt), coord_of(next_pt))['duration']
                 )
-                dist_after = haversine(prev_pt['lat'], prev_pt['lon'], next_pt['lat'], next_pt['lon'])
+                dist_after = get_local_cost(coord_of(prev_pt), coord_of(next_pt))['duration']
             else:
-                dist_before = haversine(prev_pt['lat'], prev_pt['lon'], curr_pt['lat'], curr_pt['lon'])
+                dist_before = get_local_cost(coord_of(prev_pt), coord_of(curr_pt))['duration']
                 dist_after = 0
 
-            saved_dist = dist_before - dist_after
-            saved_travel_time = (saved_dist * 1.3 / 40.0) * 60.0
+            saved_travel_time = dist_before - dist_after
             drop_idx = k - 1
             saved_total_time = saved_travel_time + current_route_tasks[drop_idx]['service_time']
 
@@ -271,11 +553,63 @@ def build_candidate_route_for_county(task_candidates, depot_lat, depot_lon, osrm
                 best_drop_idx = drop_idx
 
         if best_drop_idx != -1:
+            dropped = current_route_tasks[best_drop_idx]
+            log(f"移除超時點{label}: task={dropped.get('task_id')} saved_est={max_saved_time:.1f}min")
             current_route_tasks.pop(best_drop_idx)
         else:
+            log(f"候選路線放棄{label}: 找不到可移除點")
             return None
 
     return None
+
+
+def route_leg_values(route_res, stop_count):
+    legs = route_res.get('legs') or []
+    values = []
+    for idx in range(stop_count):
+        if idx < len(legs):
+            leg = legs[idx]
+            values.append({
+                'duration': float(leg.get('duration', 0)) / 60.0,
+                'distance': float(leg.get('distance', 0)) / 1000.0,
+            })
+        else:
+            duration = route_res.get('duration', 0) / stop_count if stop_count else 0
+            distance = route_res.get('distance', 0) / stop_count if stop_count else 0
+            values.append({'duration': duration, 'distance': distance})
+    return values
+
+
+def percent_diff(estimated, actual):
+    if actual == 0:
+        return 0.0 if estimated == 0 else 100.0
+    return ((estimated - actual) / actual) * 100.0
+
+
+def build_diagnostic_row(route_id, driver, route_type, stop_count, estimated_cost, route_res, service_min, note=''):
+    estimated_drive = estimated_cost.get('duration', 0.0)
+    estimated_distance = estimated_cost.get('distance', 0.0)
+    actual_drive = route_res.get('duration', 0.0)
+    actual_distance = route_res.get('distance', 0.0)
+    return {
+        '路線編號': route_id,
+        '司機': driver,
+        '路線類型': route_type,
+        '停靠點數': stop_count,
+        '估算距離（公里）': round(estimated_distance, 2),
+        'OSRM 真實距離（公里）': round(actual_distance, 2),
+        '距離差異（%）': round(percent_diff(estimated_distance, actual_distance), 2),
+        '估算行駛時間（分鐘）': round(estimated_drive, 2),
+        'OSRM 真實行駛時間（分鐘）': round(actual_drive, 2),
+        '行駛時間差異（%）': round(percent_diff(estimated_drive, actual_drive), 2),
+        '估算總工時（分鐘）': round(estimated_drive + service_min, 2),
+        'OSRM 總工時（分鐘）': round(actual_drive + service_min, 2),
+        '估算是否超過540分鐘': '是' if estimated_drive + service_min > MAX_MINUTES else '否',
+        'OSRM是否超過540分鐘': '是' if actual_drive + service_min > MAX_MINUTES else '否',
+        '成本來源': estimated_cost.get('source', ''),
+        '是否使用備援': '是' if estimated_cost.get('used_fallback') else '否',
+        '備註': note,
+    }
 
 
 def validate_schedule_strict(schedule):
@@ -289,7 +623,7 @@ def validate_schedule_strict(schedule):
         items_sorted = sorted(items, key=lambda x: x['seq'])
         counties = sorted(set(i['county'] for i in items_sorted))
         total_service = sum(i['service_time_min'] for i in items_sorted)
-        total_drive = items_sorted[-1]['travel_time_min'] if items_sorted else 0
+        total_drive = sum(i['travel_time_min'] for i in items_sorted)
         total_time = total_service + total_drive
 
         if len(counties) > 1:
@@ -308,7 +642,15 @@ def main():
     if not os.path.exists(input_csv):
         raise FileNotFoundError(f"找不到輸入檔案: {input_csv}")
 
+    log(f"開始讀取資料: {input_csv}")
     df = pd.read_csv(input_csv)
+    log(f"資料讀取完成: nodes={len(df)}")
+    if SAMPLE_NODES:
+        original_count = len(df)
+        df = df.head(SAMPLE_NODES).copy()
+        log(f"小資料測試模式啟用: DISPATCH_SAMPLE_NODES={SAMPLE_NODES}, nodes={len(df)}/{original_count}")
+
+    log("開始解析縣市與倉庫")
     df['County'] = df['Address'].apply(parse_county)
     df['Depot'] = df['Depot_Raw'].apply(get_depot)
 
@@ -328,7 +670,9 @@ def main():
         weekly_2 = to_int(row.get('weekly_2'), 0)
         visits = max(1, weekly_1 + weekly_2)
 
-        service_time_total = to_float(row.get('Service_Time'), 0.0)
+        service_time_total = to_float(row.get('Service_Time'), DEFAULT_SERVICE_MINUTES)
+        if service_time_total <= 0:
+            service_time_total = DEFAULT_SERVICE_MINUTES
         service_time_per_visit = service_time_total / visits if visits else service_time_total
 
         for i in range(visits):
@@ -348,14 +692,31 @@ def main():
             task_id_counter += 1
 
     tasks_df = pd.DataFrame(tasks)
-    print(f"Total tasks generated: {len(tasks_df)}")
+    log(f"任務建立完成: tasks={len(tasks_df)}")
 
     depot_locations = {
         'Wugu': {'lat': 25.07154, 'lon': 121.44169},
         'Pingzhen': {'lat': 24.90703, 'lon': 121.226872}
     }
+    custom_depot_lat = env_float("DISPATCH_DEPOT_LAT")
+    custom_depot_lon = env_float("DISPATCH_DEPOT_LON")
+    if custom_depot_lat is not None and custom_depot_lon is not None:
+        depot_locations['Pingzhen'] = {'lat': custom_depot_lat, 'lon': custom_depot_lon}
 
     driver_config = {'Wugu': 2, 'Pingzhen': 12}
+    driver_limit = env_int("DISPATCH_DRIVER_LIMIT", sum(driver_config.values()))
+    if custom_depot_lat is not None and custom_depot_lon is not None:
+        driver_config = {'Wugu': 0, 'Pingzhen': driver_limit}
+    elif driver_limit != sum(driver_config.values()):
+        wugu_count = min(driver_config['Wugu'], driver_limit)
+        driver_config = {'Wugu': wugu_count, 'Pingzhen': max(driver_limit - wugu_count, 0)}
+    available_depots = {code for code, count in driver_config.items() if count > 0}
+    default_depot_code = 'Pingzhen' if 'Pingzhen' in available_depots else next(iter(available_depots), 'Pingzhen')
+
+    if custom_depot_lat is not None and custom_depot_lon is not None and 'Depot' in tasks_df.columns:
+        tasks_df['Depot'] = default_depot_code
+    elif 'Depot' in tasks_df.columns:
+        tasks_df['Depot'] = tasks_df['Depot'].apply(lambda value: value if value in available_depots else default_depot_code)
     driver_names = {
         'Wugu': [f'W{i:02d}' for i in range(1, driver_config['Wugu'] + 1)],
         'Pingzhen': [f'P{i:02d}' for i in range(1, driver_config['Pingzhen'] + 1)],
@@ -363,9 +724,14 @@ def main():
     driver_week_load = {d: 0.0 for depot in driver_names for d in driver_names[depot]}
     driver_used_days = {d: 0 for depot in driver_names for d in driver_names[depot]}
 
+    log("開始建立 OSRMClient")
     osrm = OSRMClient()
+    log("開始建立 RoutingCostProvider")
+    cost_provider = RoutingCostProvider()
     schedule = []
+    diagnostics = []
     tasks_pool = tasks_df.to_dict('records')
+    log(f"主排程開始: depots={driver_config}, days={DAY_COUNT}, max_minutes={MAX_MINUTES}")
 
     # =========================
     # 主排程：固定倉 + 嚴格不跨縣市 + 不超 540 + 盡量平衡司機週工時
@@ -373,14 +739,17 @@ def main():
     for depot, num_drivers in driver_config.items():
         depot_lat = depot_locations[depot]['lat']
         depot_lon = depot_locations[depot]['lon']
+        log(f"處理倉庫開始: depot={depot}, drivers={num_drivers}")
 
         for day in range(1, DAY_COUNT + 1):
+            log(f"處理日期開始: depot={depot}, day={day}")
             ordered_drivers = sorted(
                 driver_names[depot],
                 key=lambda d: (driver_week_load[d], driver_used_days[d], d)
             )
 
             for d_name in ordered_drivers:
+                log(f"處理司機開始: driver={d_name}, depot={depot}, day={day}")
                 valid_unassigned = []
                 for t in tasks_pool:
                     if t['assigned']:
@@ -398,7 +767,9 @@ def main():
                         valid_unassigned.append(t)
 
                 if not valid_unassigned:
+                    log(f"處理司機跳過: driver={d_name}, day={day}, 無可分配任務")
                     continue
+                log(f"可分配任務: driver={d_name}, day={day}, count={len(valid_unassigned)}")
 
                 county_times = {}
                 for t in valid_unassigned:
@@ -413,14 +784,20 @@ def main():
                 best_plan_score = float('inf')
                 best_target_county = None
 
-                for target_county, _ in county_candidates:
+                for county_index, (target_county, _) in enumerate(county_candidates, start=1):
                     same_county_tasks = [t for t in valid_unassigned if t['county'] == target_county]
+                    log(
+                        f"處理縣市候選: driver={d_name}, day={day}, "
+                        f"{county_index}/{len(county_candidates)}, county={target_county}, tasks={len(same_county_tasks)}"
+                    )
 
                     plan = build_candidate_route_for_county(
                         task_candidates=same_county_tasks,
                         depot_lat=depot_lat,
                         depot_lon=depot_lon,
-                        osrm=osrm
+                        osrm=osrm,
+                        cost_provider=cost_provider,
+                        context_label=f"{d_name} Day {day} {target_county}"
                     )
 
                     if not plan:
@@ -435,6 +812,7 @@ def main():
                         best_target_county = target_county
 
                 if not best_plan:
+                    log(f"無可行路線: driver={d_name}, day={day}")
                     continue
 
                 current_route_tasks = best_plan['tasks']
@@ -442,14 +820,34 @@ def main():
                 osrm_duration = best_plan['osrm_duration']
                 total_service = best_plan['total_service']
                 total_time = best_plan['total_time']
+                leg_values = route_leg_values(route_res, len(current_route_tasks))
+                route_id = f"{d_name}-Day{day}-{len(diagnostics) + 1}"
+
+                diagnostics.append(build_diagnostic_row(
+                    route_id=route_id,
+                    driver=d_name,
+                    route_type='NORMAL 主排程',
+                    stop_count=len(current_route_tasks),
+                    estimated_cost={
+                        'duration': best_plan.get('estimated_duration', 0),
+                        'distance': best_plan.get('estimated_distance', 0),
+                        'source': best_plan.get('cost_source', ''),
+                        'used_fallback': best_plan.get('used_fallback', False),
+                    },
+                    route_res=route_res,
+                    service_min=total_service,
+                    note=f"區域: {best_target_county}"
+                ))
 
                 for i, t in enumerate(current_route_tasks):
                     t['assigned'] = True
                     geom_val = route_res['geometry'] if i == len(current_route_tasks) - 1 else None
+                    leg_val = leg_values[i] if i < len(leg_values) else {'duration': 0, 'distance': 0}
 
                     schedule.append({
                         'driver': d_name,
                         'driver_label': driver_label(d_name),
+                        'depot_code': depot,
                         'day': day,
                         'seq': i + 1,
                         'task_id': t['task_id'],
@@ -459,8 +857,8 @@ def main():
                         'service_time_min': round(t['service_time'], 2),
                         'freq': t['freq'],
                         'visit_idx': t['visit_idx'],
-                        'travel_time_min': round(osrm_duration, 2) if i == len(current_route_tasks) - 1 else 0,
-                        'travel_dist_km': round(route_res['distance'], 2) if i == len(current_route_tasks) - 1 else 0,
+                        'travel_time_min': round(leg_val['duration'], 2),
+                        'travel_dist_km': round(leg_val['distance'], 2),
                         'geometry': geom_val,
                         'lat': t['lat'],
                         'lon': t['lon'],
@@ -469,18 +867,19 @@ def main():
                 driver_week_load[d_name] += total_time
                 driver_used_days[d_name] += 1
 
-                print(
+                log(
                     f"司機 {d_name} 第 {day} 天: {len(current_route_tasks)} 站, "
                     f"總里程 {route_res['distance']:.1f} km, 車程 {osrm_duration:.1f} 分鐘, "
                     f"總工時 {total_time:.1f} 分鐘 (區域: {best_target_county})"
                 )
+                log(f"Cache 狀態: {cost_provider.stats_json()}")
 
     # =========================
     # FINAL PASS：只允許同倉、同縣市、且不超 540
     # =========================
     unassigned_pool = [t for t in tasks_pool if not t['assigned']]
     if unassigned_pool:
-        print(f"\n[INFO] Starting Strict Final Pass for {len(unassigned_pool)} Unassigned Tasks...")
+        log(f"Final Pass 開始: unassigned={len(unassigned_pool)}")
 
         def unassigned_sort_key(t):
             depot_val = t.get('depot', 'Unknown')
@@ -500,10 +899,14 @@ def main():
                 if (d, day) not in day_routes:
                     day_routes[(d, day)] = []
 
-        for t in unassigned_pool:
+        for idx_unassigned, t in enumerate(unassigned_pool, start=1):
+            if idx_unassigned == 1 or idx_unassigned % 25 == 0 or idx_unassigned == len(unassigned_pool):
+                log(f"Final Pass 進度: {idx_unassigned}/{len(unassigned_pool)}, task={t.get('task_id')}")
             if t['county'] == 'Unknown':
+                log(f"Final Pass 跳過: task={t.get('task_id')}, county=Unknown")
                 continue
             if t['depot'] not in depot_locations:
+                log(f"Final Pass 跳過: task={t.get('task_id')}, depot={t.get('depot')}")
                 continue
 
             best_route_key = None
@@ -511,6 +914,7 @@ def main():
             best_osrm_res = None
             best_new_total = None
             best_delta = None
+            best_estimated_cost = None
 
             for key, stasks in day_routes.items():
                 driver = key[0]
@@ -524,6 +928,10 @@ def main():
                 if not stasks:
                     # 空白日：單點同倉可開新日
                     coords = [(depot_coords['lat'], depot_coords['lon']), (t['lat'], t['lon'])]
+                    estimated_cost = cost_provider.route_cost(coords)
+                    if estimated_cost['duration'] + t['service_time'] > MAX_MINUTES:
+                        continue
+
                     route_res = osrm.get_route_batch(coords)
                     total_time = route_res['duration'] + t['service_time']
 
@@ -535,10 +943,11 @@ def main():
                             best_osrm_res = route_res
                             best_new_total = total_time
                             best_delta = total_time
+                            best_estimated_cost = estimated_cost
                     continue
 
                 stasks_sorted = sorted(stasks, key=lambda x: x['seq'])
-                current_total = stasks_sorted[-1]['travel_time_min'] + sum(x['service_time_min'] for x in stasks_sorted)
+                current_total = sum(x['travel_time_min'] for x in stasks_sorted) + sum(x['service_time_min'] for x in stasks_sorted)
 
                 if current_total >= MAX_MINUTES:
                     continue
@@ -556,15 +965,14 @@ def main():
                     + [(t['lat'], t['lon'])]
                 )
 
-                last_node = stasks_sorted[-1]
-                est_dist = haversine(last_node['lat'], last_node['lon'], t['lat'], t['lon']) * 1.3
-                est_time = (est_dist / 40.0) * 60.0
+                estimated_cost = cost_provider.route_cost(coords)
+                service_total = sum(x['service_time_min'] for x in stasks_sorted) + t['service_time']
 
-                if current_total + est_time + t['service_time'] > MAX_MINUTES:
+                if estimated_cost['duration'] + service_total > MAX_MINUTES:
                     continue
 
                 route_res = osrm.get_route_batch(coords)
-                new_total = route_res['duration'] + sum(x['service_time_min'] for x in stasks_sorted) + t['service_time']
+                new_total = route_res['duration'] + service_total
 
                 if new_total <= MAX_MINUTES:
                     delta = new_total - current_total
@@ -575,15 +983,19 @@ def main():
                         best_osrm_res = route_res
                         best_new_total = new_total
                         best_delta = delta
+                        best_estimated_cost = estimated_cost
 
             if best_route_key:
                 t['assigned'] = True
                 driver = best_route_key[0]
 
                 if not day_routes[best_route_key]:
+                    leg_values = route_leg_values(best_osrm_res, 1)
+                    leg_val = leg_values[0] if leg_values else {'duration': best_osrm_res['duration'], 'distance': best_osrm_res['distance']}
                     new_item = {
                         'driver': driver,
                         'driver_label': driver_label(driver),
+                        'depot_code': 'Wugu' if driver.startswith('W') else 'Pingzhen',
                         'day': best_route_key[1],
                         'seq': 1,
                         'task_id': t['task_id'],
@@ -593,8 +1005,8 @@ def main():
                         'service_time_min': round(t['service_time'], 2),
                         'freq': t['freq'],
                         'visit_idx': t['visit_idx'],
-                        'travel_time_min': round(best_osrm_res['duration'], 2),
-                        'travel_dist_km': round(best_osrm_res['distance'], 2),
+                        'travel_time_min': round(leg_val['duration'], 2),
+                        'travel_dist_km': round(leg_val['distance'], 2),
                         'geometry': best_osrm_res['geometry'],
                         'lat': t['lat'],
                         'lon': t['lon']
@@ -603,17 +1015,32 @@ def main():
                     day_routes[best_route_key].append(new_item)
                     driver_week_load[driver] += best_delta
                     driver_used_days[driver] += 1
-                    print(f"  [Final Pass] Assigned Task {t['task_id']} to EMPTY DAY {best_route_key[0]} Day {best_route_key[1]}")
+                    diagnostics.append(build_diagnostic_row(
+                        route_id=f"{driver}-Day{best_route_key[1]}-Final-{len(diagnostics) + 1}",
+                        driver=driver,
+                        route_type='NORMAL Final Pass 空白日',
+                        stop_count=1,
+                        estimated_cost=best_estimated_cost or {},
+                        route_res=best_osrm_res,
+                        service_min=t['service_time'],
+                        note='未分配點補入'
+                    ))
+                    log(f"Final Pass 完成補入空白日: task={t['task_id']} -> {best_route_key[0]} Day {best_route_key[1]}")
                 else:
                     stasks_sorted = sorted(day_routes[best_route_key], key=lambda x: x['seq'])
-                    stasks_sorted[-1]['travel_time_min'] = 0
-                    stasks_sorted[-1]['travel_dist_km'] = 0
-                    stasks_sorted[-1]['geometry'] = None
+                    leg_values = route_leg_values(best_osrm_res, len(stasks_sorted) + 1)
+                    for idx, old_item in enumerate(stasks_sorted):
+                        old_leg = leg_values[idx] if idx < len(leg_values) else {'duration': 0, 'distance': 0}
+                        old_item['travel_time_min'] = round(old_leg['duration'], 2)
+                        old_item['travel_dist_km'] = round(old_leg['distance'], 2)
+                        old_item['geometry'] = None
 
                     new_seq = len(stasks_sorted) + 1
+                    new_leg = leg_values[-1] if leg_values else {'duration': 0, 'distance': 0}
                     new_item = {
                         'driver': driver,
                         'driver_label': driver_label(driver),
+                        'depot_code': 'Wugu' if driver.startswith('W') else 'Pingzhen',
                         'day': best_route_key[1],
                         'seq': new_seq,
                         'task_id': t['task_id'],
@@ -623,8 +1050,8 @@ def main():
                         'service_time_min': round(t['service_time'], 2),
                         'freq': t['freq'],
                         'visit_idx': t['visit_idx'],
-                        'travel_time_min': round(best_osrm_res['duration'], 2),
-                        'travel_dist_km': round(best_osrm_res['distance'], 2),
+                        'travel_time_min': round(new_leg['duration'], 2),
+                        'travel_dist_km': round(new_leg['distance'], 2),
                         'geometry': best_osrm_res['geometry'],
                         'lat': t['lat'],
                         'lon': t['lon']
@@ -632,7 +1059,20 @@ def main():
                     schedule.append(new_item)
                     day_routes[best_route_key].append(new_item)
                     driver_week_load[driver] += best_delta
-                    print(f"  [Final Pass] Appended Task {t['task_id']} to {best_route_key[0]} Day {best_route_key[1]}")
+                    diagnostics.append(build_diagnostic_row(
+                        route_id=f"{driver}-Day{best_route_key[1]}-Final-{len(diagnostics) + 1}",
+                        driver=driver,
+                        route_type='NORMAL Final Pass 插入既有路線',
+                        stop_count=len(stasks_sorted) + 1,
+                        estimated_cost=best_estimated_cost or {},
+                        route_res=best_osrm_res,
+                        service_min=sum(x['service_time_min'] for x in stasks_sorted) + t['service_time'],
+                        note='未分配點補入'
+                    ))
+                    log(f"Final Pass 完成插入既有路線: task={t['task_id']} -> {best_route_key[0]} Day {best_route_key[1]}")
+        log(f"Final Pass 完成: stats={cost_provider.stats_json()}")
+    else:
+        log("Final Pass 跳過: 沒有未分配任務")
 
     # =========================
     # 驗證嚴格條件
@@ -686,16 +1126,13 @@ def main():
     }
 
     base_group = folium.FeatureGroup(name="All Maps Base", show=True).add_to(m)
-    folium.Marker(
-        location=[depot_locations['Wugu']['lat'], depot_locations['Wugu']['lon']],
-        popup="Depot: Wugu",
-        icon=folium.Icon(color='black', icon='home')
-    ).add_to(base_group)
-    folium.Marker(
-        location=[depot_locations['Pingzhen']['lat'], depot_locations['Pingzhen']['lon']],
-        popup="Depot: Pingzhen",
-        icon=folium.Icon(color='black', icon='home')
-    ).add_to(base_group)
+    for depot_code in available_depots:
+        depot_name = os.environ.get("DISPATCH_DEPOT_NAME") if custom_depot_lat is not None and custom_depot_lon is not None else depot_code
+        folium.Marker(
+            location=[depot_locations[depot_code]['lat'], depot_locations[depot_code]['lon']],
+            popup=f"Depot: {depot_name}",
+            icon=folium.Icon(color='black', icon='home')
+        ).add_to(base_group)
 
     for d, days_dict in drivers_dict.items():
         depot = 'Wugu' if d.startswith('W') else 'Pingzhen'
@@ -704,24 +1141,12 @@ def main():
             fg = folium.FeatureGroup(name=f"【新】{d} - Day {day}", show=False)
             day_group = sorted(day_group, key=lambda x: x['seq'])
 
-            last_node = day_group[-1]
-            total_osrm_time = last_node['travel_time_min']
-            total_osrm_dist = last_node['travel_dist_km']
-
-            pts = [(depot_locations[depot]['lat'], depot_locations[depot]['lon'])] + [(r['lat'], r['lon']) for r in day_group]
-            hs_dists = [haversine(pts[i][0], pts[i][1], pts[i+1][0], pts[i+1][1]) for i in range(len(pts)-1)]
-            total_hs_dist = sum(hs_dists)
-
-            dist_factor = total_osrm_dist / total_hs_dist if total_hs_dist > 0 else 1.0
-            time_factor = total_osrm_time / total_hs_dist if total_hs_dist > 0 else 1.0
-
             cum_time = 0.0
             cum_dist = 0.0
 
             for index, row in enumerate(day_group):
-                leg_dist = hs_dists[index] if index < len(hs_dists) else 0
-                cum_dist += leg_dist * dist_factor
-                cum_time += leg_dist * time_factor + row['service_time_min']
+                cum_dist += row.get('travel_dist_km', 0)
+                cum_time += row.get('travel_time_min', 0) + row['service_time_min']
 
                 geom = row['geometry']
                 if geom and isinstance(geom, dict) and 'coordinates' in geom:
@@ -957,8 +1382,53 @@ def main():
     balance_excel_path = os.path.join(current_dir, '../../output/Driver_Weekly_Load_Strict.xlsx')
     balance_df.to_excel(balance_excel_path, index=False)
 
+    diagnostics.extend([
+        {
+            '路線編號': 'CROSS',
+            '司機': '',
+            '路線類型': 'CROSS',
+            '停靠點數': '',
+            '估算距離（公里）': '',
+            'OSRM 真實距離（公里）': '',
+            '距離差異（%）': '',
+            '估算行駛時間（分鐘）': '',
+            'OSRM 真實行駛時間（分鐘）': '',
+            '行駛時間差異（%）': '',
+            '估算總工時（分鐘）': '',
+            'OSRM 總工時（分鐘）': '',
+            '估算是否超過540分鐘': '',
+            'OSRM是否超過540分鐘': '',
+            '成本來源': 'Haversine',
+            '是否使用備援': '否',
+            '備註': 'phase2_scheduler_cross_county.py 暫未改用 OSRM Table/cache',
+        },
+        {
+            '路線編號': 'COMPACT',
+            '司機': '',
+            '路線類型': 'COMPACT',
+            '停靠點數': '',
+            '估算距離（公里）': '',
+            'OSRM 真實距離（公里）': '',
+            '距離差異（%）': '',
+            '估算行駛時間（分鐘）': '',
+            'OSRM 真實行駛時間（分鐘）': '',
+            '行駛時間差異（%）': '',
+            '估算總工時（分鐘）': '',
+            'OSRM 總工時（分鐘）': '',
+            '估算是否超過540分鐘': '',
+            'OSRM是否超過540分鐘': '',
+            '成本來源': 'Haversine',
+            '是否使用備援': '否',
+            '備註': 'phase2_scheduler_cross_county_compact.py 暫未改用 OSRM Table/cache',
+        },
+    ])
+    diagnostics_csv_path = os.path.join(current_dir, '../../output/Route_Cost_Diagnostics.csv')
+    pd.DataFrame(diagnostics).to_csv(diagnostics_csv_path, index=False, encoding='utf-8-sig')
+    log(f"診斷報表輸出完成: {diagnostics_csv_path}")
+
     print("Done! Saved Weekly_Schedule_Summary.xlsx, Daily_Route_Summary.xlsx, Weekly_Routing_Map.html")
-    print("Also saved Weekly_Unassigned_Strict.xlsx and Driver_Weekly_Load_Strict.xlsx")
+    print("Also saved Weekly_Unassigned_Strict.xlsx, Driver_Weekly_Load_Strict.xlsx, and Route_Cost_Diagnostics.csv")
+    log(f"Routing cost provider final stats: {cost_provider.stats_json()}")
 
     print("Exporting route data to JSON...")
     json_path = os.path.abspath(os.path.join(current_dir, '../../output/routes_new.json'))
@@ -982,7 +1452,7 @@ def main():
         items = sorted(items, key=lambda x: x['seq'])
         counties = sorted(set(i['county'] for i in items))
         total_service = sum(i['service_time_min'] for i in items)
-        total_drive = items[-1]['travel_time_min'] if items else 0
+        total_drive = sum(i['travel_time_min'] for i in items)
         total_time = total_service + total_drive
 
         if len(counties) > 1:
