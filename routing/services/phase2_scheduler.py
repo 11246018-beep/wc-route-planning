@@ -10,8 +10,29 @@ import folium.plugins
 from collections import defaultdict
 
 
-DAY_COUNT = 6
-MAX_MINUTES = 540
+def env_int(name, default):
+    try:
+        value = os.environ.get(name)
+        if value is None or str(value).strip() == "":
+            return default
+        return max(int(float(value)), 1)
+    except Exception:
+        return default
+
+
+def env_float(name, default=None):
+    try:
+        value = os.environ.get(name)
+        if value is None or str(value).strip() == "":
+            return default
+        return float(value)
+    except Exception:
+        return default
+
+
+DAY_COUNT = env_int("DISPATCH_SCHEDULE_DAYS", 6)
+MAX_MINUTES = env_int("DISPATCH_DAILY_WORK_MINUTES", 540)
+DEFAULT_SERVICE_MINUTES = env_int("DISPATCH_DEFAULT_SERVICE_MINUTES", 10)
 
 
 class OSRMClient:
@@ -133,8 +154,11 @@ def get_depot(depot_str):
 
 
 def driver_label(code):
+    custom_name = os.environ.get('DISPATCH_DEPOT_NAME') if os.environ.get('DISPATCH_DEPOT_LAT') and os.environ.get('DISPATCH_DEPOT_LON') else ''
     s = str(code or '').upper()
     if s.startswith('P') and s[1:].isdigit():
+        if custom_name:
+            return f"{s}｜{custom_name}{s[1:].lstrip('0') or '0'}"
         return f"{s}｜平鎮{s[1:].lstrip('0') or '0'}"
     if s.startswith('W') and s[1:].isdigit():
         return f"{s}｜五股{s[1:].lstrip('0') or '0'}"
@@ -328,7 +352,9 @@ def main():
         weekly_2 = to_int(row.get('weekly_2'), 0)
         visits = max(1, weekly_1 + weekly_2)
 
-        service_time_total = to_float(row.get('Service_Time'), 0.0)
+        service_time_total = to_float(row.get('Service_Time'), DEFAULT_SERVICE_MINUTES)
+        if service_time_total <= 0:
+            service_time_total = DEFAULT_SERVICE_MINUTES
         service_time_per_visit = service_time_total / visits if visits else service_time_total
 
         for i in range(visits):
@@ -354,8 +380,25 @@ def main():
         'Wugu': {'lat': 25.07154, 'lon': 121.44169},
         'Pingzhen': {'lat': 24.90703, 'lon': 121.226872}
     }
+    custom_depot_lat = env_float("DISPATCH_DEPOT_LAT")
+    custom_depot_lon = env_float("DISPATCH_DEPOT_LON")
+    if custom_depot_lat is not None and custom_depot_lon is not None:
+        depot_locations['Pingzhen'] = {'lat': custom_depot_lat, 'lon': custom_depot_lon}
 
     driver_config = {'Wugu': 2, 'Pingzhen': 12}
+    driver_limit = env_int("DISPATCH_DRIVER_LIMIT", sum(driver_config.values()))
+    if custom_depot_lat is not None and custom_depot_lon is not None:
+        driver_config = {'Wugu': 0, 'Pingzhen': driver_limit}
+    elif driver_limit != sum(driver_config.values()):
+        wugu_count = min(driver_config['Wugu'], driver_limit)
+        driver_config = {'Wugu': wugu_count, 'Pingzhen': max(driver_limit - wugu_count, 0)}
+    available_depots = {code for code, count in driver_config.items() if count > 0}
+    default_depot_code = 'Pingzhen' if 'Pingzhen' in available_depots else next(iter(available_depots), 'Pingzhen')
+
+    if custom_depot_lat is not None and custom_depot_lon is not None and 'Depot' in tasks_df.columns:
+        tasks_df['Depot'] = default_depot_code
+    elif 'Depot' in tasks_df.columns:
+        tasks_df['Depot'] = tasks_df['Depot'].apply(lambda value: value if value in available_depots else default_depot_code)
     driver_names = {
         'Wugu': [f'W{i:02d}' for i in range(1, driver_config['Wugu'] + 1)],
         'Pingzhen': [f'P{i:02d}' for i in range(1, driver_config['Pingzhen'] + 1)],
@@ -450,6 +493,7 @@ def main():
                     schedule.append({
                         'driver': d_name,
                         'driver_label': driver_label(d_name),
+                        'depot_code': depot,
                         'day': day,
                         'seq': i + 1,
                         'task_id': t['task_id'],
@@ -584,6 +628,7 @@ def main():
                     new_item = {
                         'driver': driver,
                         'driver_label': driver_label(driver),
+                        'depot_code': 'Wugu' if driver.startswith('W') else 'Pingzhen',
                         'day': best_route_key[1],
                         'seq': 1,
                         'task_id': t['task_id'],
@@ -614,6 +659,7 @@ def main():
                     new_item = {
                         'driver': driver,
                         'driver_label': driver_label(driver),
+                        'depot_code': 'Wugu' if driver.startswith('W') else 'Pingzhen',
                         'day': best_route_key[1],
                         'seq': new_seq,
                         'task_id': t['task_id'],
@@ -686,16 +732,13 @@ def main():
     }
 
     base_group = folium.FeatureGroup(name="All Maps Base", show=True).add_to(m)
-    folium.Marker(
-        location=[depot_locations['Wugu']['lat'], depot_locations['Wugu']['lon']],
-        popup="Depot: Wugu",
-        icon=folium.Icon(color='black', icon='home')
-    ).add_to(base_group)
-    folium.Marker(
-        location=[depot_locations['Pingzhen']['lat'], depot_locations['Pingzhen']['lon']],
-        popup="Depot: Pingzhen",
-        icon=folium.Icon(color='black', icon='home')
-    ).add_to(base_group)
+    for depot_code in available_depots:
+        depot_name = os.environ.get("DISPATCH_DEPOT_NAME") if custom_depot_lat is not None and custom_depot_lon is not None else depot_code
+        folium.Marker(
+            location=[depot_locations[depot_code]['lat'], depot_locations[depot_code]['lon']],
+            popup=f"Depot: {depot_name}",
+            icon=folium.Icon(color='black', icon='home')
+        ).add_to(base_group)
 
     for d, days_dict in drivers_dict.items():
         depot = 'Wugu' if d.startswith('W') else 'Pingzhen'

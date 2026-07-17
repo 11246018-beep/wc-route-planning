@@ -4,6 +4,7 @@ from datetime import datetime
 from pathlib import Path
 from collections import defaultdict
 import json
+import os
 import re
 
 import pandas as pd
@@ -33,6 +34,19 @@ DEPOT_INFO = {
         "lon": None,
     },
 }
+
+
+def custom_depot_info():
+    lat = to_float(os.environ.get("DISPATCH_DEPOT_LAT"), None)
+    lon = to_float(os.environ.get("DISPATCH_DEPOT_LON"), None)
+    if lat is None or lon is None:
+        return None
+    return {
+        "code": "Custom",
+        "name": os.environ.get("DISPATCH_DEPOT_NAME") or "自訂倉庫",
+        "lat": lat,
+        "lon": lon,
+    }
 
 
 def load_json(path: Path):
@@ -84,8 +98,11 @@ def clean_text(value, default=""):
 
 
 def driver_label(code):
+    custom_depot = custom_depot_info()
     s = str(code or "").upper()
     if s.startswith("P") and s[1:].isdigit():
+        if custom_depot:
+            return f"{s}｜{custom_depot['name']}{s[1:].lstrip('0') or '0'}"
         return f"{s}｜平鎮{s[1:].lstrip('0') or '0'}"
     if s.startswith("W") and s[1:].isdigit():
         return f"{s}｜五股{s[1:].lstrip('0') or '0'}"
@@ -93,6 +110,10 @@ def driver_label(code):
 
 
 def infer_depot_from_driver(driver_code, schedule_slot="", depot_code=""):
+    custom_depot = custom_depot_info()
+    if custom_depot:
+        return custom_depot.copy()
+
     if depot_code in DEPOT_INFO:
         return DEPOT_INFO[depot_code].copy()
 

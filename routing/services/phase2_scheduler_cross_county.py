@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 import json
 import math
+import os
 import re
 
 import pandas as pd
@@ -12,18 +13,57 @@ BASE_DIR = Path(__file__).resolve().parents[2]
 OUTPUT_DIR = BASE_DIR / "output"
 INPUT_CSV = OUTPUT_DIR / "processed_nodes_phase1.csv"
 
-DAY_COUNT = 6
-MAX_MINUTES = 540
+def env_int(name, default):
+    try:
+        value = os.environ.get(name)
+        if value is None or str(value).strip() == "":
+            return default
+        return max(int(float(value)), 1)
+    except Exception:
+        return default
+
+
+def env_float(name, default=None):
+    try:
+        value = os.environ.get(name)
+        if value is None or str(value).strip() == "":
+            return default
+        return float(value)
+    except Exception:
+        return default
+
+
+DAY_COUNT = env_int("DISPATCH_SCHEDULE_DAYS", 6)
+MAX_MINUTES = env_int("DISPATCH_DAILY_WORK_MINUTES", 540)
+DEFAULT_SERVICE_MINUTES = env_int("DISPATCH_DEFAULT_SERVICE_MINUTES", 10)
 
 DEPOTS = {
     "Wugu": {"code": "Wugu", "name": "五股總部", "lat": 25.07154, "lon": 121.44169},
     "Pingzhen": {"code": "Pingzhen", "name": "平鎮總部", "lat": 24.90703, "lon": 121.226872},
 }
+custom_depot_lat = env_float("DISPATCH_DEPOT_LAT")
+custom_depot_lon = env_float("DISPATCH_DEPOT_LON")
+if custom_depot_lat is not None and custom_depot_lon is not None:
+    DEPOTS["Pingzhen"] = {
+        "code": "Pingzhen",
+        "name": os.environ.get("DISPATCH_DEPOT_NAME") or "自訂倉庫",
+        "lat": custom_depot_lat,
+        "lon": custom_depot_lon,
+    }
 
 DRIVER_CONFIG = {
     "Wugu": 2,
     "Pingzhen": 12,
 }
+driver_limit = env_int("DISPATCH_DRIVER_LIMIT", sum(DRIVER_CONFIG.values()))
+if custom_depot_lat is not None and custom_depot_lon is not None:
+    DRIVER_CONFIG = {"Wugu": 0, "Pingzhen": driver_limit}
+elif driver_limit != sum(DRIVER_CONFIG.values()):
+    wugu_count = min(DRIVER_CONFIG["Wugu"], driver_limit)
+    DRIVER_CONFIG = {"Wugu": wugu_count, "Pingzhen": max(driver_limit - wugu_count, 0)}
+
+AVAILABLE_DEPOTS = {code for code, count in DRIVER_CONFIG.items() if count > 0}
+DEFAULT_DEPOT_CODE = "Pingzhen" if "Pingzhen" in AVAILABLE_DEPOTS else next(iter(AVAILABLE_DEPOTS), "Pingzhen")
 
 
 def to_float(value, default=0.0):
@@ -80,6 +120,8 @@ def get_depot(raw):
 
 
 def infer_depot_from_county(county):
+    if custom_depot_lat is not None and custom_depot_lon is not None:
+        return DEFAULT_DEPOT_CODE
     if county in ["台北市", "新北市", "基隆市"]:
         return "Wugu"
     return "Pingzhen"
@@ -155,11 +197,15 @@ def build_tasks(df):
         depot = get_depot(row.get("Depot_Raw"))
         if depot == "Unknown":
             depot = infer_depot_from_county(county)
+        if depot not in AVAILABLE_DEPOTS:
+            depot = DEFAULT_DEPOT_CODE
 
         weekly_1 = to_int(row.get("weekly_1"), 1)
         weekly_2 = to_int(row.get("weekly_2"), 0)
         visits = max(1, weekly_1 + weekly_2)
-        service_time_total = to_float(row.get("Service_Time"), 0.0)
+        service_time_total = to_float(row.get("Service_Time"), DEFAULT_SERVICE_MINUTES)
+        if service_time_total <= 0:
+            service_time_total = DEFAULT_SERVICE_MINUTES
         service_time_per_visit = service_time_total / visits if visits else service_time_total
 
         for visit_idx in range(1, visits + 1):

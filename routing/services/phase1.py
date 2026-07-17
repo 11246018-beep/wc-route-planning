@@ -44,7 +44,7 @@ sys.stdout.reconfigure(encoding='utf-8')
 
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "route_system.settings")
 django.setup()
-from routing.models import ServicePoint
+from routing.models import CompanyProfile, ServicePoint, ServicePointCompanyProfile
 import html  # HTML特殊字元轉義
 import re  # 正則表達式處理
 from dataclasses import dataclass  # 資料類別定義
@@ -169,7 +169,21 @@ def load_from_database():
     """
     print("\n>>> 從資料庫讀取 ServicePoint ...")
 
-    qs = ServicePoint.objects.all().values()
+    company_key = os.environ.get("DISPATCH_COMPANY_KEY", "").strip()
+    qs = ServicePoint.objects.all()
+    if company_key:
+        company = CompanyProfile.objects.filter(key=company_key, is_active=True).first()
+        if company:
+            point_ids = list(
+                ServicePointCompanyProfile.objects.filter(company=company)
+                .values_list("service_point_id", flat=True)
+            )
+            qs = qs.filter(id__in=point_ids)
+            print(f"    公司隔離：{company.name} ({company.key})，點位 {len(point_ids)} 筆")
+        else:
+            print(f"    [WARNING] 找不到公司 {company_key}，改讀全部點位")
+
+    qs = qs.values()
 
     df = pd.DataFrame(list(qs))
 

@@ -11,7 +11,7 @@ BASE_DIR = Path(__file__).resolve().parents[2]
 OUTPUT_DIR = BASE_DIR / "output"
 PROFILES_FILE = OUTPUT_DIR / "driver_profiles.json"
 
-FIXED_SLOT_CONFIG = [
+DEFAULT_FIXED_SLOT_CONFIG = [
     {"slot": "W01", "depot_code": "Wugu", "depot_name": "五股總部", "slot_index": 1},
     {"slot": "W02", "depot_code": "Wugu", "depot_name": "五股總部", "slot_index": 2},
     {"slot": "P01", "depot_code": "Pingzhen", "depot_name": "平鎮總部", "slot_index": 1},
@@ -28,6 +28,46 @@ FIXED_SLOT_CONFIG = [
     {"slot": "P12", "depot_code": "Pingzhen", "depot_name": "平鎮總部", "slot_index": 12},
 ]
 
+
+def env_int(name, default):
+    try:
+        value = os.environ.get(name)
+        if value is None or str(value).strip() == "":
+            return default
+        return max(int(float(value)), 1)
+    except Exception:
+        return default
+
+
+def build_fixed_slot_config():
+    configured_limit = env_int("DISPATCH_DRIVER_LIMIT", len(DEFAULT_FIXED_SLOT_CONFIG))
+    has_custom_depot = bool(os.environ.get("DISPATCH_DEPOT_LAT") and os.environ.get("DISPATCH_DEPOT_LON"))
+    if has_custom_depot:
+        depot_name = os.environ.get("DISPATCH_DEPOT_NAME") or "自訂倉庫"
+        return [
+            {"slot": f"P{i:02d}", "depot_code": "Pingzhen", "depot_name": depot_name, "slot_index": i}
+            for i in range(1, configured_limit + 1)
+        ]
+    if configured_limit == len(DEFAULT_FIXED_SLOT_CONFIG):
+        return list(DEFAULT_FIXED_SLOT_CONFIG)
+    if configured_limit < len(DEFAULT_FIXED_SLOT_CONFIG):
+        return list(DEFAULT_FIXED_SLOT_CONFIG[:configured_limit])
+
+    slots = list(DEFAULT_FIXED_SLOT_CONFIG)
+    next_pingzhen_index = 13
+    while len(slots) < configured_limit:
+        slot = f"P{next_pingzhen_index:02d}"
+        slots.append({
+            "slot": slot,
+            "depot_code": "Pingzhen",
+            "depot_name": os.environ.get("DISPATCH_DEPOT_NAME") or "平鎮總部",
+            "slot_index": next_pingzhen_index,
+        })
+        next_pingzhen_index += 1
+    return slots
+
+
+FIXED_SLOT_CONFIG = build_fixed_slot_config()
 FIXED_SLOT_CODES = [item["slot"] for item in FIXED_SLOT_CONFIG]
 FIXED_SLOT_MAP = {item["slot"]: item for item in FIXED_SLOT_CONFIG}
 DEPOT_SLOT_LIMITS = dict(Counter(item["depot_code"] for item in FIXED_SLOT_CONFIG))
@@ -118,20 +158,33 @@ def format_schedule_driver_label(driver_code, display_name="", schedule_slot="")
     return driver_code
 
 
-def load_profiles():
-    if not PROFILES_FILE.exists():
+def profiles_file(path=None):
+    if path:
+        return Path(path)
+    company_key = str(os.environ.get("DISPATCH_COMPANY_KEY") or "").strip()
+    if company_key:
+        return OUTPUT_DIR / "tenants" / company_key / "driver_profiles.json"
+    return PROFILES_FILE
+
+
+def load_profiles(path=None):
+    file_path = profiles_file(path)
+    if not file_path.exists():
+        if file_path != PROFILES_FILE and PROFILES_FILE.exists():
+            return load_profiles(PROFILES_FILE)
         return {}
     try:
-        with PROFILES_FILE.open("r", encoding="utf-8") as f:
+        with file_path.open("r", encoding="utf-8") as f:
             data = json.load(f)
         return data if isinstance(data, dict) else {}
     except Exception:
         return {}
 
 
-def save_profiles(profiles):
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    with PROFILES_FILE.open("w", encoding="utf-8") as f:
+def save_profiles(profiles, path=None):
+    file_path = profiles_file(path)
+    file_path.parent.mkdir(parents=True, exist_ok=True)
+    with file_path.open("w", encoding="utf-8") as f:
         json.dump(profiles, f, ensure_ascii=False, indent=2)
 
 
@@ -178,7 +231,8 @@ def build_driver_record(driver, profiles):
         "driver_code": code,
         "depot_id": getattr(driver, "depot_id", None),
         "max_minutes": getattr(driver, "max_minutes", None),
-        "password": getattr(driver, "password", ""),
+        "password": "",
+        "has_password": bool(getattr(driver, "password", "")),
         "display_name": display_name,
         "phone": normalize_text(profile.get("phone", "")),
         "note": normalize_text(profile.get("note", "")),
@@ -193,8 +247,8 @@ def build_driver_record(driver, profiles):
     }
 
 
-def build_admin_driver_payload(drivers=None):
-    profiles = load_profiles()
+def build_admin_driver_payload(drivers=None, profiles=None):
+    profiles = profiles if isinstance(profiles, dict) else load_profiles()
     drivers = list(drivers) if drivers is not None else safe_get_all_drivers()
     items = [build_driver_record(driver, profiles) for driver in drivers]
     items.sort(key=lambda item: schedule_sort_key(item.get("schedule_slot"), item.get("driver_code")))
@@ -234,7 +288,7 @@ def build_admin_driver_payload(drivers=None):
     }
 
 
-def validate_driver_constraints(drivers, edit_driver_id, edit_driver_code, is_active, schedule_slot):
+def validate_driver_constraints(drivers, edit_driver_id, edit_driver_code, is_active, schedule_slot, active_limit=None):
     proposed = []
     edit_driver_code = normalize_driver_code(edit_driver_code)
     schedule_slot = normalize_schedule_slot(schedule_slot)
@@ -264,8 +318,9 @@ def validate_driver_constraints(drivers, edit_driver_id, edit_driver_code, is_ac
         )
 
     active_items = [item for item in proposed if item.get("is_active")]
-    if len(active_items) > ACTIVE_DRIVER_LIMIT:
-        return False, f"啟用中的司機帳號最多只能 {ACTIVE_DRIVER_LIMIT} 位，請先停用其他司機再儲存。"
+    limit = int(active_limit or ACTIVE_DRIVER_LIMIT)
+    if len(active_items) > limit:
+        return False, f"啟用中的司機帳號最多只能 {limit} 位，請先停用其他司機再儲存。"
 
     slot_to_driver = {}
     for item in active_items:
@@ -317,20 +372,20 @@ def _slot_owner_priority(item, slot):
     )
 
 
-def get_driver_assignment(driver_code):
+def get_driver_assignment(driver_code, profiles=None):
     target = normalize_driver_code(driver_code)
     if not target:
         return None
 
-    payload = build_admin_driver_payload()
+    payload = build_admin_driver_payload(profiles=profiles)
     for item in payload["drivers"]:
         if normalize_driver_code(item.get("driver_code")) == target:
             return item
     return None
 
 
-def build_schedule_driver_slots():
-    admin_payload = build_admin_driver_payload()
+def build_schedule_driver_slots(profiles=None):
+    admin_payload = build_admin_driver_payload(profiles=profiles)
     drivers = admin_payload["drivers"]
 
     active_candidates = [item for item in drivers if item.get("is_active")]

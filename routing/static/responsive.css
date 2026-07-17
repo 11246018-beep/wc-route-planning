@@ -1,0 +1,246 @@
+/* Shared mobile layout for Dispatch Nav administration pages. */
+@media (max-width: 768px) {
+  html,
+  body {
+    max-width: 100%;
+    overflow-x: hidden;
+  }
+
+  body {
+    padding-bottom: 86px;
+  }
+
+  #soft-sidebar {
+    top: auto !important;
+    right: 8px !important;
+    bottom: 8px !important;
+    left: 8px !important;
+    width: auto !important;
+    height: 68px !important;
+    min-height: 0 !important;
+    border-radius: 18px !important;
+    overflow: hidden !important;
+    z-index: 3000 !important;
+  }
+
+  #soft-sidebar:hover {
+    width: auto !important;
+  }
+
+  #soft-sidebar .sidebar-header {
+    display: none !important;
+  }
+
+  #soft-sidebar .menu-list {
+    height: 100%;
+    padding: 7px !important;
+    display: flex !important;
+    flex-direction: row !important;
+    align-items: center !important;
+    gap: 6px !important;
+    overflow-x: auto !important;
+    overflow-y: hidden !important;
+    scrollbar-width: none;
+  }
+
+  #soft-sidebar .menu-list::-webkit-scrollbar {
+    display: none;
+  }
+
+  #soft-sidebar .menu-item {
+    min-width: 56px !important;
+    width: 56px !important;
+    height: 54px !important;
+    padding: 6px !important;
+    flex: 0 0 56px !important;
+    justify-content: center !important;
+    gap: 0 !important;
+  }
+
+  #soft-sidebar .menu-item .icon-box {
+    margin: 0 !important;
+  }
+
+  #soft-sidebar .menu-item span {
+    display: none !important;
+  }
+
+  #top-nav {
+    position: relative !important;
+    top: auto !important;
+    right: auto !important;
+    left: auto !important;
+    width: calc(100% - 16px) !important;
+    height: auto !important;
+    min-height: 58px !important;
+    margin: 8px !important;
+    padding: 10px 12px !important;
+    flex-wrap: wrap !important;
+    gap: 8px !important;
+  }
+
+  body:has(#soft-sidebar:hover) #top-nav {
+    left: auto !important;
+  }
+
+  .nav-brand {
+    max-width: 100%;
+    font-size: 16px !important;
+  }
+
+  .nav-right,
+  .nav-left,
+  .controls,
+  .actions,
+  .panel-actions,
+  .row-actions,
+  .btns {
+    max-width: 100%;
+    flex-wrap: wrap !important;
+  }
+
+  .page,
+  .page-wrap,
+  .layout,
+  main.page,
+  main.page-wrap {
+    width: 100% !important;
+    max-width: 100% !important;
+    margin: 0 !important;
+    padding: 10px !important;
+    left: auto !important;
+    right: auto !important;
+    transition: none !important;
+  }
+
+  body:has(#soft-sidebar:hover) .page,
+  body:has(#soft-sidebar:hover) .page-wrap,
+  body:has(#soft-sidebar:hover) .layout {
+    margin-left: 0 !important;
+    left: auto !important;
+  }
+
+  .toolbar,
+  .form-grid,
+  .summary-grid,
+  .analysis-grid,
+  .slot-grid,
+  .report-list,
+  .driver-list {
+    grid-template-columns: 1fr !important;
+  }
+
+  .toolbar,
+  .card-head,
+  .topbar {
+    flex-direction: column !important;
+    align-items: stretch !important;
+  }
+
+  .toolbar > *,
+  .field-block,
+  input,
+  select,
+  textarea,
+  button,
+  .btn {
+    max-width: 100%;
+  }
+
+  .table-wrap,
+  .table-container,
+  .card {
+    max-width: 100% !important;
+    overflow-x: auto !important;
+  }
+
+  table {
+    min-width: 760px;
+  }
+
+  .modal-card,
+  .modal-content,
+  .dialog-card {
+    width: calc(100vw - 24px) !important;
+    max-width: calc(100vw - 24px) !important;
+    max-height: calc(100vh - 110px) !important;
+    overflow: auto !important;
+  }
+
+  /* Full-screen map pages */
+  #map {
+    width: 100% !important;
+    min-height: 360px;
+  }
+
+  #floating-panel {
+    top: 78px !important;
+    right: 8px !important;
+    left: 8px !important;
+    width: auto !important;
+    max-height: calc(100vh - 180px) !important;
+    padding: 12px !important;
+  }
+
+  #floating-panel.collapsed {
+    right: 8px !important;
+    left: auto !important;
+    width: 58px !important;
+  }
+
+  #kpi-panel {
+    right: 8px !important;
+    bottom: 84px !important;
+    left: 8px !important;
+    max-width: none !important;
+    padding: 8px !important;
+    gap: 8px !important;
+    overflow-x: auto;
+    flex-wrap: nowrap !important;
+  }
+
+  #kpi-panel .kpi-item {
+    min-width: 72px !important;
+  }
+
+  .layout .map-panel,
+  .layout .map-shell {
+    min-height: 360px !important;
+  }
+
+  .summary-drawer {
+    width: calc(100% - 24px) !important;
+    max-width: calc(100% - 24px) !important;
+  }
+
+  .map-toolbar {
+    right: 10px !important;
+    left: 10px !important;
+    max-width: calc(100% - 20px) !important;
+    flex-wrap: wrap !important;
+  }
+
+  .leaflet-control-zoom {
+    margin-bottom: 78px !important;
+  }
+}
+
+@media (max-width: 480px) {
+  .summary-grid {
+    grid-template-columns: 1fr !important;
+  }
+
+  h1 {
+    font-size: 22px !important;
+  }
+
+  h2,
+  h3 {
+    overflow-wrap: anywhere;
+  }
+
+  .btn,
+  button {
+    min-height: 42px;
+  }
+}
