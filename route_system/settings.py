@@ -27,15 +27,15 @@ SECRET_KEY = os.environ.get('DJANGO_SECRET_KEY', 'django-insecure-7w#+x@h&fyo2%x
 DEBUG = os.environ.get('DJANGO_DEBUG', 'true').strip().lower() in {'1', 'true', 'yes', 'on'}
 
 ALLOWED_HOSTS = [
-    'demo-recommended-carlo-doing.trycloudflare.com',
+    'invisible-jury-evaluate-fairy.trycloudflare.com',
     'localhost',
     '192.168.0.32',
-    '172.16.34.123',
-    '192.168.0.11',
+    '172.16.35.217',
+    '192.168.0.24',
 ]
 ALLOWED_HOSTS += [host.strip() for host in os.environ.get('DJANGO_ALLOWED_HOSTS', '').split(',') if host.strip()]
 CSRF_TRUSTED_ORIGINS = [
-    'https://demo-recommended-carlo-doing.trycloudflare.com',
+    'https://invisible-jury-evaluate-fairy.trycloudflare.com',
 ]
 CSRF_TRUSTED_ORIGINS += [origin.strip() for origin in os.environ.get('DJANGO_CSRF_TRUSTED_ORIGINS', '').split(',') if origin.strip()]
 
