@@ -6,6 +6,7 @@
   <title>Dispatch Nav | 管理者帳號</title>
   <script src="https://unpkg.com/lucide@latest"></script>
   <link href="https://fonts.googleapis.com/css?family=Open+Sans:300,400,600,700" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/responsive.css" />
   <style>
     :root { --primary:#4A90E2; --text:#344767; --muted:#67748e; --line:#e5e7eb; --soft:#f8fafc; --danger:#dc2626; --green:#16a34a; --dark:#344767; }
     * { box-sizing: border-box; }
@@ -49,6 +50,7 @@
       <div class="brand"><div class="icon"><i data-lucide="shield-check"></i></div>Dispatch Nav｜管理者帳號</div>
       <div class="actions">
         <a class="btn-link" href="{% url 'home' %}"><i data-lucide="map"></i>回到地圖</a>
+        <a class="btn-link" href="{% url 'company_settings' %}"><i data-lucide="sliders-horizontal"></i>營運設定</a>
         <a class="btn-link" href="{% url 'admin_action_logs' %}"><i data-lucide="clipboard-list"></i>操作紀錄</a>
         <a class="btn-link" href="{% url 'logout' %}"><i data-lucide="log-out"></i>登出</a>
       </div>
@@ -58,7 +60,7 @@
       <div class="card-head">
         <div>
           <h1>帳號審核與權限管理</h1>
-          <p class="hint">新註冊帳號預設為待審核，必須由高階管理者核准後才能登入。admin 帳號會固定保留高階管理者權限，避免系統被鎖住。</p>
+          <p class="hint"></p>
         </div>
       </div>
       <div class="table-wrap">
@@ -78,7 +80,6 @@
             <tr>
               <td>
                 <div class="username">{{ row.obj.username }}</div>
-                <div class="sub">ID：{{ row.obj.id }}</div>
               </td>
               <td><span class="badge role">{{ row.role }}</span></td>
               <td>
