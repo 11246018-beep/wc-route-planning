@@ -8,28 +8,29 @@ Return code: 0
 
 
 >>> 從資料庫讀取 ServicePoint ...
-✓ 成功讀取 3310 筆資料
+    公司隔離：Dispatch Nav 流動廁所示範公司 (toilet_demo)，點位 3317 筆
+✓ 成功讀取 3317 筆資料
 
 ================================================================================
 >>> [Phase 1] Processing data from Django database
 ================================================================================
-    ✓ 原始資料筆數: 3310
+    ✓ 原始資料筆數: 3317
 
     ────────────────────────────────────────────────────────────
     執行節點濃縮 (Super-Node Aggregation)...
     ────────────────────────────────────────────────────────────
     ✓ 濃縮完成:
-      - 原始工單數: 3310 筆
-      - 濃縮後節點數: 2227 個
-      - 壓縮率: 32.7%
-      - 平均每節點工單數: 1.49 筆
+      - 原始工單數: 3317 筆
+      - 濃縮後節點數: 2234 個
+      - 壓縮率: 32.6%
+      - 平均每節點工單數: 1.48 筆
       - 最多工單的節點: 27 筆
 
     ────────────────────────────────────────────────────────────
     執行錨點吸附 (Highway Anchoring)...
     ────────────────────────────────────────────────────────────
     ✓ 錨點吸附完成:
-      - N1: 1423 個節點
+      - N1: 1430 個節點
       - N3: 330 個節點
       - TH61: 278 個節點
       - TH64: 73 個節點
@@ -38,31 +39,31 @@ Return code: 0
       - TH65: 32 個節點
 
 ================================================================================
->>> 資料處理完成: 3310 筆原始資料 -> 2227 個超級節點
+>>> 資料處理完成: 3317 筆原始資料 -> 2234 個超級節點
 ================================================================================
 
-[OK] CSV exported: C:\Users\USER\Desktop\15.0\route_system_new\route_system\output\processed_nodes_phase1.csv
+[OK] CSV exported: C:\dev\15.0\route_system\output\processed_nodes_phase1.csv
 
 ================================================================================
->>> [Phase 2] 正在繪製互動地圖: C:\Users\USER\Desktop\15.0\route_system_new\route_system\output\maintenance_map_phase1.html
+>>> [Phase 2] 正在繪製互動地圖: C:\dev\15.0\route_system\output\maintenance_map_phase1.html
 ================================================================================
-    ✓ 地圖中心點: (24.97028, 121.25297)
-    ✓ 序號顏色對應: 2227 種序號
+    ✓ 地圖中心點: (24.97051, 121.25383)
+    ✓ 序號顏色對應: 2234 種序號
     正在繪製 40 個交流道錨點...
     正在繪製 2 個倉庫總部...
-    正在渲染 2227 個客戶節點標記...
-      處理進度: 500/2227
-      處理進度: 1000/2227
-      處理進度: 1500/2227
-      處理進度: 2000/2227
-    ✓ 地圖已成功生成: C:\Users\USER\Desktop\15.0\route_system_new\route_system\output\maintenance_map_phase1.html
+    正在渲染 2234 個客戶節點標記...
+      處理進度: 500/2234
+      處理進度: 1000/2234
+      處理進度: 1500/2234
+      處理進度: 2000/2234
+    ✓ 地圖已成功生成: C:\dev\15.0\route_system\output\maintenance_map_phase1.html
 ================================================================================
 
-[OK] Phase1 map exported: C:\Users\USER\Desktop\15.0\route_system_new\route_system\output\maintenance_map_phase1.html
+[OK] Phase1 map exported: C:\dev\15.0\route_system\output\maintenance_map_phase1.html
 [OK] Phase1 statistics:
-  - Original orders: 3310
-  - Aggregated nodes: 2227
-  - Total service time: 27954.5 minutes
+  - Original orders: 3317
+  - Aggregated nodes: 2234
+  - Total service time: 27961.5 minutes
 
 ================================================================================
   STEP 2-NORMAL: Running phase2_scheduler.py
@@ -72,11 +73,11 @@ Return code: 0
   Done! Saved Weekly_Schedule_Summary.xlsx, Daily_Route_Summary.xlsx, Weekly_Routing_Map.html
   Also saved Weekly_Unassigned_Strict.xlsx and Driver_Weekly_Load_Strict.xlsx
   Exporting route data to JSON...
-   routes_new.json generated (at C:\Users\USER\Desktop\15.0\route_system_new\route_system\output\routes_new.json)
-   routes_unassigned_strict.json generated (at C:\Users\USER\Desktop\15.0\route_system_new\route_system\output\routes_unassigned_strict.json)
+   routes_new.json generated (at C:\dev\15.0\route_system\output\routes_new.json)
+   routes_unassigned_strict.json generated (at C:\dev\15.0\route_system\output\routes_unassigned_strict.json)
   ========== STRICT SUMMARY ==========
   Routes used: 78
-  Assigned tasks: 2229
+  Assigned tasks: 2236
   Unassigned tasks: 0
   Cross-county routes: 0
   Overtime routes: 0
@@ -87,12 +88,12 @@ Return code: 0
 ================================================================================
 
 [OK] phase2_scheduler_cross_county.py completed successfully
-  Total tasks generated: 2229
+  Total tasks generated: 2236
   Variant: cross
   Routes: 84
-  Stops: 2229
-  Service minutes: 27954.5
-  Drive minutes: 30985.1
+  Stops: 2236
+  Service minutes: 27961.5
+  Drive minutes: 31026.8
   Cross-county routes: 84
   phase2_scheduler_cross_county.py completed successfully
 
@@ -101,12 +102,12 @@ Return code: 0
 ================================================================================
 
 [OK] phase2_scheduler_cross_county_compact.py completed successfully
-  Total tasks generated: 2229
+  Total tasks generated: 2236
   Variant: compact
   Routes: 84
-  Stops: 850
-  Service minutes: 16926.5
-  Drive minutes: 20517.6
+  Stops: 857
+  Service minutes: 16933.5
+  Drive minutes: 20530.9
   Cross-county routes: 83
   Unassigned tasks: 1379
   phase2_scheduler_cross_county_compact.py completed successfully
@@ -120,14 +121,14 @@ Return code: 0
   - cross routes: 84
   - compact routes: 84
   - old routes: 70
-  - latest report: C:\Users\USER\Desktop\15.0\route_system_new\route_system\output\Dispatch_Report_Latest.xlsx
-  - stamped report: C:\Users\USER\Desktop\15.0\route_system_new\route_system\output\Dispatch_Report_20260521_154559.xlsx
+  - latest report: C:\dev\15.0\route_system\output\Dispatch_Report_Latest.xlsx
+  - stamped report: C:\dev\15.0\route_system\output\Dispatch_Report_20260703_024814.xlsx
 
 ================================================================================
   ALL DONE
 ================================================================================
 
-Total elapsed time: 96.2 seconds
+Total elapsed time: 76.9 seconds
 [OK] 你現在可以回首頁重新整理 Dashboard。
 
 
