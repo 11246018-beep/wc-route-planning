@@ -1,0 +1,30 @@
+{
+  "P01": {
+    "driver_code": "P01",
+    "day": 1,
+    "route_id": "NORMAL-P01-D01",
+    "lat": 25.1094698,
+    "lon": 121.5236672,
+    "use_depot_position": false,
+    "current_stop_seq": 1,
+    "completed_count": 0,
+    "completed_stop_seqs": [],
+    "skipped_stop_seqs": [],
+    "total_count": 24,
+    "status": "navigating",
+    "updated_at": "2026-07-03 02:52:57",
+    "updated_at_iso": "2026-07-03T02:52:57.707916",
+    "reset_progress_at": "2026-06-24T10:24:14.461271",
+    "speed_mps": 0.036964502185583115,
+    "speed_kmh": 0.1,
+    "accuracy_m": 5.488999843597412,
+    "heading": 0.0,
+    "traffic_state": "abnormal_stop",
+    "slow_since_iso": "2026-06-26T10:45:22.892466",
+    "stationary_since_iso": "2026-07-03T02:09:01.674558",
+    "stationary_anchor_lat": 25.1094687,
+    "stationary_anchor_lon": 121.5236594,
+    "low_speed_seconds": 576454,
+    "stationary_seconds": 2636
+  }
+}
