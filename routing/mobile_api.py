@@ -1,6 +1,6 @@
 ﻿from django.http import FileResponse, JsonResponse
 from django.views.decorators.csrf import csrf_exempt
-from .models import Driver, ServicePoint
+from .models import Driver, DriverCompanyProfile, ServicePoint, ServicePointCompanyProfile
 from django.utils import timezone
 from django.db import connection
 
@@ -11,7 +11,8 @@ from ultralytics import YOLO
 
 from .views import OUTPUT_DIR, VARIANT_LABELS, load_variant_payload, to_float, to_int, write_admin_log, is_manager
 from .security import authenticate_driver_token, find_driver_by_code, is_manager_user
-from .services.driver_roster import get_driver_assignment, normalize_schedule_slot
+from .services.driver_roster import get_driver_assignment, load_profiles, normalize_schedule_slot
+from .tenant import company_output_dir, get_driver_company, get_user_company, tenant_file_path
 
 import json
 from datetime import datetime
@@ -66,10 +67,10 @@ def ensure_driver_code_from_token(request, driver_code):
     driver_code = (driver_code or "").strip().upper()
     driver, error_response = require_driver_request(request, driver_code or None)
     if error_response is not None:
-        return driver_code, error_response
+        return driver_code, error_response, None
     if not driver_code and driver is not None:
         driver_code = str(driver.driver_code or "").strip().upper()
-    return driver_code, None
+    return driver_code, None, driver
 
 
 def valid_uploaded_image(image):
@@ -123,10 +124,10 @@ def find_driver_route(routes, driver_code, day):
     return None
 
 
-def get_route_lookup_code(driver_code, routes):
+def get_route_lookup_code(driver_code, routes, profiles=None):
     """Resolve an app account to its fixed schedule slot when routes are slot-based."""
     target_code = (driver_code or "").strip().upper()
-    assignment = get_driver_assignment(target_code)
+    assignment = get_driver_assignment(target_code, profiles=profiles)
     schedule_slot = normalize_schedule_slot((assignment or {}).get("schedule_slot"))
     direct_routes = [
         route for route in routes
@@ -191,6 +192,108 @@ def find_report_index(reports, report_id):
     return -1
 
 
+def is_platform_admin_user(user):
+    return bool(
+        user
+        and user.is_authenticated
+        and user.username == "system_admin"
+        and user.is_superuser
+    )
+
+
+def admin_company_for_request(request):
+    user = getattr(request, "user", None)
+    if not user or not user.is_authenticated:
+        return False
+    if is_platform_admin_user(user):
+        return None
+    return get_user_company(user)
+
+
+def admin_driver_codes_for_request(request):
+    company = admin_company_for_request(request)
+    if company is False:
+        return []
+    if company is None:
+        return None
+    if not getattr(company, "id", None):
+        return []
+    return [
+        str(code or "").strip().upper()
+        for code in DriverCompanyProfile.objects.filter(company=company).values_list("driver_code", flat=True)
+        if str(code or "").strip()
+    ]
+
+
+def admin_company_point_addresses_for_request(request):
+    company = admin_company_for_request(request)
+    if company is False:
+        return []
+    if company is None:
+        return None
+    if not getattr(company, "id", None):
+        return []
+
+    point_ids = list(
+        ServicePointCompanyProfile.objects
+        .filter(company=company)
+        .values_list("service_point_id", flat=True)
+    )
+    if not point_ids:
+        return []
+
+    return [
+        str(address or "").strip()
+        for address in ServicePoint.objects
+        .filter(id__in=point_ids)
+        .exclude(address__isnull=True)
+        .values_list("address", flat=True)
+        if str(address or "").strip()
+    ]
+
+
+def append_driver_code_filter(sql, params, request, column="driver_code"):
+    company = admin_company_for_request(request)
+    if company is not None and company is not False and getattr(company, "id", None):
+        codes = admin_driver_codes_for_request(request)
+        addresses = admin_company_point_addresses_for_request(request)
+        params.append(company.key)
+        if codes and addresses:
+            params.extend([codes, addresses])
+            return (
+                f"{sql} AND (company_key = %s OR "
+                f"(NULLIF(company_key, '') IS NULL AND UPPER({column}) = ANY(%s) AND stop_address = ANY(%s)))"
+            ), params
+        return f"{sql} AND company_key = %s", params
+    codes = admin_driver_codes_for_request(request)
+    if codes is None:
+        return sql, params
+    if not codes:
+        return f"{sql} AND 1=0", params
+    params.append(codes)
+    return f"{sql} AND UPPER({column}) = ANY(%s)", params
+
+
+def report_company_key(report):
+    key = str(report.get("company_key") or "").strip()
+    if key:
+        return key
+    driver_code = str(report.get("driver_code") or "").strip().upper()
+    if not driver_code:
+        return ""
+    company = get_driver_company(driver_code)
+    return company.key if getattr(company, "id", None) else ""
+
+
+def report_belongs_to_admin_company(report, request):
+    company = admin_company_for_request(request)
+    if company is False:
+        return False
+    if company is None:
+        return True
+    return report_company_key(report) == company.key
+
+
 def driver_task_api(request):
     if request.method != "GET":
         return JsonResponse({"ok": False, "message": "只支援 GET"}, status=405)
@@ -202,10 +305,13 @@ def driver_task_api(request):
     if not driver_code:
         return JsonResponse({"ok": False, "message": "缺少 driver_code"}, status=400)
 
-    _, auth_error = require_driver_request(request, driver_code)
+    driver, auth_error = require_driver_request(request, driver_code)
     if auth_error is not None:
         return auth_error
-    payload = load_variant_payload(variant)
+    company = get_driver_company(driver or driver_code)
+    output_dir = company_output_dir(OUTPUT_DIR, company)
+    profiles = load_profiles(output_dir / "driver_profiles.json")
+    payload = load_variant_payload(variant, output_dir, company=company)
     if not payload["ok"]:
         return JsonResponse(
             {
@@ -217,7 +323,7 @@ def driver_task_api(request):
         )
 
     routes = payload["routes"]
-    route_lookup_code = get_route_lookup_code(driver_code, routes)
+    route_lookup_code = get_route_lookup_code(driver_code, routes, profiles)
     matched_route = find_driver_route(routes, route_lookup_code, day)
 
     if matched_route is None:
@@ -297,7 +403,7 @@ def driver_report_api(request):
         if not driver_code:
             return cors_json({"ok": False, "message": "缺少 driver_code"}, status=400)
 
-        _, auth_error = require_driver_request(request, driver_code)
+        driver, auth_error = require_driver_request(request, driver_code)
         if auth_error is not None:
             return auth_error
         if not report_type:
@@ -306,6 +412,7 @@ def driver_report_api(request):
         if not content:
             return cors_json({"ok": False, "message": "請輸入回報內容"}, status=400)
 
+        company = get_driver_company(driver or driver_code)
         reports = load_reports()
         report_id = get_next_report_id(reports)
         now = datetime.now()
@@ -313,6 +420,8 @@ def driver_report_api(request):
         new_report = {
             "id": report_id,
             "driver_code": driver_code,
+            "company_key": company.key if getattr(company, "id", None) else "",
+            "company_name": company.name if getattr(company, "id", None) else "",
             "day": day,
             "stop_seq": stop_seq,
             "route_id": route_id,
@@ -345,9 +454,12 @@ def driver_reports_api(request):
         return JsonResponse({"ok": False, "message": "只支援 GET"}, status=405)
 
     driver_code = (request.GET.get("driver_code") or "").strip().upper()
-    driver_code, auth_error = ensure_driver_code_from_token(request, driver_code)
-    if auth_error is not None:
-        return auth_error
+    backend_user = getattr(request, "user", None)
+    token_driver = None
+    if not backend_user or not backend_user.is_authenticated:
+        driver_code, auth_error, token_driver = ensure_driver_code_from_token(request, driver_code)
+        if auth_error is not None:
+            return auth_error
     limit = to_int(request.GET.get("limit"), 10)
 
     reports = load_reports()
@@ -356,6 +468,17 @@ def driver_reports_api(request):
         reports = [
             item for item in reports
             if str(item.get("driver_code") or "").strip().upper() == driver_code
+        ]
+    if token_driver is not None:
+        company = get_driver_company(token_driver)
+        reports = [
+            item for item in reports
+            if report_company_key(item) == company.key
+        ]
+    if backend_user and backend_user.is_authenticated:
+        reports = [
+            item for item in reports
+            if report_belongs_to_admin_company(item, request)
         ]
 
     if limit <= 0:
@@ -408,6 +531,9 @@ def driver_report_update_api(request):
         if idx < 0:
             return cors_json({"ok": False, "message": "找不到要編輯的回報"}, status=404)
 
+        if not report_belongs_to_admin_company(reports[idx], request):
+            return cors_json({"ok": False, "message": "不能編輯其他公司的回報"}, status=403)
+
         reports[idx]["report_type"] = report_type
         reports[idx]["content"] = content
         reports[idx]["stop_seq"] = stop_seq
@@ -457,6 +583,9 @@ def driver_report_delete_api(request):
         if idx < 0:
             return cors_json({"ok": False, "message": "找不到要刪除的回報"}, status=404)
 
+        if not report_belongs_to_admin_company(reports[idx], request):
+            return cors_json({"ok": False, "message": "不能刪除其他公司的回報"}, status=403)
+
         deleted_report = reports.pop(idx)
         save_reports(reports)
         write_admin_log(request, "刪除問題回報", report_id, {"driver_code": deleted_report.get("driver_code"), "report_type": deleted_report.get("report_type")})
@@ -493,7 +622,8 @@ def export_excel_api(request):
             status=400,
         )
 
-    file_path = OUTPUT_DIR / filename
+    company = get_user_company(getattr(request, "user", None))
+    file_path = tenant_file_path(OUTPUT_DIR, company, filename, fallback=False)
     if not file_path.exists():
         return JsonResponse(
             {
@@ -519,8 +649,10 @@ def admin_cleaning_records_api(request):
     params = []
 
     if driver_code:
-        sql += " AND driver_code = %s"
-        params.append(driver_code)
+        sql += " AND UPPER(driver_code) = %s"
+        params.append(driver_code.upper())
+
+    sql, params = append_driver_code_filter(sql, params, request)
 
     if photo_type:
         sql += " AND photo_type = %s"
@@ -552,7 +684,12 @@ def admin_cleaning_records_api(request):
     }
     point_coordinates = {}
     if addresses:
-        for point in ServicePoint.objects.filter(address__in=addresses).values("address", "lat", "lon"):
+        company = get_user_company(getattr(request, "user", None))
+        point_qs = ServicePoint.objects.filter(address__in=addresses)
+        if getattr(company, "id", None):
+            point_ids = ServicePointCompanyProfile.objects.filter(company=company).values_list("service_point_id", flat=True)
+            point_qs = point_qs.filter(id__in=point_ids)
+        for point in point_qs.values("address", "lat", "lon"):
             address = str(point.get("address") or "").strip()
             if address and address not in point_coordinates:
                 point_coordinates[address] = {
@@ -642,9 +779,14 @@ def admin_cleaning_record_delete_api(request):
 
     try:
         with connection.cursor() as cursor:
-            cursor.execute(
-                "DELETE FROM uploaded_photos WHERE id::text = ANY(%s) RETURNING id",
+            sql, params = append_driver_code_filter(
+                "DELETE FROM uploaded_photos WHERE id::text = ANY(%s)",
                 [ids],
+                request,
+            )
+            cursor.execute(
+                f"{sql} RETURNING id",
+                params,
             )
             deleted_rows = cursor.fetchall()
 
@@ -673,8 +815,7 @@ def admin_cleaning_summary_api(request):
     if request.method != "GET":
         return cors_json({"ok": False, "message": "只支援 POST"}, status=405)
 
-    with connection.cursor() as cursor:
-        cursor.execute("""
+    summary_sql = """
             SELECT
                 COUNT(*) AS total_count,
                 AVG(CASE
@@ -690,18 +831,29 @@ def admin_cleaning_summary_api(request):
                     ELSE 0
                 END) AS fail_count
             FROM uploaded_photos
-        """)
-        summary_row = cursor.fetchone()
+            WHERE 1=1
+    """
+    summary_sql, summary_params = append_driver_code_filter(summary_sql, [], request)
 
-        cursor.execute("""
+    driver_sql = """
             SELECT
                 driver_code,
                 COUNT(*) FILTER (WHERE photo_type = 'after') AS total_after,
                 COUNT(*) FILTER (WHERE photo_type = 'after' AND is_qualified = true) AS qualified_after
             FROM uploaded_photos
+            WHERE 1=1
+    """
+    driver_sql, driver_params = append_driver_code_filter(driver_sql, [], request)
+    driver_sql += """
             GROUP BY driver_code
             ORDER BY driver_code
-        """)
+    """
+
+    with connection.cursor() as cursor:
+        cursor.execute(summary_sql, summary_params)
+        summary_row = cursor.fetchone()
+
+        cursor.execute(driver_sql, driver_params)
         driver_rows = cursor.fetchall()
 
     total_count = summary_row[0] or 0
@@ -747,10 +899,9 @@ def detect_cleaning_ai_api(request):
     if not driver_code:
         return cors_json({"ok": False, "message": "缺少 driver_code"}, status=400)
 
-    _, auth_error = require_driver_request(request, driver_code)
+    driver, auth_error = require_driver_request(request, driver_code)
     if auth_error is not None:
         return auth_error
-    driver = find_driver_by_code(driver_code)
     if not driver:
         return cors_json({"ok": False, "message": "找不到司機帳號"}, status=404)
 

@@ -3,6 +3,7 @@ from django.contrib.auth.hashers import check_password, identify_hasher, make_pa
 from django.core import signing
 
 from .models import Driver
+from .tenant import find_driver_for_company, get_driver_company
 
 
 DRIVER_TOKEN_SALT = "dispatch-nav-driver-token"
@@ -29,10 +30,13 @@ def normalize_driver_code(value):
     return str(value or "").strip().upper()
 
 
-def find_driver_by_code(driver_code):
+def find_driver_by_code(driver_code, company_key=""):
     target_code = normalize_driver_code(driver_code)
     if not target_code:
         return None
+
+    if company_key:
+        return find_driver_for_company(target_code, company_key=company_key)
 
     driver = Driver.objects.filter(driver_code__iexact=target_code).first()
     if driver:
@@ -60,10 +64,13 @@ def verify_driver_password(driver, raw_password):
     return False
 
 
-def make_driver_token(driver):
+def make_driver_token(driver, company=None):
+    company = company or get_driver_company(driver)
     return signing.dumps(
         {
+            "driver_id": getattr(driver, "id", None),
             "driver_code": normalize_driver_code(driver.driver_code),
+            "company_key": getattr(company, "key", ""),
             "password_hash": driver.password or "",
         },
         salt=DRIVER_TOKEN_SALT,
@@ -82,7 +89,7 @@ def get_driver_token_from_request(request):
     ).strip()
 
 
-def authenticate_driver_token(request, expected_driver_code=None):
+def authenticate_driver_token(request, expected_driver_code=None, expected_company_key=None):
     token = get_driver_token_from_request(request)
     if not token:
         return None, "缺少司機登入 token"
@@ -101,8 +108,13 @@ def authenticate_driver_token(request, expected_driver_code=None):
     token_driver_code = normalize_driver_code(payload.get("driver_code"))
     if expected_driver_code and token_driver_code != normalize_driver_code(expected_driver_code):
         return None, "司機 token 與 driver_code 不一致"
+    if expected_company_key and payload.get("company_key") != expected_company_key:
+        return None, "司機 token 與公司不一致"
 
-    driver = find_driver_by_code(token_driver_code)
+    driver_id = payload.get("driver_id")
+    driver = Driver.objects.filter(id=driver_id).first() if driver_id else None
+    if driver is None:
+        driver = find_driver_by_code(token_driver_code, payload.get("company_key") or "")
     if not driver:
         return None, "找不到司機帳號"
 
