@@ -86,7 +86,7 @@
     .forest-wrap { position: relative; min-height: 205px; padding: 24px 10px 0; }
     .soil { position: absolute; left: 0; right: 0; bottom: 0; height: 46px; background: linear-gradient(180deg, #9a6038, var(--soil)); border-radius: 100% 100% 0 0 / 42% 42% 0 0; }
     .forest { position: relative; z-index: 2; display: flex; align-items: flex-end; justify-content: center; flex-wrap: wrap; gap: 10px; min-height: 150px; padding-bottom: 22px; }
-    .tree { width: 42px; height: 92px; position: relative; animation: treeGrow .95s ease-out both; animation-delay: calc(var(--i) * 70ms); transform-origin: 50% 100%; }
+    .tree { width: 42px; height: 92px; position: relative; animation: treeGrow .95s ease-out both; animation-delay: calc(var(--i) * 70ms); transform-origin: 50% 100%; --tree-scale: 1; }
     .tree::before { content: ""; position: absolute; left: 18px; bottom: 0; width: 7px; height: 44px; border-radius: 5px; background: #8b5a2b; }
     .tree::after {
       content: ""; position: absolute; left: 3px; bottom: 30px; width: 36px; height: 42px;
@@ -94,12 +94,12 @@
       box-shadow: -10px 12px 0 -5px #16a34a, 10px 14px 0 -6px #4ade80;
     }
     @keyframes treeGrow {
-      from { transform: translateY(42px) scale(.35); opacity: 0; }
-      70% { transform: translateY(-4px) scale(1.04); opacity: 1; }
-      to { transform: translateY(0) scale(1); opacity: 1; }
+      from { transform: translateY(42px) scale(calc(var(--tree-scale) * .35)); opacity: 0; }
+      70% { transform: translateY(-4px) scale(calc(var(--tree-scale) * 1.04)); opacity: 1; }
+      to { transform: translateY(0) scale(var(--tree-scale)); opacity: 1; }
     }
     .tree-note { text-align: center; color: var(--muted); font-weight: 700; margin-top: 12px; }
-    .equiv-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+    .equiv-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
     .equiv-card { border: 1px solid var(--border); border-radius: 8px; padding: 16px; background: #fff; min-height: 118px; }
     .equiv-card .icon { color: var(--green); margin-bottom: 10px; }
     .equiv-card .label { color: var(--muted); font-size: 12px; font-weight: 800; }
@@ -130,6 +130,7 @@
     <span>Dispatch Nav</span>
   </div>
   <div class="menu-list">
+    {% include "routing/_sidebar_items.html" %}
     <a href="{% url 'home' %}" class="menu-item"><div class="icon-box"><i data-lucide="home" size="18"></i></div><span>主要地圖</span></a>
     <a href="{% url 'live_monitor_page' %}" class="menu-item"><div class="icon-box"><i data-lucide="map-pinned" size="18"></i></div><span>即時監控</span></a>
     <a href="{% url 'report_page' %}" class="menu-item"><div class="icon-box"><i data-lucide="triangle-alert" size="18"></i></div><span>問題回報</span></a>
@@ -161,12 +162,10 @@
   <div class="toolbar">
     <div>
       <h1>路線最佳化減碳成果</h1>
-      <div class="muted">依目前登入公司的路線輸出與 ESG 設定即時換算。</div>
     </div>
     <div class="variant-tabs">
       <button class="variant-btn active" data-variant="normal" type="button">不跨縣市</button>
       <button class="variant-btn" data-variant="cross" type="button">可跨縣市</button>
-      <button class="variant-btn" data-variant="compact" type="button">跨縣市精簡版</button>
     </div>
   </div>
 
@@ -182,7 +181,7 @@
         <div class="hero-kpi">
           <div class="kpi"><div class="label">減少 CO2e</div><div class="value" id="savedCo2">-</div></div>
           <div class="kpi"><div class="label">相當於種植</div><div class="value" id="treeCount">-</div></div>
-          <div class="kpi"><div class="label">減少里程</div><div class="value" id="savedDistance">-</div></div>
+          <div class="kpi"><div class="label">實際減少路線里程</div><div class="value" id="savedDistance">-</div></div>
         </div>
         <div class="forest-wrap">
           <div class="forest" id="forest"></div>
@@ -194,14 +193,14 @@
 
     <section class="panel">
       <div class="panel-head">
-        <div class="panel-title"><i data-lucide="scale"></i> 生活化換算</div>
+        <div class="panel-title"><i data-lucide="scale"></i> 碳排生活化換算</div>
       </div>
       <div class="panel-body">
+        <p class="muted" style="margin:0 0 14px;">以下換算僅為估算值，實際情況可能因使用方式而有所不同</p>
         <div class="equiv-grid">
-          <div class="equiv-card"><i class="icon" data-lucide="car"></i><div class="label">約少開汽車距離</div><div class="value" id="carKm">-</div></div>
-          <div class="equiv-card"><i class="icon" data-lucide="fuel"></i><div class="label">約少消耗汽油</div><div class="value" id="gasolineLiter">-</div></div>
-          <div class="equiv-card"><i class="icon" data-lucide="package"></i><div class="label">約等於 500ml PET 瓶碳排</div><div class="value" id="petBottle">-</div></div>
-          <div class="equiv-card"><i class="icon" data-lucide="smartphone-charging"></i><div class="label">約等於手機充電碳排</div><div class="value" id="phoneCharge">-</div></div>
+          <div class="equiv-card"><i class="icon" data-lucide="fuel"></i><div class="label">約當減少汽油使用量</div><div class="value" id="gasolineLiter">-</div></div>
+          <div class="equiv-card"><i class="icon" data-lucide="package"></i><div class="label">相當於減少 500 mL 寶特瓶的碳排放</div><div class="value" id="petBottle">-</div></div>
+          <div class="equiv-card"><i class="icon" data-lucide="smartphone-charging"></i><div class="label">相當於減少手機充電的碳排放</div><div class="value" id="phoneCharge">-</div></div>
         </div>
       </div>
     </section>
@@ -242,7 +241,7 @@ lucide.createIcons();
 
 const els = Object.fromEntries([
   "warningBox", "variantLabel", "savedCo2", "treeCount", "savedDistance", "forest", "treeNote",
-  "carKm", "gasolineLiter", "petBottle", "phoneCharge", "fileUsed", "routeCount", "stopCount",
+  "gasolineLiter", "petBottle", "phoneCharge", "fileUsed", "routeCount", "stopCount",
   "totalDistance", "totalCo2", "baselineDistance", "baselineCo2", "savedPct", "factor", "esgNote", "sourceList"
 ].map(id => [id, document.getElementById(id)]));
 
@@ -258,21 +257,24 @@ function fmtInt(value, suffix = "") {
   return `${Math.round(num).toLocaleString("zh-TW")}${suffix}`;
 }
 
-function renderForest(count, multiplier) {
+function renderForest(count, multiplier, totalTreeCount = count) {
   els.forest.innerHTML = "";
   const safeCount = Math.max(0, Math.min(Number(count) || 0, 18));
-  for (let i = 0; i < safeCount; i += 1) {
+  const visibleTrees = Math.ceil(safeCount);
+  const fraction = safeCount - Math.floor(safeCount);
+  for (let i = 0; i < visibleTrees; i += 1) {
     const tree = document.createElement("div");
     tree.className = "tree";
     tree.style.setProperty("--i", i);
+    if (fraction > 0 && i === visibleTrees - 1) tree.style.setProperty("--tree-scale", Math.max(fraction, .08).toFixed(2));
     els.forest.appendChild(tree);
   }
   if (!safeCount) {
     els.treeNote.textContent = "目前沒有可具象化的減碳量。";
   } else if ((Number(multiplier) || 1) > 1) {
-    els.treeNote.textContent = `畫面每棵樹約代表 ${fmtInt(multiplier)} 棵樹的一年吸收量。`;
+    els.treeNote.textContent = `本次減碳量約相當於 ${fmt(totalTreeCount, 1)} 棵樹一年的吸收量；圖中每棵樹代表約 ${fmtInt(multiplier)} 棵樹。`;
   } else {
-    els.treeNote.textContent = "每棵樹約代表 1 棵樹的一年吸收量。";
+    els.treeNote.textContent = `本次減碳量約相當於 ${fmt(totalTreeCount, 1)} 棵樹一年的吸收量。`;
   }
 }
 
@@ -292,7 +294,6 @@ async function loadEsg(variant = "normal") {
     els.savedCo2.textContent = fmt(esg.saved_co2_kg, 1, " kg");
     els.treeCount.textContent = fmt(eq.tree_count_year, 1, " 棵");
     els.savedDistance.textContent = fmt(esg.saved_distance_km, 1, " km");
-    els.carKm.textContent = fmt(eq.car_km_equivalent, 1, " km");
     els.gasolineLiter.textContent = fmt(eq.gasoline_liter_equivalent, 1, " L");
     els.petBottle.textContent = fmtInt(eq.pet_bottle_500ml_equivalent, " 支");
     els.phoneCharge.textContent = fmtInt(eq.smartphone_charge_equivalent, " 次");
@@ -305,7 +306,11 @@ async function loadEsg(variant = "normal") {
     els.savedPct.textContent = fmt(esg.saved_pct, 1, "%");
     els.factor.textContent = fmt(esg.emission_factor_kg_per_km, 3, " kg/km");
     els.esgNote.textContent = `${esg.note || ""} ${eq.note || ""}`.trim();
-    renderForest(eq.tree_display_count, eq.tree_multiplier);
+    renderForest(
+      (Number(eq.tree_multiplier) || 1) > 1 ? eq.tree_display_count : eq.tree_count_year,
+      eq.tree_multiplier,
+      eq.tree_count_year,
+    );
 
     const sources = eq.sources || {};
     els.sourceList.innerHTML = "";
