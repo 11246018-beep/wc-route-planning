@@ -8,6 +8,7 @@
   <script src="https://unpkg.com/lucide@latest"></script>
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <link href="https://fonts.googleapis.com/css?family=Open+Sans:300,400,600,700" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/responsive.css" />
   <style>
     :root {
       --primary: #4A90E2;
@@ -405,6 +406,18 @@
       padding: 8px 12px;
       font-weight: 700;
       cursor: pointer;
+    }
+
+    .stop-code-badge {
+      display: inline-flex;
+      margin-bottom: 5px;
+      padding: 3px 8px;
+      border-radius: 999px;
+      background: #eef3ff;
+      color: #315fd4;
+      font-size: 12px;
+      font-weight: 700;
+      white-space: nowrap;
     }
 
     .empty-box {
@@ -831,7 +844,6 @@
         <div>
           <h3 class="table-title">清掃紀錄清單</h3>
           <div class="small-text">
-            保留完整紀錄查詢功能，並支援查看照片與單筆詳細 AI 判定資訊。
           </div>
         </div>
         <button class="btn gray" type="button" onclick="window.location.href='/cleaning-report/'">
@@ -927,6 +939,7 @@
 
     const CAN_MANAGE_RECORDS = document.body.dataset.canManageRecords === 'true';
     let allRecords = [];
+    let renderedRecordGroups = [];
     let photoCompareMap = null;
     let photoCompareLayer = null;
 
@@ -1016,6 +1029,9 @@
         is_qualified: raw.is_qualified,
         risk_reason: raw.risk_reason || raw.reason || '-',
         point_key: raw.point_key || '-',
+        day: raw.day,
+        route_id: raw.route_id || '',
+        stop_seq: raw.stop_seq,
         point_lat: raw.point_lat,
         point_lon: raw.point_lon,
         photo_lat: raw.photo_lat,
@@ -1304,11 +1320,20 @@ function renderTable(records) {
 
   records.forEach(record => {
     const dateOnly = String(record.created_at || '').split(' ')[0];
-    const key = `${record.driver_code}__${record.stop_address}__${dateOnly}`;
+    const hasStopIdentity = record.route_id && Number(record.stop_seq) > 0;
+    const hasPointIdentity = record.point_key && record.point_key !== '-';
+    const key = hasStopIdentity
+      ? `${record.route_id}__stop_${record.stop_seq}__${dateOnly}`
+      : hasPointIdentity
+        ? `${record.driver_code}__${record.point_key}__${dateOnly}`
+        : `${record.driver_code}__${record.stop_address}__${dateOnly}`;
 
     if (!grouped[key]) {
       grouped[key] = {
+        group_key: key,
         driver_code: record.driver_code || '-',
+        route_id: record.route_id || '',
+        stop_seq: Number(record.stop_seq) || 0,
         date: dateOnly || '-',
         display_time: formatRecordDateTime(record.created_at),
         stop_address: record.stop_address || '-',
@@ -1334,28 +1359,32 @@ function renderTable(records) {
   });
 
   const rows = Object.values(grouped);
+  renderedRecordGroups = rows;
 
   if (!rows.length) {
     tbody.innerHTML = `<tr><td colspan="7" class="empty-box">載入中...</td></tr>`;
     return;
   }
 
-  tbody.innerHTML = rows.map((row) => {
+  tbody.innerHTML = rows.map((row, rowIndex) => {
     const before = row.before;
     const after = row.after;
+    const stopLabel = row.stop_seq > 0
+      ? `${row.driver_code} 第 ${row.stop_seq} 站`
+      : row.driver_code;
 
     return `
       <tr>
         <td>${escapeHtml(row.driver_code)}</td>
         <td>${escapeHtml(row.display_time)}</td>
-        <td>${escapeHtml(row.stop_address)}</td>
+        <td><span class="stop-code-badge">${escapeHtml(stopLabel)}</span><br>${escapeHtml(row.stop_address)}</td>
         <td>${getBeforeHtml(before)}</td>
         <td>${getAfterHtml(after)}</td>
         <td>
           <button
             type="button"
             class="thumbnail-btn"
-            onclick="showFlowModal('${row.driver_code}', '${row.date}', '${row.stop_address}', '${row.display_time}')"
+            onclick="showFlowModal(${rowIndex})"
           >
             查看
           </button>
@@ -1377,15 +1406,12 @@ function renderTable(records) {
   }).join('');
 }
 
-    function showFlowModal(driverCode, date, address, displayTime) {
-      const matchedRecords = allRecords.filter(record => {
-        const recordDate = String(record.created_at || '').split(' ')[0];
-        return (
-          String(record.driver_code) === String(driverCode) &&
-          String(record.stop_address || '-') === String(address) &&
-          recordDate === String(date)
-        );
-      });
+    function showFlowModal(rowIndex) {
+      const group = renderedRecordGroups[rowIndex];
+      if (!group) return;
+      const driverCode = group.driver_code;
+      const address = group.stop_address;
+      const matchedRecords = [group.before, group.after].filter(Boolean);
 
       const before = matchedRecords.find(r => r.photo_type === 'before') || null;
       const after = matchedRecords.find(r => r.photo_type === 'after') || null;
@@ -1417,7 +1443,9 @@ function renderTable(records) {
 
       imageWrap.innerHTML = html;
 
-      document.getElementById('modalDriver').textContent = driverCode || '-';
+      document.getElementById('modalDriver').textContent = group.stop_seq > 0
+        ? `${driverCode} 第 ${group.stop_seq} 站`
+        : (driverCode || '-');
       document.getElementById('modalBeforeTime').textContent = before ? formatRecordDateTime(before.created_at) : '-';
       document.getElementById('modalAfterTime').textContent = after ? formatRecordDateTime(after.created_at) : '-';
       document.getElementById('modalAddress').textContent = address || '-';
@@ -1686,4 +1714,3 @@ function renderTable(records) {
   </script>
 </body>
 </html>
-
