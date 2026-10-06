@@ -1,4 +1,4 @@
-﻿from pathlib import Path
+from pathlib import Path
 import json
 import math
 import subprocess
@@ -7,11 +7,15 @@ import threading
 import time
 import os
 import shutil
+import re
+import requests
+import csv
+import hashlib
 
 from django.core.paginator import Paginator
 from django.db.models import Q
-from django.db import connection, connections
-from django.http import JsonResponse
+from django.db import connection, connections, transaction
+from django.http import HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt, ensure_csrf_cookie
@@ -30,6 +34,7 @@ from .models import (
     ServicePoint,
     ServicePointCompanyProfile,
     Driver,
+    CleaningRecord,
     UserCompanyProfile,
 )
 from .services.driver_roster import get_driver_assignment, normalize_schedule_slot, schedule_sort_key
@@ -45,6 +50,7 @@ from .tenant import (
     find_driver_for_company,
     get_user_company,
     normalize_company_key,
+    resolve_company_key,
     serialize_company,
     tenant_file_path,
 )
@@ -505,6 +511,31 @@ ESG_CO2_KG_PER_KM = 0.21
 ESG_FUEL_KM_PER_LITER = 10.0
 ESG_BASELINE_FILE = "old_routes.json"
 
+# ESG equivalency constants are kept in Python so templates only render values.
+# Sources:
+# - U.S. EPA Greenhouse Gas Equivalencies Calculator, calculations updated with
+#   2022/2024 factors: gasoline 8,887 g CO2/gallon, passenger vehicle
+#   3.93e-4 metric tons CO2e/mile, urban tree seedling 0.060 metric tons
+#   CO2/year, smartphone charge 1.24e-5 metric tons CO2.
+# - 500 ml PET bottle is a conservative demo estimate from commonly cited LCA
+#   ranges for PET bottled water packaging; it is labeled as an approximation
+#   in the UI because product-specific life-cycle results vary.
+ESG_EQUIVALENTS = {
+    "tree_absorption_kg_per_year": 60.0,
+    "gasoline_kg_co2_per_liter": 8.887 / 3.78541,
+    "car_kg_co2_per_km": (3.93e-4 * 1000) / 1.60934,
+    "pet_bottle_kg_co2_per_500ml": 0.063,
+    "smartphone_charge_kg_co2": 0.0124,
+}
+
+ESG_EQUIVALENT_SOURCES = {
+    "tree_absorption_kg_per_year": "U.S. EPA Greenhouse Gas Equivalencies Calculator：都市樹苗成長 10 年平均約 0.060 metric ton CO2/棵/年。",
+    "gasoline_kg_co2_per_liter": "U.S. EPA Greenhouse Gas Equivalencies Calculator：汽油 8,887 g CO2/gallon，換算約 2.35 kg CO2/L。",
+    "car_kg_co2_per_km": "U.S. EPA Greenhouse Gas Equivalencies Calculator：乘用車約 3.93e-4 metric tons CO2e/mile，換算約 0.244 kg CO2e/km。",
+    "pet_bottle_kg_co2_per_500ml": "500ml PET 寶特瓶展示估算：採 0.063 kg CO2e/瓶作保守換算；實際值會依瓶重、回收料比例與生命週期邊界不同而變動。",
+    "smartphone_charge_kg_co2": "U.S. EPA Greenhouse Gas Equivalencies Calculator：智慧型手機充電約 1.24e-5 metric tons CO2/次。",
+}
+
 DEFAULT_SCHEDULE_SETTINGS = {
     "default_route_variant": "normal",
     "daily_work_minutes": 540,
@@ -681,7 +712,7 @@ def _run_scheduler_background(variant, output_dir=None, company_key="", settings
             timeout=3600,
         )
 
-        log_path = OUTPUT_DIR / "run_all_last.log"
+        log_path = output_dir / "run_all_last.log"
         inner_log_text = ""
         if log_path.exists():
             try:
@@ -700,8 +731,6 @@ def _run_scheduler_background(variant, output_dir=None, company_key="", settings
         log_path.write_text("".join(log_text), encoding="utf-8")
 
         if result.returncode == 0:
-            if output_dir != OUTPUT_DIR:
-                copy_scheduler_outputs_to_tenant(output_dir)
             company = find_company_by_key(company_key) if company_key else None
             run_meta = extract_variant_run_meta(variant, output_dir, company=company)
             _set_run_state(
@@ -1022,12 +1051,42 @@ def build_esg_summary(routes, variant, output_dir=None, settings=None):
     }
 
 
+def build_esg_equivalents(esg):
+    saved_co2 = max(to_float((esg or {}).get("saved_co2_kg")) or 0.0, 0.0)
+    saved_distance = max(to_float((esg or {}).get("saved_distance_km")) or 0.0, 0.0)
+
+    def div(value, factor, digits=1):
+        factor = to_float(factor) or 0.0
+        if factor <= 0:
+            return 0.0
+        return round(value / factor, digits)
+
+    tree_count = div(saved_co2, ESG_EQUIVALENTS["tree_absorption_kg_per_year"], 1)
+    display_tree_count = min(18, int(math.ceil(tree_count))) if tree_count > 0 else 0
+    tree_multiplier = max(1, int(math.ceil(tree_count / display_tree_count))) if display_tree_count else 0
+
+    return {
+        "saved_co2_kg": round(saved_co2, 2),
+        "saved_distance_km": round(saved_distance, 2),
+        "tree_count_year": tree_count,
+        "tree_display_count": display_tree_count,
+        "tree_multiplier": tree_multiplier,
+        "car_km_equivalent": div(saved_co2, ESG_EQUIVALENTS["car_kg_co2_per_km"], 1),
+        "gasoline_liter_equivalent": div(saved_co2, ESG_EQUIVALENTS["gasoline_kg_co2_per_liter"], 1),
+        "pet_bottle_500ml_equivalent": int(round(div(saved_co2, ESG_EQUIVALENTS["pet_bottle_kg_co2_per_500ml"], 0))),
+        "smartphone_charge_equivalent": int(round(div(saved_co2, ESG_EQUIVALENTS["smartphone_charge_kg_co2"], 0))),
+        "constants": {key: round(value, 5) for key, value in ESG_EQUIVALENTS.items()},
+        "sources": ESG_EQUIVALENT_SOURCES,
+        "note": "以下皆為約等於的展示換算，正式 ESG 報告仍應依車種、油耗、能源與產品生命週期邊界校正。",
+    }
+
+
 def get_current_service_point_count(company=None):
     """回傳目前資料庫 service_points 的即時筆數，避免畫面沿用舊 JSON meta 的歷史最大值。"""
     try:
         if company is not None:
             return int(company_service_points_queryset(company).count())
-        return int(ServicePoint.objects.count())
+        return 0
     except Exception:
         return 0
 
@@ -1061,12 +1120,19 @@ def company_service_point_ids(company):
 def company_service_points_queryset(company):
     ids = company_service_point_ids(company)
     if ids is None:
-        return ServicePoint.objects.all()
+        return ServicePoint.objects.none()
     return ServicePoint.objects.filter(id__in=ids)
 
 
 def current_company_service_points_queryset(request):
     return company_service_points_queryset(get_user_company(request.user))
+
+
+@login_required(login_url="login")
+def esg_page(request):
+    return render(request, "routing/esg.html", {
+        "company": get_user_company(request.user),
+    })
 
 
 def bind_service_point_to_company(service_point, company):
@@ -1173,12 +1239,1950 @@ def load_old_payload(output_dir=None):
     }
 
 
+def _route_adjustment_candidates(company, variant="normal"):
+    output_dir = company_output_dir(OUTPUT_DIR, company)
+    payload = load_variant_payload(variant, output_dir, company=company)
+    routes = payload.get("routes") or []
+    route_index = {str(route.get("route_id") or ""): route for route in routes}
+    scheduled_signatures = set()
+    scheduled_node_ids = set()
+    for route in routes:
+        for stop in route.get("stops") or []:
+            scheduled_node_ids.add(str(stop.get("node_id") or "").strip())
+            scheduled_signatures.add((
+                str(stop.get("address") or "").strip(),
+                round(to_float(stop.get("lat")) or 0, 5),
+                round(to_float(stop.get("lon")) or 0, 5),
+            ))
+
+    scheduled_original_names = set()
+    processed_path = output_dir / "processed_nodes_phase1.csv"
+    if processed_path.exists():
+        try:
+            processed_df = pd.read_csv(processed_path)
+            for _, row in processed_df.iterrows():
+                if str(row.get("Node_ID") or "").strip() not in scheduled_node_ids:
+                    continue
+                for value in str(row.get("Original_ID") or "").split("|"):
+                    if value.strip():
+                        scheduled_original_names.add(value.strip())
+        except Exception:
+            scheduled_original_names = set()
+
+    journal = ai_load_json(output_dir / "route_adjustments.json", {}) or {}
+    rescheduled_keys = set(journal.get("rescheduled_candidate_keys") or [])
+    rescheduled_details = journal.get("rescheduled_details") or {}
+    for history_entry in journal.get("history") or []:
+        if history_entry.get("undone"):
+            continue
+        for inserted_item in history_entry.get("inserted") or []:
+            inserted_key = str(inserted_item.get("candidate_key") or "")
+            if inserted_key and inserted_key not in rescheduled_details:
+                rescheduled_details[inserted_key] = {
+                    "route_id": inserted_item.get("route_id"), "driver": inserted_item.get("driver"),
+                    "day": inserted_item.get("day"), "position": inserted_item.get("position"),
+                    "added_minutes": inserted_item.get("added_minutes"), "updated_at": history_entry.get("updated_at"),
+                }
+    # Older journals can retain a candidate key after its insertion history or
+    # destination detail has disappeared (for example after a full rebuild).
+    # Such an orphan must not hide a newly skipped stop from the pending list.
+    rescheduled_keys.intersection_update(rescheduled_details.keys())
+    skipped = []
+    live_data = ai_load_json(output_dir / "driver_live_status.json", {}) or {}
+    for driver_code, live in live_data.items():
+        route = route_index.get(str(live.get("route_id") or ""))
+        if route is None:
+            day = to_int(live.get("day"), 0)
+            route = next((item for item in routes if str(item.get("driver") or "").upper() == str(driver_code).upper() and to_int(item.get("day"), 0) == day), None)
+        if not route:
+            continue
+        stops_by_seq = {to_int(stop.get("seq"), 0): stop for stop in route.get("stops") or []}
+        for seq in live.get("skipped_stop_seqs") or []:
+            seq = to_int(seq, 0)
+            stop = stops_by_seq.get(seq)
+            if not stop:
+                continue
+            key = f"skipped:{route.get('route_id')}:{seq}:{stop.get('node_id')}"
+            skipped.append({
+                "candidate_key": key,
+                "source": "skipped",
+                "source_label": "司機跳過",
+                "driver": driver_code,
+                "original_day": route.get("day"),
+                "original_seq": seq,
+                "node_id": stop.get("node_id"),
+                "name": stop.get("node_id") or stop.get("address"),
+                "address": stop.get("address"),
+                "lat": stop.get("lat"),
+                "lon": stop.get("lon"),
+                "county": stop.get("county") or _county_from_address(stop.get("address")),
+                "service_min": to_float(stop.get("service_min")) or 10,
+                "depot_code": str((route.get("depot") or {}).get("code") or ""),
+                "visit_count": 1,
+                "already_rescheduled": key in rescheduled_keys,
+                "rescheduled_to": rescheduled_details.get(key),
+            })
+
+    new_points = []
+    for point in company_service_points_queryset(company).order_by("-created_at", "-id"):
+        signature = (
+            str(point.address or "").strip(),
+            round(to_float(point.lat) or 0, 5),
+            round(to_float(point.lon) or 0, 5),
+        )
+        if (
+            signature in scheduled_signatures
+            or str(point.client_name or "").strip() in scheduled_original_names
+            or not point.lat
+            or not point.lon
+        ):
+            continue
+        key = f"point:{point.id}"
+        visits = max(1, int(bool(point.weekly_1)) + int(bool(point.weekly_2)))
+        depot_text = str(point.depot or "").strip().lower()
+        depot_code = "Wugu" if ("五股" in depot_text or "wugu" in depot_text) else ("Pingzhen" if ("平鎮" in depot_text or "pingzhen" in depot_text) else "")
+        new_points.append({
+            "candidate_key": key,
+            "source": "new_point",
+            "source_label": "尚未排入點位",
+            "point_id": point.id,
+            "node_id": f"SP_{point.id}",
+            "name": point.client_name or f"點位 {point.id}",
+            "address": point.address or "",
+            "lat": point.lat,
+            "lon": point.lon,
+            "county": _county_from_address(point.address),
+            "service_min": to_float(point.service_time) or 10,
+            "depot_code": depot_code,
+            "visit_count": visits,
+            "already_rescheduled": key in rescheduled_keys,
+            "rescheduled_to": rescheduled_details.get(key),
+        })
+    return payload, skipped, new_points
+
+
+@login_required(login_url="login")
+@user_passes_test(is_manager, login_url="home")
+@ensure_csrf_cookie
+def route_adjustments_page(request):
+    company = get_user_company(request.user)
+    depots = [
+        serialize_company_depot(depot)
+        for depot in CompanyDepot.objects.filter(company=company, is_active=True).order_by("sort_order", "id")
+    ]
+    # Route output is authoritative for operational depot coordinates and repairs old swapped values.
+    route_payload = ai_load_json(company_output_dir(OUTPUT_DIR, company) / VARIANT_FILES["normal"], {}) or {}
+    route_depots = {}
+    for route in route_payload.get("routes") or []:
+        depot = route.get("depot") or {}
+        code = str(depot.get("code") or "").strip()
+        if code and to_float(depot.get("lat")) is not None and to_float(depot.get("lon")) is not None:
+            route_depots.setdefault(code.lower(), {
+                "id": None, "code": code, "name": depot.get("name") or code, "address": "",
+                "lat": to_float(depot.get("lat")), "lon": to_float(depot.get("lon")),
+                "is_active": True, "sort_order": len(route_depots) + 1,
+            })
+    if route_depots:
+        database_by_code = {str(item.get("code") or "").lower(): item for item in depots}
+        depots = [{**database_by_code.get(code, {}), **route_depot} for code, route_depot in route_depots.items()]
+    return render(
+        request,
+        "routing/route_adjustments.html",
+        {"company": serialize_company(company), "depots": depots},
+    )
+
+
+@login_required(login_url="login")
+def api_route_adjustment_candidates(request):
+    company = get_user_company(request.user)
+    variant = request.GET.get("variant") or "normal"
+    if variant not in VARIANT_LABELS:
+        variant = "normal"
+    payload, skipped, new_points = _route_adjustment_candidates(company, variant)
+    return JsonResponse({
+        "ok": bool(payload.get("ok")),
+        "warning": payload.get("warning") or "",
+        "variant": variant,
+        "skipped": skipped,
+        "new_points": new_points,
+        "skipped_count": len(skipped),
+        "new_point_count": len(new_points),
+        "rescheduled": [item for item in [*skipped, *new_points] if item.get("already_rescheduled")],
+        "rescheduled_count": sum(1 for item in [*skipped, *new_points] if item.get("already_rescheduled")),
+    })
+
+
+def _route_file_version(path):
+    path = Path(path)
+    return hashlib.sha256(path.read_bytes()).hexdigest() if path.exists() else ""
+
+
+def _active_adjustment_route_ids(output_dir):
+    live_data = ai_load_json(Path(output_dir) / "driver_live_status.json", {}) or {}
+    locked = set()
+    for live in live_data.values():
+        route_id = str(live.get("route_id") or "").strip()
+        status = str(live.get("status") or "idle").lower()
+        current_seq = to_int(live.get("current_stop_seq"), 0)
+        has_progress = bool(
+            current_seq > 1
+            or to_int(live.get("completed_count"), 0) > 0
+            or live.get("completed_stop_seqs")
+            or live.get("skipped_stop_seqs")
+        )
+        if route_id and (has_progress or status not in {"", "idle", "offline", "ready"}):
+            locked.add(route_id)
+    return locked
+
+
+def _cleanup_route_backups(route_path, keep=30):
+    route_path = Path(route_path)
+    backups = sorted(route_path.parent.glob(f"{route_path.stem}.before_incremental_*{route_path.suffix}"),
+                     key=lambda p: p.stat().st_mtime, reverse=True)
+    for old in backups[max(int(keep), 1):]:
+        old.unlink(missing_ok=True)
+
+
+@require_POST
+@login_required(login_url="login")
+@user_passes_test(is_manager, login_url="home")
+def api_apply_route_adjustments(request):
+    try:
+        body = json.loads(request.body or "{}")
+    except json.JSONDecodeError:
+        return JsonResponse({"ok": False, "message": "JSON 格式錯誤。"}, status=400)
+    company = get_user_company(request.user)
+    variant = str(body.get("variant") or "normal")
+    if variant not in VARIANT_LABELS:
+        variant = "normal"
+    selected_keys = {str(value) for value in body.get("candidate_keys") or []}
+    start_day = max(1, min(to_int(body.get("start_day"), 1), 7))
+    if not selected_keys:
+        return JsonResponse({"ok": False, "message": "請至少選擇一個點位。"}, status=400)
+
+    payload, skipped, new_points = _route_adjustment_candidates(company, variant)
+    if not payload.get("ok"):
+        return JsonResponse({"ok": False, "message": payload.get("warning") or "找不到路線資料。"}, status=404)
+    candidates = [item for item in [*skipped, *new_points] if item.get("candidate_key") in selected_keys and not item.get("already_rescheduled")]
+    if not candidates:
+        return JsonResponse({"ok": False, "message": "選擇的點位已經補排或目前不可使用。"}, status=400)
+
+    output_dir = company_output_dir(OUTPUT_DIR, company)
+    route_path = output_dir / VARIANT_FILES[variant]
+    current_version = _route_file_version(route_path)
+    if not body.get("preview") and body.get("route_version") != current_version:
+        return JsonResponse({"ok": False, "conflict": True, "message": "路線已被其他人更新，請重新預覽後再套用。"}, status=409)
+
+    from .services.incremental_scheduler import insert_candidates, write_payload_atomic
+    settings = get_company_schedule_settings(company)
+    daily_limit = float(getattr(settings, "daily_work_minutes", 540) or 540)
+    live_data = ai_load_json(company_output_dir(OUTPUT_DIR, company) / "driver_live_status.json", {}) or {}
+    locked_prefixes = {}
+    for live in live_data.values():
+        route_id = str(live.get("route_id") or "")
+        if not route_id:
+            continue
+        protected_seqs = [
+            to_int(live.get("current_stop_seq"), 0),
+            *[to_int(value, 0) for value in live.get("completed_stop_seqs") or []],
+            *[to_int(value, 0) for value in live.get("skipped_stop_seqs") or []],
+        ]
+        locked_prefixes[route_id] = max(protected_seqs or [0])
+    updated, inserted, unassigned = insert_candidates(
+        payload,
+        candidates,
+        start_day=start_day,
+        max_minutes=daily_limit,
+        locked_prefixes=locked_prefixes,
+        excluded_route_ids=_active_adjustment_route_ids(output_dir),
+        allow_cross_county=bool(body.get("allow_cross_county")),
+    )
+    route_before = {str(route.get("route_id")): to_float((route.get("metrics") or {}).get("total_min")) or 0 for route in payload.get("routes") or []}
+    original_route_by_id = {str(route.get("route_id")): route for route in payload.get("routes") or []}
+    route_after = {str(route.get("route_id")): to_float((route.get("metrics") or {}).get("total_min")) or 0 for route in updated.get("routes") or []}
+    preview_rows = [{**item, "before_total_min": round(route_before.get(str(item.get("route_id")), 0), 2),
+                     "after_total_min": round(route_after.get(str(item.get("route_id")), 0), 2)} for item in inserted]
+    candidate_by_key = {str(item.get("candidate_key")): item for item in candidates}
+    updated_by_id = {str(route.get("route_id")): route for route in updated.get("routes") or []}
+    for row in preview_rows:
+        candidate = candidate_by_key.get(str(row.get("candidate_key"))) or {}
+        target_route = updated_by_id.get(str(row.get("route_id"))) or {}
+        row["point_coord"] = [to_float(candidate.get("lat")), to_float(candidate.get("lon"))]
+        row["depot_code"] = str((target_route.get("depot") or {}).get("code") or "")
+        row["route_coords"] = [[to_float((target_route.get("depot") or {}).get("lat")), to_float((target_route.get("depot") or {}).get("lon"))],
+                               *[[to_float(stop.get("lat")), to_float(stop.get("lon"))] for stop in target_route.get("stops") or []]]
+        original_route = original_route_by_id.get(str(row.get("route_id"))) or {}
+        row["original_stop_coords"] = [[to_float(stop.get("lat")), to_float(stop.get("lon"))] for stop in original_route.get("stops") or []]
+    if body.get("preview"):
+        from .services.routing_cost_provider import RoutingCostProvider
+        geometry_provider = RoutingCostProvider()
+        try:
+            for row in preview_rows:
+                geometry = geometry_provider.route_geometry(row.get("route_coords") or [])
+                row["route_geometry"] = geometry.get("coordinates") or row.get("route_coords") or []
+                row["geometry_fallback"] = bool(geometry.get("used_fallback"))
+        finally:
+            geometry_provider.close()
+        return JsonResponse({"ok": True, "preview": True, "message": f"可排入 {len(inserted)} 個任務，{len(unassigned)} 個無法排入。",
+                             "inserted": preview_rows, "unassigned": unassigned, "route_version": current_version,
+                             "has_fallback": any(item.get("used_fallback") for item in inserted)})
+    if not inserted:
+        return JsonResponse({"ok": False, "message": "沒有符合條件的後續路線，正式路線未變更。請嘗試較早的起始日，或勾選必要時允許跨縣市。",
+                             "unassigned": unassigned}, status=400)
+    affected_route_ids = {str(item.get("route_id") or "") for item in inserted}
+    overtime_route_ids = sorted(
+        route_id for route_id in affected_route_ids
+        if route_after.get(route_id, 0.0) > daily_limit + 1e-9
+    )
+    if overtime_route_ids:
+        return JsonResponse({
+            "ok": False,
+            "message": "補排後工時超過每日上限，已取消套用。請重新預覽其他日期或路線。",
+            "overtime_route_ids": overtime_route_ids,
+            "daily_limit": daily_limit,
+        }, status=409)
+    route_backup = write_payload_atomic(route_path, updated)
+    _cleanup_route_backups(route_path, 30)
+
+    journal_path = output_dir / "route_adjustments.json"
+    journal = ai_load_json(journal_path, {}) or {}
+    rescheduled = set(journal.get("rescheduled_candidate_keys") or [])
+    rescheduled.update(item.get("candidate_key") for item in inserted if item.get("candidate_key"))
+    journal["rescheduled_candidate_keys"] = sorted(rescheduled)
+    details = journal.get("rescheduled_details") or {}
+    for item in inserted:
+        if item.get("candidate_key"):
+            details[str(item["candidate_key"])] = {
+                "route_id": item.get("route_id"), "driver": item.get("driver"), "day": item.get("day"),
+                "position": item.get("position"), "added_minutes": item.get("added_minutes"),
+                "updated_at": timezone.localtime(timezone.now()).isoformat(),
+            }
+    journal["rescheduled_details"] = details
+    history_entry = {
+        "updated_at": timezone.localtime(timezone.now()).isoformat(),
+        "action": "incremental_insert",
+        "variant": variant,
+        "start_day": start_day,
+        "inserted": inserted,
+        "unassigned": unassigned,
+        "route_backup": route_backup.name if route_backup else "",
+        "undone": False,
+    }
+    journal.setdefault("history", []).append(history_entry)
+    write_payload_atomic(journal_path, journal)
+    write_admin_log(request, "增量調整後續路線", variant, {"start_day": start_day, "inserted_count": len(inserted), "unassigned_count": len(unassigned)})
+    return JsonResponse({"ok": True, "message": f"已補排 {len(inserted)} 個清掃任務。", "inserted": inserted, "unassigned": unassigned})
+
+
+@login_required(login_url="login")
+def export_skipped_stops(request):
+    company = get_user_company(request.user)
+    variant = request.GET.get("variant") or "normal"
+    _, skipped, _ = _route_adjustment_candidates(company, variant)
+    response = HttpResponse(content_type="text/csv; charset=utf-8")
+    response["Content-Disposition"] = 'attachment; filename="skipped_cleaning_points.csv"'
+    response.write("\ufeff")
+    writer = csv.writer(response)
+    writer.writerow(["司機", "原天數", "原站序", "點位", "地址", "緯度", "經度", "服務分鐘", "是否已補排"])
+    for item in skipped:
+        writer.writerow([item.get("driver"), item.get("original_day"), item.get("original_seq"), item.get("name"), item.get("address"), item.get("lat"), item.get("lon"), item.get("service_min"), "是" if item.get("already_rescheduled") else "否"])
+    return response
+
+
+@login_required(login_url="login")
+def api_low_workload_routes(request):
+    company = get_user_company(request.user)
+    variant = request.GET.get("variant") or "normal"
+    if variant not in VARIANT_LABELS:
+        variant = "normal"
+    threshold = max(1, min(to_int(request.GET.get("threshold"), 180), 540))
+    output_dir = company_output_dir(OUTPUT_DIR, company)
+    payload = load_variant_payload(variant, output_dir, company=company)
+    if not payload.get("ok"):
+        return JsonResponse({"ok": False, "message": payload.get("warning") or "找不到路線資料。"}, status=404)
+    from .services.incremental_scheduler import low_workload_routes, recommend_merge_targets
+    settings = get_company_schedule_settings(company)
+    items = low_workload_routes(payload, threshold, getattr(settings, "daily_work_minutes", 540) or 540)
+    locked = _active_adjustment_route_ids(output_dir)
+    items = [item for item in items if str(item.get("route_id")) not in locked]
+    for item in items:
+        item["target_routes"] = [target for target in item.get("target_routes") or [] if str(target.get("route_id")) not in locked]
+        item["recommendations"] = recommend_merge_targets(
+            payload, item.get("route_id"), [target.get("route_id") for target in item["target_routes"]],
+            getattr(settings, "daily_work_minutes", 540) or 540, limit=3,
+            # Show safe same-depot cross-county exceptions when normal mode
+            # has no same-county destination. Exact OSRM work time is still a
+            # hard limit and the UI labels the exception before confirmation.
+            allow_cross_county=True,
+        )
+    return JsonResponse({"ok": True, "variant": variant, "threshold_minutes": threshold,
+                         "count": len(items), "routes": items, "locked_route_count": len(locked),
+                         "route_version": _route_file_version(output_dir / VARIANT_FILES[variant])})
+
+
+@require_POST
+@login_required(login_url="login")
+@user_passes_test(is_manager, login_url="home")
+def api_merge_low_workload_route(request):
+    try:
+        body = json.loads(request.body or "{}")
+    except json.JSONDecodeError:
+        return JsonResponse({"ok": False, "message": "JSON 格式錯誤。"}, status=400)
+    company = get_user_company(request.user)
+    variant = str(body.get("variant") or "normal")
+    if variant not in VARIANT_LABELS:
+        variant = "normal"
+    source_route_id = str(body.get("source_route_id") or "").strip()
+    target_route_id = str(body.get("target_route_id") or "").strip()
+    if not source_route_id or not target_route_id:
+        return JsonResponse({"ok": False, "message": "請選擇來源與目標路線。"}, status=400)
+    output_dir = company_output_dir(OUTPUT_DIR, company)
+    payload = load_variant_payload(variant, output_dir, company=company)
+    if not payload.get("ok"):
+        return JsonResponse({"ok": False, "message": payload.get("warning") or "找不到路線資料。"}, status=404)
+    settings = get_company_schedule_settings(company)
+    route_path = output_dir / VARIANT_FILES[variant]
+    current_version = _route_file_version(route_path)
+    locked = _active_adjustment_route_ids(output_dir)
+    if source_route_id in locked or target_route_id in locked:
+        return JsonResponse({"ok": False, "message": "來源或目標路線已出車或正在執行，不能調整。"}, status=409)
+    if not body.get("preview") and body.get("route_version") != current_version:
+        return JsonResponse({"ok": False, "conflict": True, "message": "路線已被其他人更新，請重新預覽後再套用。"}, status=409)
+    from .services.incremental_scheduler import move_route_stops, write_payload_atomic
+    try:
+        updated, summary = move_route_stops(payload, source_route_id, target_route_id,
+                                            getattr(settings, "daily_work_minutes", 540) or 540,
+                                            allow_cross_county=bool(body.get("allow_cross_county")))
+    except ValueError as exc:
+        return JsonResponse({"ok": False, "message": str(exc)}, status=400)
+    if body.get("preview"):
+        target_preview = next((route for route in updated.get("routes") or [] if str(route.get("route_id")) == target_route_id), {})
+        source_preview = next((route for route in payload.get("routes") or [] if str(route.get("route_id")) == source_route_id), {})
+        summary["depot_code"] = str((target_preview.get("depot") or {}).get("code") or "")
+        summary["route_coords"] = [[to_float((target_preview.get("depot") or {}).get("lat")), to_float((target_preview.get("depot") or {}).get("lon"))],
+                                   *[[to_float(stop.get("lat")), to_float(stop.get("lon"))] for stop in target_preview.get("stops") or []]]
+        summary["moved_coords"] = [[to_float(stop.get("lat")), to_float(stop.get("lon"))] for stop in source_preview.get("stops") or []]
+        return JsonResponse({"ok": True, "preview": True, "message": "預覽完成，尚未修改正式路線。",
+                             "summary": summary, "route_version": current_version})
+    route_backup = write_payload_atomic(route_path, updated)
+    _cleanup_route_backups(route_path, 30)
+    journal_path = output_dir / "route_adjustments.json"
+    journal = ai_load_json(journal_path, {}) or {}
+    journal.setdefault("history", []).append({
+        "updated_at": timezone.localtime(timezone.now()).isoformat(), "action": "low_workload_merge",
+        "variant": variant, "summary": summary, "route_backup": route_backup.name if route_backup else "", "undone": False,
+    })
+    write_payload_atomic(journal_path, journal)
+    write_admin_log(request, "合併低工時路線", variant, summary)
+    return JsonResponse({"ok": True,
+                         "message": f"已將 {summary['moved_stop_count']} 個點位合併至 {target_route_id}，新工時約 {summary['target_total_min']} 分鐘。",
+                         "summary": summary})
+
+
+@require_POST
+@login_required(login_url="login")
+@user_passes_test(is_manager, login_url="home")
+def api_undo_route_adjustment(request):
+    try:
+        body = json.loads(request.body or "{}")
+    except json.JSONDecodeError:
+        return JsonResponse({"ok": False, "message": "JSON 格式錯誤。"}, status=400)
+    company = get_user_company(request.user)
+    variant = str(body.get("variant") or "normal")
+    if variant not in VARIANT_LABELS:
+        variant = "normal"
+    output_dir = company_output_dir(OUTPUT_DIR, company).resolve()
+    journal_path = output_dir / "route_adjustments.json"
+    journal = ai_load_json(journal_path, {}) or {}
+    history = journal.get("history") or []
+    adjustment_id = str(body.get("adjustment_id") or "")
+    entry = next((item for item in reversed(history) if item.get("variant") == variant and not item.get("undone")
+                  and item.get("route_backup") and (not adjustment_id or str(item.get("updated_at")) == adjustment_id)), None)
+    if not entry:
+        return JsonResponse({"ok": False, "message": "目前沒有可復原的調整。"}, status=404)
+    backup = (output_dir / Path(str(entry["route_backup"])).name).resolve()
+    if backup.parent != output_dir or not backup.exists():
+        return JsonResponse({"ok": False, "message": "找不到這次調整的備份檔，無法復原。"}, status=404)
+    try:
+        restored = json.loads(backup.read_text(encoding="utf-8"))
+    except Exception:
+        return JsonResponse({"ok": False, "message": "備份檔內容無法讀取。"}, status=500)
+    from .services.incremental_scheduler import write_payload_atomic
+    write_payload_atomic(output_dir / VARIANT_FILES[variant], restored)
+    selected_index = history.index(entry)
+    affected = [item for item in history[selected_index:] if item.get("variant") == variant and not item.get("undone")]
+    undone_at = timezone.localtime(timezone.now()).isoformat()
+    undone_keys = set()
+    for affected_entry in affected:
+        affected_entry["undone"] = True
+        affected_entry["undone_at"] = undone_at
+        if affected_entry.get("action") == "incremental_insert":
+            undone_keys.update(str(item.get("candidate_key")) for item in affected_entry.get("inserted") or [] if item.get("candidate_key"))
+    journal["rescheduled_candidate_keys"] = [key for key in journal.get("rescheduled_candidate_keys") or [] if str(key) not in undone_keys]
+    details = journal.get("rescheduled_details") or {}
+    for key in undone_keys:
+        details.pop(str(key), None)
+    journal["rescheduled_details"] = details
+    write_payload_atomic(journal_path, journal)
+    write_admin_log(request, "復原路線調整", variant, {"action": entry.get("action"), "updated_at": entry.get("updated_at")})
+    return JsonResponse({"ok": True, "message": "已復原最近一次路線調整。", "restored_action": entry.get("action")})
+
+
+@login_required(login_url="login")
+def api_route_adjustment_history(request):
+    company = get_user_company(request.user)
+    variant = request.GET.get("variant") or "normal"
+    if variant not in VARIANT_LABELS:
+        variant = "normal"
+    output_dir = company_output_dir(OUTPUT_DIR, company)
+    journal = ai_load_json(output_dir / "route_adjustments.json", {}) or {}
+    items = []
+    for entry in reversed(journal.get("history") or []):
+        if entry.get("variant") != variant or not entry.get("route_backup"):
+            continue
+        summary = entry.get("summary") or {}
+        items.append({"adjustment_id": entry.get("updated_at"), "updated_at": entry.get("updated_at"),
+                      "action": entry.get("action"), "undone": bool(entry.get("undone")),
+                      "description": (f"路線合併 {summary.get('source_route_id')} → {summary.get('target_route_id')}"
+                                      if entry.get("action") in {"low_workload_merge", "ai_confirmed_route_merge"}
+                                      else f"補排 {len(entry.get('inserted') or [])} 個任務")})
+        if len(items) >= 10:
+            break
+    return JsonResponse({"ok": True, "variant": variant, "history": items})
+
+
+@require_POST
+@login_required(login_url="login")
+@user_passes_test(is_manager, login_url="home")
+def api_clear_route_adjustment_history(request):
+    company = get_user_company(request.user)
+    output_dir = company_output_dir(OUTPUT_DIR, company).resolve()
+    journal_path = output_dir / "route_adjustments.json"
+    journal = ai_load_json(journal_path, {}) or {}
+    removed_backups = 0
+    for path in output_dir.glob("*.before_incremental_*.json"):
+        if path.resolve().parent == output_dir:
+            path.unlink(missing_ok=True)
+            removed_backups += 1
+    journal["history"] = []
+    from .services.incremental_scheduler import write_payload_atomic
+    write_payload_atomic(journal_path, journal, create_backup=False)
+    write_admin_log(request, "清除路線調整歷史", "all", {"removed_backups": removed_backups})
+    return JsonResponse({"ok": True, "message": f"已清除歷史紀錄與 {removed_backups} 份舊備份；目前路線及已補排狀態不受影響。"})
+
+
+def ai_load_json(path, default=None):
+    try:
+        if Path(path).exists():
+            return json.loads(Path(path).read_text(encoding="utf-8"))
+    except Exception:
+        pass
+    return default
+
+
+def ai_load_excel_records(path, limit=12):
+    try:
+        if not Path(path).exists():
+            return []
+        df = pd.read_excel(path)
+        return df.head(limit).fillna("").to_dict("records")
+    except Exception:
+        return []
+
+
+def ai_jsonable(value):
+    try:
+        if hasattr(value, "item"):
+            return value.item()
+        if pd.isna(value):
+            return ""
+    except Exception:
+        pass
+    return value
+
+
+def ai_records_from_df(df, limit=None):
+    if df is None:
+        return []
+    if limit is not None:
+        df = df.head(max(int(limit), 0))
+    rows = df.fillna("").to_dict("records")
+    return [
+        {str(k): ai_jsonable(v) for k, v in row.items()}
+        for row in rows
+    ]
+
+
+def requested_list_limit(question, default=20, maximum=100):
+    text = str(question or "")
+    match = re.search(r'(?:前|列出|顯示|查詢)?\s*(\d{1,3})\s*(?:筆|個|點|項|位)', text)
+    if match:
+        return min(max(int(match.group(1)), 1), maximum)
+    chinese = {"一": 1, "二": 2, "兩": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9, "十": 10}
+    chinese_match = re.search(r"前\s*([一二兩三四五六七八九十])", text)
+    if chinese_match:
+        return min(chinese[chinese_match.group(1)], maximum)
+    return default
+
+
+def requested_route_variant(question):
+    text = str(question or "").lower()
+
+    if any(k in text for k in ["不跨縣市", "normal"]):
+        return "normal"
+
+    if any(k in text for k in ["精簡", "compact"]):
+        return "compact"
+
+    if any(k in text for k in ["跨縣市", "跨區", "cross"]):
+        return "cross"
+
+    return "normal"
+
+
+def parse_ai_query_constraints(question):
+    """Extract reusable query slots; this is not a complete-question router."""
+    text = str(question or "").strip()
+    upper = text.upper()
+    driver_matches = re.findall(r"(?<![A-Z0-9])(?:P|W|N)\d{1,3}(?![A-Z0-9])", upper)
+    route_matches = re.findall(r"(?:NORMAL|CROSS|COMPACT)-[A-Z0-9_-]+", upper)
+    day_match = re.search(r"(?:DAY|第)\s*(\d{1,2})", upper)
+    if any(word in text for word in ("一週", "一周", "每週", "每周", "整週", "整周", "週總", "周總")):
+        scope = "weekly"
+    elif any(word in text for word in ("單日", "某天", "今天", "當天")) or day_match:
+        scope = "daily"
+    else:
+        scope = "unspecified"
+    if any(word in text for word in ("碳", "CO2", "排放")):
+        metric = "carbon"
+    elif any(word in text for word in ("距離", "里程", "車程")):
+        metric = "distance"
+    elif any(word in text for word in ("點位", "站點", "站數")):
+        metric = "stops"
+    elif any(word in text for word in ("工時", "工作量", "負載", "服務時間")):
+        metric = "work_time"
+    else:
+        metric = "unspecified"
+    return {
+        "driver_ids": sorted(set(driver_matches)),
+        "route_ids": sorted(set(route_matches)),
+        "day": int(day_match.group(1)) if day_match else None,
+        "scope": scope,
+        "metric": metric,
+        "limit": requested_list_limit(text, default=10, maximum=50),
+    }
+
+
+def classify_ai_question(question):
+    text = str(question or "").lower()
+
+    if any(k in text for k in ["碳", "co2", "排放", "減碳", "油耗", "里程"]):
+        return "carbon"
+
+    if any(k in text for k in ["清潔", "清掃", "不合格", "使用量", "異常", "頻率", "照片", "yolo"]):
+        return "cleaning"
+
+    return "dispatch"
+
+def collect_cleaning_ai_context(request, company):
+    evidence = ["Supabase uploaded_photos 最近紀錄", "Django cleaning_records 最近紀錄"]
+    context = {"type": "cleaning", "records": [], "high_demand_points": [], "notes": []}
+    allowed_driver_codes = admin_company_driver_codes(request)
+    if getattr(company, "id", None):
+        allowed_driver_codes = [
+            str(code or "").strip().upper()
+            for code in DriverCompanyProfile.objects
+            .filter(company=company)
+            .values_list("driver_code", flat=True)
+            if str(code or "").strip()
+        ]
+    allowed_set = set(allowed_driver_codes or []) if allowed_driver_codes is not None else None
+
+    def belongs_to_company_photo(record):
+        company_key = str(record.get("company_key") or "").strip()
+        if getattr(company, "key", "") and company_key:
+            return company_key == company.key
+        if allowed_set is None:
+            return True
+        return str(record.get("driver_code") or "").strip().upper() in allowed_set
+
+    try:
+        response = (
+            supabase.table("uploaded_photos")
+            .select("*")
+            .order("created_at", desc=True)
+            .limit(120)
+            .execute()
+        )
+        records = response.data or []
+        records = [r for r in records if belongs_to_company_photo(r)]
+        context["records"] = [
+            {
+                "created_at": r.get("created_at"),
+                "company_key": r.get("company_key"),
+                "driver_code": r.get("driver_code"),
+                "stop_address": r.get("stop_address") or r.get("point_key"),
+                "photo_type": r.get("photo_type"),
+                "is_qualified": r.get("is_qualified"),
+                "review_status": r.get("review_status"),
+                "is_risk": r.get("is_risk"),
+            }
+            for r in records[:40]
+        ]
+        grouped = defaultdict(list)
+        for r in records:
+            if str(r.get("photo_type")).lower() not in ["前", "before"]:
+                continue
+            key = r.get("stop_address") or r.get("point_key") or "未知點位"
+            grouped[key].append(r)
+        for address, items in grouped.items():
+            items.sort(key=lambda x: x.get("created_at", ""), reverse=True)
+            latest_three = items[:3]
+            if len(latest_three) < 3:
+                continue
+            all_failed = all(
+                str(r.get("is_qualified")).lower() == "false"
+                or str(r.get("review_status")) == "不合格"
+                or str(r.get("is_risk")).lower() == "true"
+                for r in latest_three
+            )
+            if all_failed:
+                context["high_demand_points"].append({
+                    "address": address,
+                    "latest_time": latest_three[0].get("created_at"),
+                    "count": len(latest_three),
+                })
+        context["high_demand_points"] = context["high_demand_points"][:100]
+    except Exception as e:
+        context["notes"].append(f"Supabase uploaded_photos 讀取失敗：{type(e).__name__}: {e}")
+
+    try:
+        local_qs = CleaningRecord.objects.select_related("driver").order_by("-created_at")
+        if allowed_set is not None:
+            local_qs = local_qs.filter(driver__driver_code__in=list(allowed_set))
+        local_records = local_qs[:20]
+        context["local_cleaning_records"] = [
+            {
+                "created_at": timezone.localtime(r.created_at).strftime("%Y-%m-%d %H:%M"),
+                "driver_code": getattr(r.driver, "driver_code", ""),
+                "score": r.score,
+                "status": r.status,
+            }
+            for r in local_records
+        ]
+    except Exception as e:
+        context["notes"].append(f"Django cleaning_records 讀取失敗：{type(e).__name__}: {e}")
+    return context, evidence
+
+def collect_dashboard_summary_ai_context(output_dir):
+        context = {
+            "driver_summary": [],
+            "route_summary": [],
+            "notes": [],
+        }
+
+        driver_file = output_dir / "Driver_Workload_Balance_Report.xlsx"
+        if not driver_file.exists():
+            driver_file = output_dir / "Driver_Weekly_Load_Strict.xlsx"
+
+        try:
+            if driver_file.exists():
+                df = pd.read_excel(driver_file)
+                context["driver_summary"] = df.fillna("").to_dict("records")[:80]
+            else:
+                context["notes"].append("找不到司機工時統計報表。")
+        except Exception as e:
+            context["notes"].append(f"司機工時統計讀取失敗：{type(e).__name__}: {e}")
+
+        route_file = output_dir / "Daily_Route_Summary.xlsx"
+        try:
+            if route_file.exists():
+                df = pd.read_excel(route_file)
+                context["route_summary"] = df.fillna("").to_dict("records")[:120]
+            else:
+                context["notes"].append("找不到每日路線摘要報表。")
+        except Exception as e:
+            context["notes"].append(f"每日路線摘要讀取失敗：{type(e).__name__}: {e}")
+
+        return context
+
+def collect_dispatch_ai_context(company, output_dir, settings, question=""):
+    evidence = [
+        str(output_dir / "routes_normal.json"),
+        str(output_dir / "routes_cross.json"),
+        str(output_dir / "routes_compact.json"),
+        str(output_dir / "Daily_Route_Summary.xlsx"),
+        str(output_dir / "Driver_Weekly_Load_Strict.xlsx"),
+        str(output_dir / "Weekly_Unassigned_Strict.xlsx"),
+        str(output_dir / "Unassigned_Points_normal.xlsx"),
+        str(output_dir / "Unassigned_Points_cross.xlsx"),
+        str(output_dir / "Unassigned_Points_compact.xlsx"),
+    ]
+    requested_limit = requested_list_limit(question)
+
+    def load_unassigned_for_variant(variant):
+        candidates = [
+            output_dir / f"Unassigned_Points_{variant}.xlsx",
+            output_dir / f"Weekly_Unassigned_{variant}.xlsx",
+            output_dir / "Weekly_Unassigned_Strict.xlsx",
+        ]
+        for path in candidates:
+            try:
+                if not path.exists():
+                    continue
+                df = pd.read_excel(path)
+                if df.empty:
+                    return [], path.name, 0
+                return ai_records_from_df(df, limit=min(max(requested_limit, 20), 100)), path.name, len(df)
+            except Exception:
+                continue
+        return [], "", 0
+
+    def guess_county(row):
+        text = " ".join(str(v or "") for v in row.values())
+        for county in ["台北市", "新北市", "桃園市", "新竹市", "新竹縣", "苗栗縣", "基隆市"]:
+            if county in text:
+                return county
+        return "未知"
+
+    def summarize_unassigned(rows, total_count=0):
+        by_county = {}
+        enriched = []
+        for row in rows:
+            item = dict(row)
+            county = guess_county(item)
+            item["AI_判斷縣市"] = county
+            by_county[county] = by_county.get(county, 0) + 1
+            enriched.append(item)
+
+        return {
+            "total_count": int(total_count or len(enriched)),
+            "provided_count": len(enriched),
+            "requested_count": requested_limit,
+            "by_county": by_county,
+            "items": enriched,
+        }
+
+    def route_metric(route, key):
+        metrics = route.get("metrics") or {}
+        return to_float(metrics.get(key)) or 0
+
+    def summarize_routes(payload):
+        routes = payload.get("routes") or []
+        totals = {
+            "route_count": len(routes),
+            "stop_count": sum(to_int(r.get("stop_count"), 0) for r in routes),
+            "total_distance_km": round(sum(route_metric(r, "dist_km") for r in routes), 2),
+            "total_drive_min": round(sum(route_metric(r, "drive_min") for r in routes), 2),
+            "total_service_min": round(sum(route_metric(r, "service_min") for r in routes), 2),
+            "total_work_min": round(sum(route_metric(r, "total_min") for r in routes), 2),
+            "overtime_route_count": sum(1 for r in routes if route_metric(r, "overtime_min") > 0),
+        }
+        top_total = sorted(routes, key=lambda r: route_metric(r, "total_min"), reverse=True)[:8]
+        top_drive = sorted(routes, key=lambda r: route_metric(r, "drive_min"), reverse=True)[:8]
+        top_stops = sorted(routes, key=lambda r: to_int(r.get("stop_count"), 0), reverse=True)[:8]
+        closest_540 = sorted(routes, key=lambda r: abs(540 - route_metric(r, "total_min")))[:8]
+
+        def slim_route(r):
+            metrics = r.get("metrics") or {}
+            return {
+                "route_id": r.get("route_id"),
+                "driver": r.get("driver"),
+                "driver_label": r.get("driver_label"),
+                "day": r.get("day"),
+                "depot": r.get("depot"),
+                "counties": r.get("counties"),
+                "stop_count": r.get("stop_count"),
+                "service_min": metrics.get("service_min"),
+                "drive_min": metrics.get("drive_min"),
+                "dist_km": metrics.get("dist_km"),
+                "total_min": metrics.get("total_min"),
+                "overtime_min": metrics.get("overtime_min"),
+            }
+
+        return {
+            "totals": totals,
+            "top_total_work_routes": [slim_route(r) for r in top_total],
+            "top_drive_routes": [slim_route(r) for r in top_drive],
+            "top_stop_routes": [slim_route(r) for r in top_stops],
+            "closest_to_540_routes": [slim_route(r) for r in closest_540],
+        }
+
+    def build_merge_candidates(payload):
+        """Pre-screen route pairs; full re-sequencing and OSRM validation remain required."""
+        routes = payload.get("routes") or []
+        daily_limit = getattr(settings, "daily_work_minutes", 540) or 540
+        slim = []
+        for route in routes:
+            metrics = route.get("metrics") or {}
+            total = to_float(metrics.get("total_min"))
+            if total is None:
+                continue
+            slim.append({
+                "route_id": route.get("route_id"),
+                "driver": route.get("driver"),
+                "driver_label": route.get("driver_label"),
+                "day": route.get("day"),
+                "total_min": round(total, 2),
+                "stop_count": to_int(route.get("stop_count"), 0),
+            })
+        candidates = []
+        for index, left in enumerate(slim):
+            for right in slim[index + 1:]:
+                if left.get("day") != right.get("day") or left.get("driver") == right.get("driver"):
+                    continue
+                combined = round(left["total_min"] + right["total_min"], 2)
+                if combined > daily_limit:
+                    continue
+                candidates.append({
+                    "left_route_id": left.get("route_id"),
+                    "right_route_id": right.get("route_id"),
+                    "left_label": f"{left.get('driver_label') or left.get('driver')} Day {left.get('day')}",
+                    "right_label": f"{right.get('driver_label') or right.get('driver')} Day {right.get('day')}",
+                    "combined_total_min": combined,
+                    "remaining_buffer_min": round(daily_limit - combined, 2),
+                    "stop_count": left.get("stop_count", 0) + right.get("stop_count", 0),
+                    "requires_full_resequence": True,
+                })
+        return sorted(candidates, key=lambda item: item["remaining_buffer_min"])[:20]
+
+    def search_route_points():
+        text = str(question or "").strip()
+        tokens = []
+        tokens.extend(re.findall(r'\bT\d+\b|\bN_?\d+\b', text, flags=re.IGNORECASE))
+        quoted = re.findall(r'[「\"]([^」\"]{2,80})[」\"]', text)
+        tokens.extend(quoted)
+        if not tokens and ("在哪" in text or "哪位司機" in text):
+            cleaned = re.sub(r'(某個點位|點位|在哪|哪位司機|哪一天|路線|請問|查詢|找|的)', ' ', text)
+            cleaned = cleaned.strip()
+            if len(cleaned) >= 4:
+                tokens.append(cleaned)
+        if not tokens:
+            return []
+        weekly_path = output_dir / "Weekly_Schedule_Summary.xlsx"
+        try:
+            df = pd.read_excel(weekly_path)
+            mask = pd.Series([False] * len(df))
+            for token in tokens[:5]:
+                token = str(token).strip()
+                if not token:
+                    continue
+                row_text = df.astype(str).agg(" ".join, axis=1)
+                mask = mask | row_text.str.contains(re.escape(token), case=False, na=False)
+            cols = [
+                "driver", "driver_label", "depot_code", "day", "seq",
+                "task_id", "node_id", "county", "address",
+                "service_time_min", "travel_time_min", "travel_dist_km",
+            ]
+            return ai_records_from_df(df.loc[mask, [c for c in cols if c in df.columns]], limit=20)
+        except Exception:
+            return []
+
+    normal_payload = load_variant_payload("normal", output_dir, settings=settings, company=company)
+    cross_payload = load_variant_payload("cross", output_dir, settings=settings, company=company)
+    compact_payload = load_variant_payload("compact", output_dir, settings=settings, company=company)
+
+    daily_rows = ai_load_excel_records(output_dir / "Daily_Route_Summary.xlsx", limit=200)
+    load_rows = ai_load_excel_records(output_dir / "Driver_Weekly_Load_Strict.xlsx", limit=200)
+
+    route_rows = sorted(
+        daily_rows,
+        key=lambda r: to_float(r.get("總工時_分")) or 0,
+        reverse=True,
+    )[:12]
+
+    overtime = [
+        r for r in daily_rows
+        if (to_float(r.get("總工時_分")) or 0) > (getattr(settings, "daily_work_minutes", 540) or 540)
+    ]
+
+    variant_payloads = {
+        "normal": normal_payload,
+        "cross": cross_payload,
+        "compact": compact_payload,
+    }
+
+    variants = {}
+
+    for variant, payload in variant_payloads.items():
+        unassigned_rows, unassigned_file, unassigned_total = load_unassigned_for_variant(variant)
+        unassigned_summary = summarize_unassigned(unassigned_rows, unassigned_total)
+        route_summary = summarize_routes(payload)
+        merge_candidates = build_merge_candidates(payload)
+        merge_verification_status = "not_requested"
+        merge_verification_error = ""
+        same_driver_merge = any(
+            phrase in str(question or "")
+            for phrase in ("同一位司機", "同一個司機", "同一司機", "同司機", "司機哪幾天", "司機哪幾日")
+        )
+
+        # For merge questions, use the same dry-run and routing-cost logic as
+        # the manual route-adjustment page. The simple pair pre-screen above is
+        # retained as a fallback, but it must not be presented as a verified
+        # merge result.
+        if any(word in str(question or "") for word in ("合併", "合并", "併線", "併入")):
+            merge_verification_status = "no_valid_candidate"
+            try:
+                from .services.incremental_scheduler import low_workload_routes, recommend_merge_targets
+                max_minutes = getattr(settings, "daily_work_minutes", 540) or 540
+                low_routes = low_workload_routes(
+                    payload,
+                    threshold_minutes=180,
+                    max_minutes=max_minutes,
+                    same_driver_only=same_driver_merge,
+                )
+                verified_candidates = []
+                for low_route in low_routes:
+                    target_ids = [item.get("route_id") for item in low_route.get("target_routes") or []]
+                    recommendations = recommend_merge_targets(
+                        payload,
+                        low_route.get("route_id"),
+                        target_ids,
+                        max_minutes,
+                        limit=3,
+                        allow_cross_county=variant in {"cross", "compact"},
+                    )
+                    for recommendation in recommendations:
+                        verified_candidates.append({
+                            **recommendation,
+                            "source_route_id": low_route.get("route_id"),
+                            "source_driver": low_route.get("driver"),
+                            "source_day": low_route.get("day"),
+                            "source_total_min": low_route.get("total_min"),
+                            "analysis_type": "incremental_scheduler_dry_run",
+                            "verified_by_route_cost": True,
+                            "allow_cross_county": variant in {"cross", "compact"},
+                        })
+                if verified_candidates:
+                    merge_candidates = verified_candidates
+                    merge_verification_status = "verified"
+                else:
+                    # Never expose arithmetic pre-screen pairs as if they were
+                    # actionable. They are not valid until move_route_stops()
+                    # completes successfully.
+                    merge_candidates = []
+            except Exception as exc:
+                merge_candidates = []
+                merge_verification_status = "failed"
+                merge_verification_error = f"{type(exc).__name__}: {exc}"
+
+        variants[variant] = {
+            "label": payload.get("label"),
+            "route_version": _route_file_version(output_dir / VARIANT_FILES[variant]),
+            "meta": payload.get("meta"),
+            "file_used": payload.get("file_used"),
+            "route_summary": route_summary,
+            # Kept server-side for Domain Tools; tools return bounded slices.
+            "routes": payload.get("routes") or [],
+            "unassigned_file": unassigned_file,
+            "unassigned": unassigned_summary,
+            "merge_candidates": merge_candidates,
+            "merge_verification_status": merge_verification_status,
+            "merge_verification_error": merge_verification_error,
+            "same_driver_merge": same_driver_merge,
+        }
+
+    driver_rankings = {
+        "highest_weekly_total": sorted(load_rows, key=lambda r: to_float(r.get("weekly_total_min")) or 0, reverse=True)[:10],
+        "lowest_weekly_total": sorted(load_rows, key=lambda r: to_float(r.get("weekly_total_min")) or 0)[:10],
+        "highest_daily_total": route_rows,
+        "highest_drive_time": sorted(daily_rows, key=lambda r: to_float(r.get("總車程_分")) or 0, reverse=True)[:10],
+        "highest_service_time": sorted(daily_rows, key=lambda r: to_float(r.get("總服務時間_分")) or 0, reverse=True)[:10],
+        "most_stops": sorted(daily_rows, key=lambda r: to_float(r.get("總站數")) or 0, reverse=True)[:10],
+    }
+
+    requested_variant = requested_route_variant(question)
+
+    return {
+        "type": "dispatch",
+        "output_dir": str(output_dir),
+        "requested_variant": requested_variant,
+        "requested_list_limit": requested_limit,
+        "query_constraints": parse_ai_query_constraints(question),
+
+        # 預設仍以 NORMAL 作為主要派工分析
+        "default_variant": "normal",
+        "variant": normal_payload.get("label"),
+        "meta": normal_payload.get("meta"),
+        "esg": normal_payload.get("esg"),
+
+        # 三種模式都提供給 AI 判斷
+        "variants": variants,
+
+        # 工時與超時分析
+        "highest_work_routes": route_rows,
+        "driver_weekly_load": load_rows,
+        "daily_route_records": daily_rows[:200],
+        "driver_rankings": driver_rankings,
+        "overtime_routes": overtime[:12],
+        "point_route_matches": search_route_points(),
+
+        # 舊版欄位保留，避免原本 prompt 或 mock 壞掉
+        "unassigned": variants[requested_variant]["unassigned"]["items"],
+        "unassigned_total_count": variants[requested_variant]["unassigned"]["total_count"],
+        "unassigned_by_county": variants[requested_variant]["unassigned"]["by_county"],
+    }, evidence
+
+
+
+def collect_carbon_ai_context(company, output_dir, settings):
+    evidence = [
+        str(output_dir / "routes_normal.json"),
+        str(output_dir / "routes_cross.json"),
+        str(output_dir / "routes_compact.json"),
+        str(output_dir / ESG_BASELINE_FILE),
+    ]
+    contexts = {}
+    for variant in ["normal", "cross", "compact"]:
+        payload = load_variant_payload(variant, output_dir, settings=settings, company=company)
+        contexts[variant] = {
+            "ok": payload.get("ok"),
+            "label": payload.get("label"),
+            "meta": payload.get("meta"),
+            "routes": payload.get("routes") or [],
+            "esg": payload.get("esg"),
+            "equivalents": build_esg_equivalents(payload.get("esg") or {}),
+        }
+    normal_routes = load_variant_payload("normal", output_dir, settings=settings, company=company).get("routes", [])
+
+    def route_distance(route):
+        metrics = route.get("metrics") or {}
+        return to_float(metrics.get("dist_km")) or to_float(route.get("distance_km")) or to_float(route.get("total_distance_km")) or 0
+
+    def route_drive(route):
+        metrics = route.get("metrics") or {}
+        return to_float(metrics.get("drive_min")) or to_float(route.get("duration_min")) or 0
+
+    high_distance_routes = []
+    for r in normal_routes:
+        distance = route_distance(r)
+        high_distance_routes.append({
+            "route_id": r.get("route_id"),
+            "driver": r.get("driver"),
+            "driver_label": r.get("driver_label"),
+            "day": r.get("day"),
+            "depot": r.get("depot"),
+            "counties": r.get("counties"),
+            "distance_km": round(distance, 2),
+            "estimated_co2_kg": round(distance * (to_float(getattr(settings, "co2_kg_per_km", ESG_CO2_KG_PER_KM)) or ESG_CO2_KG_PER_KM), 2),
+            "duration_min": round(route_drive(r), 2),
+            "service_min": round(to_float((r.get("metrics") or {}).get("service_min")) or 0, 2),
+            "drive_min": round(route_drive(r), 2),
+            "total_work_min": round(to_float((r.get("metrics") or {}).get("total_min")) or 0, 2),
+            "overtime_min": round(to_float((r.get("metrics") or {}).get("overtime_min")) or 0, 2),
+            "stops": to_int(r.get("stop_count"), len(r.get("stops") or [])),
+        })
+    high_distance_routes = sorted(high_distance_routes, key=lambda r: r["distance_km"], reverse=True)[:10]
+
+    emission_factor = to_float(getattr(settings, "co2_kg_per_km", ESG_CO2_KG_PER_KM)) or ESG_CO2_KG_PER_KM
+    baseline_path = output_dir / ESG_BASELINE_FILE
+    baseline_routes = []
+    if baseline_path.exists():
+        try:
+            baseline_raw = load_json(baseline_path)
+            baseline_routes = baseline_raw.get("routes", []) if isinstance(baseline_raw, dict) else []
+        except Exception:
+            baseline_routes = []
+    baseline_by_id = {str(route.get("route_id") or ""): route for route in baseline_routes if route.get("route_id")}
+    reduction_items = []
+    for route in normal_routes:
+        route_id = str(route.get("route_id") or "")
+        baseline = baseline_by_id.get(route_id)
+        if not baseline:
+            continue
+        current_distance = route_distance(route)
+        baseline_distance = route_distance(baseline)
+        reduction_items.append({
+            "route_id": route_id,
+            "driver": route.get("driver"),
+            "day": route.get("day"),
+            "current_co2_kg": round(current_distance * emission_factor, 2),
+            "baseline_co2_kg": round(baseline_distance * emission_factor, 2),
+            "saved_co2_kg": round(max(baseline_distance - current_distance, 0) * emission_factor, 2),
+            "current_distance_km": round(current_distance, 2),
+            "baseline_distance_km": round(baseline_distance, 2),
+        })
+    reduction_items.sort(key=lambda item: item["saved_co2_kg"], reverse=True)
+    carbon_reduction_analysis = {
+        "status": "verified" if reduction_items else "insufficient_baseline",
+        "baseline_file": baseline_path.name,
+        "matched_route_count": len(reduction_items),
+        "items": reduction_items[:20],
+        "reason": "目前基準路線 ID 與現行路線 ID 沒有可對應資料，無法計算逐路線減量。" if not reduction_items else "已依相同 route_id 比較目前與基準路線。",
+    }
+    data_availability = {
+        "current_routes": {
+            "available": bool(normal_routes),
+            "count": len(normal_routes),
+            "has_distance": all(route_distance(route) > 0 for route in normal_routes) if normal_routes else False,
+            "has_work_metrics": all((route.get("metrics") or {}).get("total_min") is not None for route in normal_routes) if normal_routes else False,
+        },
+        "driver_workload": {"available": False, "note": "由 build_ai_context 補入同公司工時資料。"},
+        "route_level_baseline": {"available": bool(reduction_items), "matched_count": len(reduction_items), "file": baseline_path.name},
+        "reassignment_simulation": {"available": False, "note": "尚未建立一般化重新分配模擬工具鏈。"},
+    }
+
+    valid_variants = [
+        (key, value.get("esg") or {})
+        for key, value in contexts.items()
+        if value.get("esg")
+    ]
+    lowest = None
+    if valid_variants:
+        lowest_key, lowest_esg = min(valid_variants, key=lambda item: to_float(item[1].get("estimated_co2_kg")) or 0)
+        lowest = {
+            "variant": lowest_key,
+            "label": contexts.get(lowest_key, {}).get("label"),
+            "estimated_co2_kg": lowest_esg.get("estimated_co2_kg"),
+            "total_distance_km": lowest_esg.get("total_distance_km"),
+        }
+    return {
+        "type": "carbon",
+        "output_dir": str(output_dir),
+        "variants": contexts,
+        "lowest_carbon_variant": lowest,
+        "highest_distance_routes": high_distance_routes,
+        "carbon_route_rankings": high_distance_routes,
+        "carbon_reduction_analysis": carbon_reduction_analysis,
+        "data_availability": data_availability,
+        "baseline_exists": (output_dir / ESG_BASELINE_FILE).exists(),
+    }, evidence
+
+def collect_common_web_ai_context(request, company, output_dir, settings):
+    context = {
+        "company": serialize_company(company) if getattr(company, "id", None) else {"key": DEFAULT_COMPANY_KEY},
+        "schedule_settings": serialize_schedule_settings(settings),
+        "output_dir": str(output_dir),
+        "counts": {},
+        "service_point_distribution": {},
+        "drivers": [],
+        "depots": [],
+        "recent_admin_logs": [],
+        "sample_service_points": [],
+        "service_points": [],
+        "notes": [],
+    }
+
+    try:
+        points_qs = company_service_points_queryset(company)
+        context["counts"]["service_points"] = points_qs.count()
+        context["counts"]["depots"] = (
+            points_qs.exclude(depot__isnull=True)
+            .exclude(depot__exact="")
+            .values("depot")
+            .distinct()
+            .count()
+        )
+        city_counts = defaultdict(int)
+        depot_counts = defaultdict(int)
+        weekly_1_count = 0
+        weekly_2_count = 0
+        for row in points_qs.values("address", "depot", "weekly_1", "weekly_2"):
+            county = parse_county(row.get("address") or "")
+            city_counts[county] += 1
+            depot_counts[row.get("depot") or "未指定"] += 1
+            if row.get("weekly_1"):
+                weekly_1_count += 1
+            if row.get("weekly_2"):
+                weekly_2_count += 1
+        context["service_point_distribution"] = {
+            "by_county": dict(sorted(city_counts.items(), key=lambda item: item[1], reverse=True)),
+            "by_depot": dict(sorted(depot_counts.items(), key=lambda item: item[1], reverse=True)),
+            "weekly_1_count": weekly_1_count,
+            "weekly_2_count": weekly_2_count,
+        }
+        context["service_points"] = list(
+            points_qs.order_by("id").values(
+                "id", "depot", "client_name", "service_time",
+                "address", "lat", "lon", "weekly_1", "weekly_2"
+            )[:10000]
+        )
+        context["sample_service_points"] = context["service_points"][:30]
+    except Exception as e:
+        context["notes"].append(f"點位資料讀取失敗：{type(e).__name__}: {e}")
+
+    try:
+        driver_codes = admin_company_driver_codes(request)
+        if getattr(company, "id", None):
+            profiles = list(
+                DriverCompanyProfile.objects
+                .filter(company=company)
+                .order_by("driver_code")
+                .values("driver_code", "driver_id")
+            )
+            context["drivers"] = profiles[:80]
+            context["counts"]["drivers"] = len({str(p.get("driver_code") or "").upper() for p in profiles if p.get("driver_code")})
+        elif driver_codes is None:
+            driver_qs = Driver.objects.all().order_by("driver_code")
+            context["drivers"] = list(
+                driver_qs.values(
+                    "driver_code", "depot_id", "max_minutes"
+                )[:80]
+            )
+            context["counts"]["drivers"] = len({str(d.get("driver_code") or "").upper() for d in context["drivers"] if d.get("driver_code")})
+        else:
+            driver_qs = Driver.objects.filter(driver_code__in=driver_codes).order_by("driver_code")
+            context["drivers"] = list(
+                driver_qs.values(
+                    "driver_code", "depot_id", "max_minutes"
+                )[:80]
+            )
+            context["counts"]["drivers"] = len({str(d.get("driver_code") or "").upper() for d in context["drivers"] if d.get("driver_code")})
+    except Exception as e:
+        context["notes"].append(f"司機資料讀取失敗：{type(e).__name__}: {e}")
+
+    try:
+        context["depots"] = [
+            serialize_company_depot(depot)
+            for depot in CompanyDepot.objects.filter(company=company).order_by("sort_order", "id")[:20]
+        ]
+    except Exception as e:
+        context["notes"].append(f"場站資料讀取失敗：{type(e).__name__}: {e}")
+
+    try:
+        if is_super_admin(request.user):
+            logs = read_admin_logs(limit=30, company=None if is_system_admin(request.user) else company)
+            context["recent_admin_logs"] = logs[:20]
+    except Exception as e:
+        context["notes"].append(f"管理紀錄讀取失敗：{type(e).__name__}: {e}")
+
+    try:
+        context["run_status"] = _snapshot_run_state("normal")
+        log_path = OUTPUT_DIR / "run_all_last.log"
+        if log_path.exists():
+            context["last_run_log_mtime"] = timezone.localtime(timezone.datetime.fromtimestamp(log_path.stat().st_mtime, tz=timezone.get_current_timezone())).strftime("%Y-%m-%d %H:%M:%S")
+    except Exception:
+        pass
+
+    return context
+
+def build_ai_context(request, question):
+    company = get_user_company(request.user)
+    settings = get_company_schedule_settings(company)
+    output_dir = current_company_output_dir(OUTPUT_DIR, request.user)
+    qtype = classify_ai_question(question)
+
+    evidence = []
+    common_context = collect_common_web_ai_context(request, company, output_dir, settings)
+    common_context["dashboard_summary"] = collect_dashboard_summary_ai_context(output_dir)
+
+    if qtype == "cleaning":
+        specific_context, evidence = collect_cleaning_ai_context(request, company)
+    elif qtype == "carbon":
+        specific_context, evidence = collect_carbon_ai_context(company, output_dir, settings)
+        # Carbon questions may also ask about drivers, workload, or route
+        # ownership. Enrich the carbon context with bounded, same-company
+        # operational records so a planner never mistakes a filtered result
+        # for the complete driver population.
+        try:
+            dispatch_context, dispatch_evidence = collect_dispatch_ai_context(
+                company, output_dir, settings, question=""
+            )
+            for key in (
+                "driver_weekly_load", "daily_route_records", "driver_rankings",
+                "overtime_routes", "highest_work_routes", "query_constraints",
+                "requested_variant", "requested_list_limit",
+            ):
+                if key in dispatch_context:
+                    specific_context[key] = dispatch_context[key]
+            specific_context["query_constraints"] = parse_ai_query_constraints(question)
+            specific_context["driver_scope"] = {
+                "weekly_records": len(specific_context.get("driver_weekly_load") or []),
+                "daily_records": len(specific_context.get("daily_route_records") or []),
+                "driver_ids": sorted({
+                    str(row.get("driver") or row.get("driver_code") or "").strip().upper()
+                    for row in specific_context.get("driver_weekly_load") or []
+                    if str(row.get("driver") or row.get("driver_code") or "").strip()
+                }),
+                "source": "同公司 Driver_Weekly_Load_Strict.xlsx 與 Daily_Route_Summary.xlsx",
+            }
+            specific_context.setdefault("data_availability", {})["driver_workload"] = {
+                "available": bool(specific_context.get("driver_weekly_load") or specific_context.get("daily_route_records")),
+                "weekly_records": len(specific_context.get("driver_weekly_load") or []),
+                "daily_records": len(specific_context.get("daily_route_records") or []),
+            }
+            evidence.extend(item for item in dispatch_evidence if item not in evidence)
+        except Exception as exc:
+            specific_context.setdefault("context_warnings", []).append(
+                f"碳排分析未能補入司機工時資料：{type(exc).__name__}: {exc}"
+            )
+    else:
+        specific_context, evidence = collect_dispatch_ai_context(company, output_dir, settings, question=question)
+
+    context = {
+        "common": common_context,
+        "data": specific_context,
+        "question_type": qtype,
+        "generated_at": timezone.localtime(timezone.now()).strftime("%Y-%m-%d %H:%M:%S"),
+    }
+
+    return context, evidence
+
+def call_gemini_planner(question, context, api_key_from_request=""):
+    api_key = (api_key_from_request or os.environ.get("GEMINI_API_KEY", "")).strip()
+    model = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash").strip() or "gemini-2.5-flash"
+
+    if not api_key:
+        return {"ok": False, "action": "fallback"}
+
+    prompt = f"""
+你是 Dispatch Nav AI Agent 的工具選擇器。
+請只回傳 JSON，不要解釋。
+
+可用 action：
+- basic_info：查公司基本資料、司機數、點位數、倉庫數
+- unassigned_points：查未排入點位
+- overtime_routes：查超時路線
+- driver_workload：查司機工時、工作量、最高工時
+- carbon_summary：查 ESG、碳排、減碳
+- cleaning_summary：查清潔紀錄、使用量偏高、連續三次異常
+- ai_analysis：需要原因分析、改善建議、綜合判斷時使用
+
+使用者問題：{question}
+
+目前問題類型：{context.get("question_type")}
+
+請回傳格式：
+{{"action":"basic_info"}}
+"""
+
+    try:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+        resp = requests.post(
+            url,
+            params={"key": api_key},
+            json={"contents": [{"parts": [{"text": prompt}]}]},
+            timeout=15,
+        )
+
+        if resp.status_code != 200:
+            return {"ok": False, "action": "fallback"}
+
+        data = resp.json()
+        parts = data.get("candidates", [{}])[0].get("content", {}).get("parts", [])
+        text = "\n".join([p.get("text", "") for p in parts if p.get("text")]).strip()
+
+        text = text.replace("```json", "").replace("```", "").strip()
+        parsed = json.loads(text)
+
+        action = parsed.get("action", "ai_analysis")
+        allowed = {
+            "basic_info",
+            "unassigned_points",
+            "overtime_routes",
+            "driver_workload",
+            "carbon_summary",
+            "cleaning_summary",
+            "ai_analysis",
+        }
+
+        if action not in allowed:
+            action = "ai_analysis"
+
+        return {"ok": True, "action": action}
+
+    except Exception:
+        return {"ok": False, "action": "fallback"}
+
+def call_gemini_with_tool_result(question, tool_result, api_key_from_request=""):
+    api_key = (api_key_from_request or os.environ.get("GEMINI_API_KEY", "")).strip()
+    model = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash").strip() or "gemini-2.5-flash"
+
+    if not api_key:
+        return {
+            "mock": True,
+            "model": "fallback",
+            "answer": tool_result.get("answer") or "目前資料不足，無法判斷。",
+        }
+
+    prompt = (
+        "你是 Dispatch Nav 的 AI 管理助理。\n"
+        "請只根據 Tool Result 回答，不可編造資料。\n"
+        "請使用自然、專業、簡潔的繁體中文。\n\n"
+        f"使用者問題：{question}\n\n"
+        f"Tool Result：\n{json.dumps(tool_result, ensure_ascii=False, default=str)[:12000]}"
+    )
+
+    try:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+        resp = requests.post(
+            url,
+            params={"key": api_key},
+            json={"contents": [{"parts": [{"text": prompt}]}]},
+            timeout=30,
+        )
+
+        if resp.status_code != 200:
+            return {
+                "mock": True,
+                "model": "fallback",
+                "answer": tool_result.get("answer") or "目前資料不足，無法判斷。",
+            }
+
+        data = resp.json()
+        parts = data.get("candidates", [{}])[0].get("content", {}).get("parts", [])
+        text = "\n".join([str(p.get("text", "")).strip() for p in parts if p.get("text")]).strip()
+
+        return {
+            "mock": False,
+            "model": f"agent-tool:{model}",
+            "answer": text or tool_result.get("answer") or "目前資料不足，無法判斷。",
+        }
+
+    except Exception:
+        return {
+            "mock": True,
+            "model": "fallback",
+            "answer": tool_result.get("answer") or "目前資料不足，無法判斷。",
+        }
+
+def run_agent_tool(action, question, context):
+    q = str(question or "")
+    common = context.get("common") or {}
+    data = context.get("data") or {}
+
+    if action == "basic_info":
+        counts = common.get("counts") or {}
+        company = common.get("company") or {}
+        settings = common.get("schedule_settings") or {}
+
+        return {
+            "action": action,
+            "company": company,
+            "service_points": counts.get("service_points"),
+            "drivers": counts.get("drivers"),
+            "depots": counts.get("depots"),
+            "daily_work_minutes": settings.get("daily_work_minutes"),
+            "schedule_days": settings.get("schedule_days"),
+        }
+
+    if action in [
+        "unassigned_points",
+        "overtime_routes",
+        "driver_workload",
+        "carbon_summary",
+        "cleaning_summary",
+    ]:
+        return {
+            "action": action,
+            "answer": build_mock_ai_answer(question, context),
+        }
+
+    return {
+        "action": "ai_analysis",
+        "context": data,
+    }
+
+def call_gemini_ai(question, context, api_key_from_request=""):
+    api_key = (api_key_from_request or os.environ.get("GEMINI_API_KEY", "")).strip()
+    model = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash").strip() or "gemini-2.5-flash"
+    prompt = (
+        "你是 Dispatch Nav 的後台資料分析助理。\n"
+        "請只依據後端提供的 JSON Context 回答，不得自行編造任何資料。\n"
+        "不要介紹自己，不要重複規則，不要描述你的能力。\n"
+        "不要產生 SQL，也不要聲稱已修改任何資料。\n"
+        "請依照使用者問題直接回答，不要固定套用模板。\n"
+        "如果使用者要求列出前 N 筆，Context 有足夠 items 時必須列出 N 筆；如果不足 N 筆，請說明目前只有 X 筆。\n"
+        "如果只是查詢資料，直接回答即可。\n"
+        "如果詢問原因，再說明原因。\n"
+        "如果使用者詢問改善或建議，請分成「根據目前資料可直接判斷」與「延伸管理建議」。\n"
+        "根據目前資料可直接判斷的內容，必須來自 JSON Context。\n"
+        "延伸管理建議可以提供一般管理方向，但必須明確標示為建議方向，不可說成系統已驗證結果。\n"
+        "若 Context 沒有足夠資料，請回答：『目前資料不足，無法判斷。』\n"
+        "回答請使用自然、專業、簡潔的繁體中文。\n\n"
+        f"使用者問題：{question}\n\n"
+        f"JSON Context：\n{json.dumps(context, ensure_ascii=False, default=str)[:30000]}"
+    )
+    
+    if not api_key:
+        return {
+            "mock": True,
+            "model": "mock-fallback",
+            "answer": build_mock_ai_answer(question, context),
+        }
+    models_to_try = [
+        os.environ.get("GEMINI_MODEL", "").strip(),
+        "gemini-2.5-flash",
+    ]
+    models_to_try = [m for m in models_to_try if m]
+
+    try:
+        last_error = ""
+        for model_name in models_to_try:
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent"
+            resp = requests.post(
+                url,
+                params={"key": api_key},
+                json={"contents": [{"parts": [{"text": prompt}]}]},
+                timeout=30,
+            )
+
+            if resp.status_code == 200:
+                data = resp.json()
+                parts = data.get("candidates", [{}])[0].get("content", {}).get("parts", [])
+                text = "\n".join([str(p.get("text", "")).strip() for p in parts if p.get("text")]).strip()
+                return {"mock": False, "model": model_name, "answer": text or "目前資料不足，無法判斷。"}
+
+            last_error = f"Gemini API 回應失敗（HTTP {resp.status_code}，model={model_name}）。"
+            try:
+                error_detail = resp.text[:1000]
+            except Exception:
+                error_detail = ""
+
+            last_error = (
+                f"Gemini API 回應失敗（HTTP {resp.status_code}，model={model_name}）。"
+                f"\nGoogle 回傳內容：{error_detail}"
+            )
+            print(last_error)
+        return {
+            "mock": True,
+            "model": "fallback",
+            "answer": f"{last_error}\n\n{build_mock_ai_answer(question, context)}",
+        }
+
+    except Exception as e:
+        return {
+            "mock": True,
+            "model": "fallback",
+            "answer": f"Gemini API 呼叫失敗：{type(e).__name__}: {e}\n\n{build_mock_ai_answer(question, context)}",
+        }
+    
+
+def build_mock_ai_answer(question, context):
+    qtype = context.get("question_type")
+    q = str(question or "")
+    common = context.get("common") or {}
+    data = context.get("data") or {}
+
+    if qtype == "cleaning":
+        high_points = data.get("high_demand_points") or []
+        record_count = len(data.get("records") or [])
+        if not record_count and not data.get("local_cleaning_records"):
+            notes = "；".join(data.get("notes") or [])
+            return f"目前資料不足，無法判斷。{notes}".strip()
+        if "連續三次" in q or "使用量偏高" in q:
+            if not high_points:
+                return "目前資料中沒有找到連續三次使用量偏高或不合格的點位。"
+            lines = [
+                f"目前找到 {len(high_points)} 個連續三次偏高或不合格的候選點位："
+            ]
+            for idx, item in enumerate(high_points[:requested_list_limit(q)], start=1):
+                lines.append(f"{idx}. {item.get('address', '未知點位')}，最近時間：{item.get('latest_time', '未知')}")
+            lines.append("\n延伸管理建議：優先安排這些點位複查，並確認是否需要提高清潔頻率。")
+            return "\n".join(lines)
+        return (
+            f"目前後端取得 {record_count} 筆近期照片紀錄，"
+            f"連續三次偏高或不合格的候選點位有 {len(high_points)} 個。"
+            "\n\n建議優先查看連續異常點位，確認是否需要增加清潔頻率。"
+        )
+
+    if qtype == "carbon":
+        normal_block = (data.get("variants") or {}).get("normal", {})
+        normal = normal_block.get("esg", {})
+        normal_eq = normal_block.get("equivalents", {})
+        if not normal:
+            return "目前資料不足，無法判斷。找不到 NORMAL 路線碳排摘要。"
+        lines = [
+            f"不跨縣市 NORMAL 目前估算碳排約 {normal.get('estimated_co2_kg', '未知')} kg CO2e。",
+            f"總距離約 {normal.get('total_distance_km', '未知')} km，總行駛時間約 {normal.get('total_drive_min', '未知')} 分鐘。",
+            f"舊路線基準碳排約 {normal.get('baseline_co2_kg', '未知')} kg CO2e；目前節省約 {normal.get('saved_co2_kg', '未知')} kg CO2e，節省比例 {normal.get('saved_pct', '未知')}%。",
+        ]
+        if normal_eq:
+            lines.append(
+                f"具象化來看，節省量約等於 {normal_eq.get('tree_count_year', '未知')} 棵都市樹苗一年吸收量，"
+                f"或少開約 {normal_eq.get('car_km_equivalent', '未知')} 公里乘用車。"
+            )
+        lowest = data.get("lowest_carbon_variant")
+        if lowest:
+            lines.append(f"三種模式中，目前碳排最低的是 {lowest.get('label')}，約 {lowest.get('estimated_co2_kg')} kg CO2e。")
+        high_routes = data.get("carbon_route_rankings") or data.get("highest_distance_routes") or []
+        if high_routes:
+            limit = requested_list_limit(q, default=3, maximum=20)
+            lines.append(f"NORMAL 路線碳排最高前 {min(limit, len(high_routes))} 名：")
+            for index, route in enumerate(high_routes[:limit], start=1):
+                lines.append(
+                    f"{index}. {route.get('route_id') or '未知路線'}（{route.get('driver') or '未知司機'} Day {route.get('day') or '未知'}）："
+                    f"約 {route.get('estimated_co2_kg', '未知')} kg CO2e，距離 {route.get('distance_km', '未知')} km，"
+                    f"{route.get('stops', '未知')} 個點位。"
+                )
+        lines.append("\n延伸管理建議：優先檢查高里程路線、點位分散區域與是否可由同倉同縣市低負載司機分擔；正式調整前仍需重新 OSRM Route 驗證。")
+        return "\n".join(lines)
+
+    variants = data.get("variants") or {}
+    requested_variant = data.get("requested_variant") or requested_route_variant(q)
+    variant_data = variants.get(requested_variant) or {}
+    meta = data.get("meta") or {}
+    driver_rankings = data.get("driver_rankings") or {}
+
+    if ("幾位司機" in q or "幾個點位" in q or "幾個倉庫" in q or "基本資訊" in q):
+        counts = common.get("counts") or {}
+        company = common.get("company") or {}
+        settings = common.get("schedule_settings") or {}
+        return (
+            f"目前公司：{company.get('name') or company.get('display_name') or company.get('key', '未知')}（company_key={company.get('key', '未知')}）。\n"
+            f"目前點位數：{counts.get('service_points', '未知')}。\n"
+            f"目前司機數：{counts.get('drivers', '未知')}。\n"
+            f"目前倉庫/場站數：{counts.get('depots', len(common.get('depots') or []))}。\n"
+            f"每日工時上限：{settings.get('daily_work_minutes', '未知')} 分鐘；排程天數：{settings.get('schedule_days', '未知')}；預設模式：{settings.get('default_route_variant', '未知')}。"
+        )
+
+    unassigned_keywords = [
+        "未排",
+        "未排入",
+        "未被排",
+        "沒排",
+        "沒排入",
+        "沒被排",
+        "沒有排",
+        "沒有排入",
+        "沒有被排",
+        "未安排",
+        "沒安排",
+    ]
+
+    if any(k in q for k in unassigned_keywords):
+        unassigned = (variant_data.get("unassigned") or {})
+        rows = unassigned.get("items") or []
+        total = unassigned.get("total_count", 0)
+        limit = requested_list_limit(q)
+        label = variant_data.get("label") or requested_variant
+        if requested_variant == "cross" and not total and variants.get("compact", {}).get("unassigned", {}).get("total_count"):
+            compact = variants.get("compact") or {}
+            unassigned = compact.get("unassigned") or {}
+            rows = unassigned.get("items") or []
+            total = unassigned.get("total_count", 0)
+            label = f"{label}（本模式未提供未排入檔；以下同時提供跨縣市精簡版資料）"
+        if not total:
+            return f"{label} 目前沒有未排入點位資料；若報表沒有輸出未排入檔，表示目前資料不足，無法列出明細。"
+        lines = [f"{label} 目前未排入點位共 {total} 筆。你要求列出前 {limit} 筆，以下列出 {min(limit, len(rows), total)} 筆："]
+        for idx, row in enumerate(rows[:limit], start=1):
+            point_id = row.get("node_id") or row.get("task_id") or row.get("id") or "-"
+            name = row.get("original_point_name") or row.get("client_name") or row.get("客戶名稱") or "-"
+            address = row.get("address") or row.get("地址") or "-"
+            county = row.get("AI_判斷縣市") or row.get("county") or "-"
+            service = row.get("service_time_min") or row.get("service_time") or row.get("服務時間") or "-"
+            depot = row.get("depot_raw") or row.get("depot") or row.get("所屬倉庫") or "-"
+            reason = row.get("reason") or row.get("未排入原因") or "報表未提供原因"
+            lines.append(f"{idx}. {point_id}｜{name}｜{county}｜{address}｜服務時間：{service}｜倉庫：{depot}｜原因：{reason}")
+        if total < limit:
+            lines.append(f"\n目前實際只有 {total} 筆。")
+        return "\n".join(lines)
+
+    if "司機" in q and ("總工時" in q or "工作量" in q or "最多" in q):
+        highest = (driver_rankings.get("highest_weekly_total") or [{}])[0]
+        if not highest:
+            return "目前資料不足，無法判斷。找不到司機週工時資料。"
+        return (
+            f"目前一週總工時最多的是 {highest.get('driver', '未知司機')}（{highest.get('driver_label', '')}），"
+            f"一週總工時約 {highest.get('weekly_total_min', '未知')} 分鐘，工作天數 {highest.get('used_days', '未知')} 天，"
+            f"平均每日約 {highest.get('avg_per_used_day_min', '未知')} 分鐘。\n\n"
+            "延伸管理建議：優先檢查同倉同縣市是否有低負載司機可承接邊緣點；若要正式轉移，需重新 2-Opt 並用 OSRM Route 驗證不超過 540 分鐘。"
+        )
+
+    if "行駛時間最高" in q or "車程最高" in q:
+        highest = (driver_rankings.get("highest_drive_time") or [{}])[0]
+        if not highest:
+            return "目前資料不足，無法判斷。找不到每日路線車程資料。"
+        return (
+            f"目前單日行駛時間最高的是 {highest.get('司機', '未知司機')} Day {highest.get('天數', '未知')}，"
+            f"行駛時間約 {highest.get('總車程_分', '未知')} 分鐘，總工時約 {highest.get('總工時_分', '未知')} 分鐘，停靠 {highest.get('總站數', '未知')} 站。"
+        )
+
+    if "接近 540" in q or "最接近540" in q:
+        rows = (variant_data.get("route_summary") or {}).get("closest_to_540_routes") or []
+        if not rows:
+            return "目前資料不足，無法判斷。找不到路線工時資料。"
+        first = rows[0]
+        return (
+            f"{variant_data.get('label', requested_variant)} 最接近 540 分鐘的路線是 {first.get('driver')} Day {first.get('day')}，"
+            f"總工時約 {first.get('total_min')} 分鐘，距離 540 分鐘約 {round(abs(540 - (to_float(first.get('total_min')) or 0)), 2)} 分鐘，"
+            f"停靠 {first.get('stop_count')} 站。"
+        )
+
+    if "在哪" in q and "點位" in q:
+        matches = data.get("point_route_matches") or []
+        if not matches:
+            return "目前找不到符合此點位關鍵字的路線紀錄。請提供點位 ID、任務 ID 或更完整地址。"
+        lines = [f"找到 {len(matches)} 筆符合點位關鍵字的路線紀錄："]
+        for idx, row in enumerate(matches[:requested_list_limit(q, default=10)], start=1):
+            lines.append(
+                f"{idx}. {row.get('task_id')} / {row.get('node_id')}：{row.get('address')}，"
+                f"司機 {row.get('driver')}，第 {row.get('day')} 天，第 {row.get('seq')} 站，縣市 {row.get('county')}。"
+            )
+        return "\n".join(lines)
+
+    if "超時" in q:
+        overtime = data.get("overtime_routes") or []
+        if not overtime:
+            return "目前沒有發現超過每日工時上限的路線。"
+        return f"目前有 {len(overtime)} 條路線超過每日工時上限，建議優先檢查。"
+
+    highest = (data.get("highest_work_routes") or [{}])[0]
+    if highest:
+        requested_variant = data.get("requested_variant") or requested_route_variant(q)
+        variant_data = (data.get("variants") or {}).get(requested_variant) or {}
+        label = variant_data.get("label") or requested_variant
+        meta = (variant_data.get("meta") or data.get("meta") or {})
+
+        return (
+            f"目前 {label} 已排入 {meta.get('scheduled_db_points', '未知')} 個點位，"
+            f"未排入 {meta.get('unassigned_db_points', '未知')} 個點位。"
+            f"最高單日工時路線為 {highest.get('司機', '未知司機')} Day {highest.get('天數', '未知')}，"
+            f"總工時約 {highest.get('總工時_分', '未知')} 分鐘。"
+        )
+
+        return "目前資料不足，無法判斷。"
+
+ 
+
+
+
+def normalize_gemini_model(value):
+    model = str(value or "").strip().lower()
+    if model.startswith("models/"):
+        model = model[7:]
+    if re.fullmatch(r"gemini-[a-z0-9][a-z0-9._-]{0,79}", model):
+        return model
+    return "gemini-3.5-flash"
+
+
+@require_POST
+def api_ai_assistant_ask(request):
+    try:
+        payload = json.loads(request.body.decode("utf-8") or "{}")
+    except Exception:
+        payload = {}
+    question = clean_text(payload.get("question"))
+    api_key = str(payload.get("api_key") or "").strip()
+    requested_model = normalize_gemini_model(payload.get("model"))
+    if not question:
+        return JsonResponse({"ok": False, "message": "請輸入問題。"}, status=400)
+    context, evidence = build_ai_context(request, question)
+    company_key = str(((context.get("common") or {}).get("company") or {}).get("key") or "default")
+    history_key = f"ai_assistant_history:{company_key}"
+    conversation_history = list(request.session.get(history_key) or [])[-6:]
+    context["conversation_history"] = conversation_history
+    from .ai.orchestrator import AssistantOrchestrator
+
+    # The assistant is read-only. A page-supplied key overrides the server
+    # environment for this request and is never persisted by the backend.
+    result = AssistantOrchestrator(
+        question,
+        context,
+        api_key=api_key,
+        model=requested_model,
+        user_id=str(getattr(request.user, "pk", "") or getattr(request.user, "username", "")),
+    ).run()
+    conversation_history.append({
+        "question": question,
+        "answer": str(result.get("answer") or "")[:1200],
+        "action": result.get("action"),
+    })
+    request.session[history_key] = conversation_history[-6:]
+    request.session.modified = True
+
+    return JsonResponse({
+        "ok": True,
+        "answer": result.get("answer") or "目前資料不足，無法判斷。",
+        "mock": bool(result.get("mock")),
+        "model": result.get("model"),
+        "provider_error": result.get("provider_error") or "",
+        "provider_notice": result.get("provider_notice") or "",
+        "action": result.get("action"),
+        "tool_result": result.get("tool_result"),
+        "plan": result.get("plan"),
+        "execution": result.get("execution"),
+        "execution_state": result.get("execution_state"),
+        "requires_confirmation": bool(result.get("requires_confirmation")),
+        "mutation_allowed": bool(result.get("mutation_allowed")),
+        "evidence": evidence,
+        "query_time": timezone.localtime(timezone.now()).strftime("%Y-%m-%d %H:%M:%S"),
+        "question_type": result.get("question_type") or context.get("question_type"),
+    })
+
+
+@require_POST
+@login_required(login_url="login")
+@user_passes_test(is_manager, login_url="home")
+def api_ai_assistant_apply(request):
+    """Apply an explicitly confirmed, previously dry-run route merge."""
+    return JsonResponse({
+        "ok": False,
+        "message": "AI 助理僅提供查詢、分析與決策建議；請至點位調整頁預覽並套用路線變更。",
+    }, status=403)
+
+    try:
+        body = json.loads(request.body.decode("utf-8") or "{}")
+    except Exception:
+        return JsonResponse({"ok": False, "message": "JSON 格式錯誤。"}, status=400)
+    if not body.get("confirm"):
+        return JsonResponse({"ok": False, "message": "尚未收到使用者確認，未套用路線。"}, status=400)
+
+    company = get_user_company(request.user)
+    variant = str(body.get("variant") or "normal")
+    if variant not in VARIANT_LABELS:
+        return JsonResponse({"ok": False, "message": "無效的路線模式。"}, status=400)
+    source_route_id = str(body.get("source_route_id") or "").strip()
+    target_route_id = str(body.get("target_route_id") or "").strip()
+    if not source_route_id or not target_route_id or source_route_id == target_route_id:
+        return JsonResponse({"ok": False, "message": "來源與目標路線不完整。"}, status=400)
+
+    output_dir = company_output_dir(OUTPUT_DIR, company)
+    route_path = output_dir / VARIANT_FILES[variant]
+    current_version = _route_file_version(route_path)
+    if body.get("route_version") != current_version:
+        return JsonResponse({"ok": False, "conflict": True, "message": "路線已更新，請重新分析後再套用。"}, status=409)
+    locked = _active_adjustment_route_ids(output_dir)
+    if source_route_id in locked or target_route_id in locked:
+        return JsonResponse({"ok": False, "message": "來源或目標路線已出車或正在執行，不能調整。"}, status=409)
+
+    payload = load_variant_payload(variant, output_dir, company=company)
+    if not payload.get("ok"):
+        return JsonResponse({"ok": False, "message": payload.get("warning") or "找不到路線資料。"}, status=404)
+    settings = get_company_schedule_settings(company)
+    from .services.incremental_scheduler import move_route_stops, write_payload_atomic
+    try:
+        updated, summary = move_route_stops(
+            payload,
+            source_route_id,
+            target_route_id,
+            getattr(settings, "daily_work_minutes", 540) or 540,
+            allow_cross_county=bool(body.get("allow_cross_county")),
+        )
+    except ValueError as exc:
+        return JsonResponse({"ok": False, "message": str(exc)}, status=400)
+
+    route_backup = write_payload_atomic(route_path, updated)
+    _cleanup_route_backups(route_path, 30)
+    journal_path = output_dir / "route_adjustments.json"
+    journal = ai_load_json(journal_path, {}) or {}
+    journal.setdefault("history", []).append({
+        "updated_at": timezone.localtime(timezone.now()).isoformat(),
+        "action": "ai_confirmed_route_merge",
+        "variant": variant,
+        "summary": summary,
+        "route_backup": route_backup.name if route_backup else "",
+        "undone": False,
+    })
+    from .services.incremental_scheduler import write_payload_atomic as write_json_atomic
+    write_json_atomic(journal_path, journal)
+    write_admin_log(request, "AI 確認後套用路線合併", variant, summary)
+    return JsonResponse({
+        "ok": True,
+        "applied": True,
+        "message": f"已套用路線合併：{source_route_id} → {target_route_id}。",
+        "summary": summary,
+        "route_version": _route_file_version(route_path),
+    })
+
+
 def copy_scheduler_outputs_to_tenant(output_dir):
     output_dir.mkdir(parents=True, exist_ok=True)
     filenames = set(VARIANT_FILES.values()) | {
         "routes_new.json",
         "routes_unassigned_strict.json",
         "Unassigned_Points_normal.xlsx",
+        "Unassigned_Points_cross.xlsx",
         "Unassigned_Points_compact.xlsx",
         "Daily_Route_Summary.xlsx",
         "Weekly_Schedule_Summary.xlsx",
@@ -1520,6 +3524,16 @@ def company_industry_label(value):
     return labels.get(value, value or "-")
 
 
+def normalize_company_industry(industry_type, custom_value=""):
+    selected = str(industry_type or "generic_dispatch").strip()
+    if selected == "other":
+        custom = str(custom_value or "").strip()[:50]
+        return custom or "generic_dispatch"
+    if selected in dict(CompanyProfile.INDUSTRY_CHOICES):
+        return selected
+    return "generic_dispatch"
+
+
 def company_management_rows(selected_company_id=None):
     companies = list(CompanyProfile.objects.all().order_by("key"))
     user_profiles = {
@@ -1666,7 +3680,6 @@ def redirect_company_management(message="", error="", company_id=0):
     return redirect(f"/companies/{suffix}")
 
 
-@csrf_exempt
 @login_required(login_url="login")
 @user_passes_test(is_system_admin, login_url="home")
 @require_POST
@@ -1678,14 +3691,13 @@ def company_management_action(request):
             company_id = to_int(request.POST.get("company_id"), 0)
             key = normalize_company_key(request.POST.get("key"))
             name = (request.POST.get("name") or "").strip()
-            industry_type = (request.POST.get("industry_type") or "generic_dispatch").strip()
+            industry_type = normalize_company_industry(
+                request.POST.get("industry_type"), request.POST.get("industry_custom")
+            )
             is_active = request.POST.get("is_active") == "on"
 
             if not key or not name:
                 return redirect_company_management(error="請填寫公司代碼與公司名稱。")
-            if industry_type not in dict(CompanyProfile.INDUSTRY_CHOICES):
-                industry_type = "generic_dispatch"
-
             conflict = CompanyProfile.objects.filter(key=key)
             if company_id:
                 conflict = conflict.exclude(id=company_id)
@@ -1737,6 +3749,62 @@ def company_management_action(request):
             copy_scheduler_outputs_to_tenant(tenant_output)
             write_admin_log(request, "建立通用展示公司", company.key)
             return redirect_company_management(message="通用展示公司已準備完成。")
+
+        if action == "delete_company":
+            company_id = to_int(request.POST.get("company_id"), 0)
+            confirm_key = normalize_company_key(request.POST.get("confirm_key"))
+            company = get_object_or_404(CompanyProfile, pk=company_id)
+
+            if company.key == DEFAULT_COMPANY_KEY:
+                return redirect_company_management(
+                    error="預設公司是系統必要資料，不能刪除。",
+                    company_id=company.id,
+                )
+            if confirm_key != company.key:
+                return redirect_company_management(
+                    error="刪除確認失敗，請重新操作。",
+                    company_id=company.id,
+                )
+
+            company_name = company.name
+            company_key = company.key
+            company_dir = company_output_dir(OUTPUT_DIR, company)
+            company_users = list(
+                User.objects.filter(company_profile__company=company)
+                .exclude(username="system_admin")
+            )
+            deleted_user_count = len(company_users)
+            driver_mapping_count = DriverCompanyProfile.objects.filter(company=company).count()
+            point_mapping_count = ServicePointCompanyProfile.objects.filter(company=company).count()
+
+            with transaction.atomic():
+                if company_users:
+                    User.objects.filter(id__in=[user.id for user in company_users]).delete()
+                company.delete()
+
+            output_removed = False
+            try:
+                tenants_root = (OUTPUT_DIR / "tenants").resolve()
+                resolved_company_dir = company_dir.resolve()
+                if resolved_company_dir.parent == tenants_root and resolved_company_dir.is_dir():
+                    shutil.rmtree(resolved_company_dir)
+                    output_removed = True
+            except OSError:
+                output_removed = False
+
+            write_admin_log(
+                request,
+                "刪除公司",
+                company_key,
+                {
+                    "name": company_name,
+                    "deleted_users": deleted_user_count,
+                    "deleted_driver_mappings": driver_mapping_count,
+                    "deleted_point_mappings": point_mapping_count,
+                    "output_removed": output_removed,
+                },
+            )
+            return redirect_company_management(message=f"{company_name} 已刪除。")
 
         if action == "save_schedule_settings":
             company_id = to_int(request.POST.get("company_id"), 0)
@@ -1879,12 +3947,21 @@ def home(request):
 
 def run_scheduler(request):
     company = get_user_company(request.user)
+    requested_company_key = (request.GET.get("company_key") or "").strip()
+    if requested_company_key and normalize_company_key(requested_company_key) != normalize_company_key(company.key):
+        message = f"company_key 不符合目前登入公司：requested={requested_company_key}, current={company.key}"
+        if (request.GET.get("format") or "").strip().lower() == "json":
+            return JsonResponse({"ok": False, "message": message}, status=403)
+        return redirect("home")
+    resolved_company_key, company_key_source = resolve_company_key(requested_company_key, user=request.user)
+    company = find_company_by_key(resolved_company_key) or company
     settings = get_company_schedule_settings(company)
     variant = request.GET.get("variant") or getattr(settings, "default_route_variant", "normal") or "normal"
     if variant not in VARIANT_LABELS:
         variant = "normal"
     tenant_output = ensure_tenant_output_dir(OUTPUT_DIR, company)
     settings_env = schedule_settings_env(settings)
+    settings_env["DISPATCH_OUTPUT_DIR"] = str(tenant_output)
 
     response_format = (request.GET.get("format") or "").strip().lower()
     wants_json = response_format == "json"
@@ -1906,7 +3983,12 @@ def run_scheduler(request):
                 "message": "排程已在執行中，請等待目前這次完成。",
             })
 
-        write_admin_log(request, "重新計算最佳路徑", variant, {"mode": "background", "company": company.key})
+        write_admin_log(
+            request,
+            "重新計算最佳路徑",
+            variant,
+            {"mode": "background", "company": company.key, "company_key_source": company_key_source},
+        )
         thread = threading.Thread(target=_run_scheduler_background, args=(variant, tenant_output, company.key, settings_env), daemon=True)
         thread.start()
         return JsonResponse({
@@ -1914,12 +3996,19 @@ def run_scheduler(request):
             "started": True,
             "running": True,
             "variant": variant,
+            "company_key": company.key,
+            "company_key_source": company_key_source,
             "label": VARIANT_LABELS.get(variant, variant),
-            "message": "已開始背景重新計算，完成後會自動更新地圖。",
+            "message": f"已開始背景重新計算（company_key={company.key}），完成後會自動更新地圖。",
         })
 
     # 保留原本非 JSON 的按鈕/網址行為：同步執行後導回首頁。
-    write_admin_log(request, "重新計算最佳路徑", variant, {"mode": "sync", "company": company.key})
+    write_admin_log(
+        request,
+        "重新計算最佳路徑",
+        variant,
+        {"mode": "sync", "company": company.key, "company_key_source": company_key_source},
+    )
     try:
         result = subprocess.run(
             [sys.executable, "run_all.py"],
@@ -1931,7 +4020,7 @@ def run_scheduler(request):
             errors="ignore",
             timeout=3600,
         )
-        log_path = OUTPUT_DIR / "run_all_last.log"
+        log_path = tenant_output / "run_all_last.log"
         inner_log_text = ""
         if log_path.exists():
             try:
@@ -1946,7 +4035,6 @@ def run_scheduler(request):
             encoding="utf-8",
         )
         if result.returncode == 0:
-            copy_scheduler_outputs_to_tenant(tenant_output)
             return redirect(f"/home/?variant={variant}&run=success")
         return redirect(f"/home/?variant={variant}&run=failed")
     except Exception as e:
@@ -1973,6 +4061,30 @@ def api_run_status(request):
         "progress": int(data.get("progress") or 0),
         "run_meta": data.get("run_meta"),
     })
+
+
+def api_esg_summary(request):
+    variant = request.GET.get("variant", "normal")
+    if variant not in VARIANT_LABELS:
+        variant = "normal"
+    company = get_user_company(request.user)
+    settings = get_company_schedule_settings(company)
+    output_dir = current_company_output_dir(OUTPUT_DIR, request.user)
+    payload = load_variant_payload(variant, output_dir, settings=settings, company=company)
+    esg = payload.get("esg") or build_esg_summary([], variant, output_dir, settings=settings)
+    return JsonResponse({
+        "ok": bool(payload.get("ok")),
+        "warning": payload.get("warning") or "",
+        "variant": variant,
+        "label": payload.get("label") or VARIANT_LABELS.get(variant, variant),
+        "file_used": payload.get("file_used"),
+        "company": serialize_company(company),
+        "output_dir": str(output_dir),
+        "meta": payload.get("meta") or {},
+        "esg": esg,
+        "equivalents": build_esg_equivalents(esg),
+    }, status=200 if payload.get("ok") else 404)
+
 
 def api_route_options(request):
     variant = request.GET.get("variant", "normal")
@@ -2951,7 +5063,11 @@ def data_import(request):
     return render(
         request,
         "routing/data_import.html",
-        {"error_message": error_message, "summary": summary},
+        {
+            "error_message": error_message,
+            "summary": summary,
+            "return_to_adjustments": request.GET.get("next") == "route-adjustments" or request.POST.get("next") == "route-adjustments",
+        },
     )
 
 
