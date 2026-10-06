@@ -241,7 +241,7 @@
       color: currentColor;
     }
 
-    input {
+    input, select {
       flex: 1;
       padding: 13px 15px;
       border: 1px solid #d2d6da;
@@ -253,7 +253,12 @@
       color: var(--text-main);
     }
 
-    input:focus {
+    select {
+      width: 100%;
+      appearance: none;
+    }
+
+    input:focus, select:focus {
       border-color: var(--primary);
       box-shadow: 0 0 0 3px rgba(74, 144, 226, 0.15);
     }
@@ -360,10 +365,23 @@
       </div>
 
       <h2>申請管理者帳號</h2>
-      <p>申請送出後需由高階管理者審核，通過後才能登入。</p>
+      <p></p>
 
       <form id="registerForm">
         {% csrf_token %}
+        <div class="form-group">
+          <label>申請加入公司</label>
+          <div class="input-wrapper">
+            <i data-lucide="building-2" size="20"></i>
+            <select id="companyKey" required>
+              <option value="">請選擇公司</option>
+              {% for company in company_options %}
+                <option value="{{ company.key }}">{{ company.name }}</option>
+              {% endfor %}
+            </select>
+          </div>
+        </div>
+
         <div class="form-group">
           <label>管理員帳號 Manager ID</label>
           <div class="input-wrapper">
@@ -421,6 +439,7 @@
 
       const username = document.getElementById('reg_user').value;
       const password = document.getElementById('reg_password').value;
+      const companyKey = document.getElementById('companyKey').value;
 
       const response = await fetch("{% url 'register' %}", {
         method: "POST",
@@ -430,7 +449,8 @@
         },
         body: JSON.stringify({
           username: username,
-          password: password
+          password: password,
+          company_key: companyKey
         })
       });
 

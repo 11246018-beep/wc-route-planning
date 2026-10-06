@@ -7,6 +7,7 @@
   <script src="https://unpkg.com/lucide@latest"></script>
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <link href="https://fonts.googleapis.com/css?family=Open+Sans:300,400,600,700" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/responsive.css" />
   <style>
     :root {
       --primary: #4A90E2;
@@ -542,6 +543,31 @@
       background: #fee2e2;
       color: #991b1b;
     }
+    .traffic-congested {
+      background: #fef3c7;
+      color: #92400e;
+    }
+    .traffic-abnormal {
+      background: #fee2e2;
+      color: #991b1b;
+    }
+    .motion-pill {
+      display: inline-flex;
+      align-items: center;
+      margin-left: 6px;
+      padding: 3px 8px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 800;
+      vertical-align: middle;
+    }
+    .motion-normal { background: #dbeafe; color: #1d4ed8; }
+    .motion-slow { background: #fef3c7; color: #92400e; }
+    .motion-stationary { background: #e2e8f0; color: #475569; }
+    .motion-working { background: #ede9fe; color: #6d28d9; }
+    .motion-finished { background: #dcfce7; color: #166534; }
+    .motion-idle { background: #f1f5f9; color: #475569; }
+    .motion-paused { background: #ffedd5; color: #9a3412; }
 
     .driver-meta {
       font-size: 13px;
@@ -765,6 +791,13 @@
         <span>管理者帳號</span>
       </a>
 
+      {% if user.username == 'system_admin' %}
+      <a href="{% url 'company_management' %}" class="menu-item">
+        <div class="icon-box"><i data-lucide="building-2" size="18"></i></div>
+        <span>公司管理</span>
+      </a>
+      {% endif %}
+
       <a href="{% url 'admin_action_logs' %}" class="menu-item">
         <div class="icon-box"><i data-lucide="clipboard-list" size="18"></i></div>
        <span>操作紀錄</span>
@@ -801,8 +834,7 @@
     <section class="panel-card map-panel">
       <div class="map-shell">
         <div class="map-toolbar">
-          <i data-lucide="map"></i>
-          <span>即時司機位置與路線預覽</span>
+
         </div>
 
         <div class="summary-drawer" id="summaryDrawer">
@@ -834,6 +866,14 @@
                 <div class="summary-label">工作中</div>
                 <div class="summary-value" id="summaryWorking">0</div>
               </div>
+              <div class="summary-box">
+                <div class="summary-label">可能壅塞</div>
+                <div class="summary-value" id="summaryCongested">0</div>
+              </div>
+              <div class="summary-box">
+                <div class="summary-label">異常停留</div>
+                <div class="summary-value" id="summaryAbnormal">0</div>
+              </div>
             </div>
 
             <div class="selected-box">
@@ -845,6 +885,8 @@
               <span><i class="legend-dot" style="background:#22c55e;"></i> 已完成</span>
               <span><i class="legend-dot" style="background:#2563eb;"></i> 目前站點</span>
               <span><i class="legend-dot" style="background:#dbe2ea;"></i> 未完成</span>
+              <span><i class="legend-dot" style="background:#f59e0b;"></i> 可能壅塞</span>
+              <span><i class="legend-dot" style="background:#dc2626;"></i> 異常停留</span>
             </div>
           </div>
         </div>
@@ -857,13 +899,15 @@
       <div class="driver-panel-header">
         <div class="title-stack">
           <h2 class="panel-title"><i data-lucide="truck"></i> 司機即時狀態</h2>
-          <div class="panel-subtitle">司機即時狀態固定留在下半部，底部多預留一段安全空間，不會再視覺上貼到工具列。</div>
+          <div class="panel-subtitle"></div>
         </div>
 
         <div class="filter-row">
           <button class="filter-chip active" data-filter="all">全部</button>
           <button class="filter-chip" data-filter="online">只看在線</button>
           <button class="filter-chip" data-filter="working">只看工作中</button>
+          <button class="filter-chip" data-filter="congested">可能壅塞</button>
+          <button class="filter-chip" data-filter="abnormal_stop">異常停留</button>
           <button class="filter-chip" data-filter="offline">只看離線</button>
         </div>
       </div>
@@ -883,7 +927,7 @@
     let routeLayer;
     let refreshTimer = null;
     let countdownTimer = null;
-    let countdown = 15;
+    let countdown = 5;
     let currentFilter = 'all';
     let currentDrivers = [];
     let selectedDriverCode = null;
@@ -903,9 +947,12 @@
     function makeDriverIcon(driver) {
       const online = driver.online === true;
       const working = ['working', 'navigating'].includes(String(driver.status || ''));
+      const trafficState = String(driver.traffic_state || 'normal');
       let color = '#ef4444';
       if (online && working) color = '#2563eb';
       if (online && !working) color = '#16a34a';
+      if (online && trafficState === 'congested') color = '#f59e0b';
+      if (online && trafficState === 'abnormal_stop') color = '#dc2626';
 
       return L.divIcon({
         className: "",
@@ -925,6 +972,12 @@
       if (currentFilter === 'offline') {
         return drivers.filter(d => !d.online);
       }
+      if (currentFilter === 'congested') {
+        return drivers.filter(d => d.online && d.traffic_state === 'congested');
+      }
+      if (currentFilter === 'abnormal_stop') {
+        return drivers.filter(d => d.online && d.traffic_state === 'abnormal_stop');
+      }
       return drivers;
     }
 
@@ -933,11 +986,56 @@
       const online = drivers.filter(d => d.online).length;
       const offline = drivers.filter(d => !d.online).length;
       const working = drivers.filter(d => ['working', 'navigating'].includes(String(d.status || ''))).length;
+      const congested = drivers.filter(d => d.online && d.traffic_state === 'congested').length;
+      const abnormal = drivers.filter(d => d.online && d.traffic_state === 'abnormal_stop').length;
 
       document.getElementById("summaryTotal").textContent = total;
       document.getElementById("summaryOnline").textContent = online;
       document.getElementById("summaryOffline").textContent = offline;
       document.getElementById("summaryWorking").textContent = working;
+      document.getElementById("summaryCongested").textContent = congested;
+      document.getElementById("summaryAbnormal").textContent = abnormal;
+    }
+
+    function formatDuration(seconds) {
+      const total = Math.max(0, Number(seconds || 0));
+      if (total < 60) return `${Math.floor(total)} 秒`;
+      const minutes = Math.floor(total / 60);
+      const remain = Math.floor(total % 60);
+      return remain ? `${minutes} 分 ${remain} 秒` : `${minutes} 分鐘`;
+    }
+
+    function trafficLabel(driver) {
+      if (!driver?.online) return null;
+      if (driver.traffic_state === 'abnormal_stop') {
+        return {
+          text: '異常停留',
+          cls: 'traffic-abnormal',
+          duration: formatDuration(driver.stationary_seconds),
+        };
+      }
+      if (driver.traffic_state === 'congested') {
+        return {
+          text: '可能壅塞',
+          cls: 'traffic-congested',
+          duration: formatDuration(driver.low_speed_seconds),
+        };
+      }
+      return null;
+    }
+
+    function motionLabel(driver) {
+      if (!driver?.online) return { text: '離線', cls: 'motion-idle' };
+
+      const status = String(driver.status || 'idle');
+      const speed = Math.max(0, Number(driver.speed_kmh || 0));
+      if (status === 'working') return { text: '清掃中', cls: 'motion-working' };
+      if (status === 'finished') return { text: '當天清掃完成', cls: 'motion-finished' };
+      if (status === 'paused') return { text: '暫停', cls: 'motion-paused' };
+      if (status === 'idle') return { text: '待命', cls: 'motion-idle' };
+      if (speed >= 10) return { text: '正常行駛', cls: 'motion-normal' };
+      if (speed >= 1) return { text: '慢速', cls: 'motion-slow' };
+      return { text: '靜止', cls: 'motion-stationary' };
     }
 
 
@@ -1031,14 +1129,19 @@
         });
 
         const positionText = point.source === 'depot' ? '場站預設位置' : '司機即時位置';
+        const traffic = trafficLabel(driver);
+        const motion = motionLabel(driver);
 
         marker.bindPopup(`
           <div>
             <div><strong>${escapeHtml(driver.driver_label || driver.driver_code)}</strong></div>
             <div>狀態：${escapeHtml(driver.status || "-")}</div>
             <div>第 ${escapeHtml(driver.day || "-")} 天</div>
-            <div>路線：${escapeHtml(driver.route_id || "-")}</div>
+            <div>路線："${escapeHtml(driver.route_id || "-")}"</div>
             <div>位置來源：${positionText}</div>
+            <div>車速：${escapeHtml(driver.speed_kmh || 0)} km/h</div>
+            <div>行車狀態：${motion.text}</div>
+            ${traffic ? `<div>交通判定：${traffic.text}（${traffic.duration}）</div>` : ''}
             <div>完成：${escapeHtml(driver.completed_count || 0)} / ${escapeHtml(driver.total_count || 0)}</div>
             <div>最後更新：${escapeHtml(driver.updated_at || "-")}</div>
           </div>
@@ -1108,6 +1211,8 @@
         const onlineText = driver.online ? "在線" : "離線";
         const activeClass = selectedDriverCode === driver.driver_code ? 'active' : '';
         const titleText = buildDriverCardTitle(driver);
+        const traffic = trafficLabel(driver);
+        const motion = motionLabel(driver);
 
         return `
           <div class="driver-card ${activeClass}" data-driver-code="${escapeHtml(driver.driver_code)}">
@@ -1115,6 +1220,7 @@
               <div class="driver-name">${escapeHtml(titleText)}</div>
               <div class="driver-head-actions">
                 <div class="status-pill ${onlineClass}">${onlineText}</div>
+                ${traffic ? `<div class="status-pill ${traffic.cls}">${traffic.text}</div>` : ''}
                 <button type="button" class="reset-progress-btn" data-driver-code="${escapeHtml(driver.driver_code)}">
                   清除目前進度
                 </button>
@@ -1123,6 +1229,11 @@
 
             <div class="driver-meta">
               <div>最後更新：${escapeHtml(driver.updated_at || "-")}</div>
+              <div>
+                目前車速：${escapeHtml(driver.speed_kmh || 0)} km/h
+                <span class="motion-pill ${motion.cls}">${motion.text}</span>
+                ${traffic ? `，${traffic.text}持續 ${traffic.duration}` : ''}
+              </div>
             </div>
 
             <div class="progress-wrap">
@@ -1213,9 +1324,10 @@
         return;
       }
 
+      const motion = motionLabel(driver);
       textEl.innerHTML =
         `選取司機：<strong>${escapeHtml(driver.driver_label || driver.driver_code)}</strong><br>` +
-        `第 ${escapeHtml(driver.day || 0)} 天，路線：${escapeHtml(driver.route_id || "-")}，狀態：${escapeHtml(driver.status || "-")}`;
+        `第 ${escapeHtml(driver.day || 0)} 天，路線：${escapeHtml(driver.route_id || "-")}，狀態：${escapeHtml(driver.status || "-")}，車速：${escapeHtml(driver.speed_kmh || 0)} km/h（${motion.text}）`;
     }
 
     async function fetchRouteDetail(driver) {
@@ -1361,18 +1473,18 @@
           drawSelectedDriverRoute();
         }
 
-        countdown = 15;
+        countdown = 5;
       } catch (err) {
         document.getElementById("driverList").innerHTML = `<div class="empty-box">讀取失敗：${escapeHtml(err)}</div>`;
       }
     }
 
     function startTimers() {
-      refreshTimer = setInterval(loadOverview, 15000);
+      refreshTimer = setInterval(loadOverview, 5000);
 
       countdownTimer = setInterval(() => {
         countdown -= 1;
-        if (countdown < 0) countdown = 15;
+        if (countdown < 0) countdown = 5;
         document.getElementById("refreshText").textContent = `下次更新：${countdown} 秒`;
       }, 1000);
     }

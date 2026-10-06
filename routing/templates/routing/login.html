@@ -241,7 +241,7 @@
       color: currentColor;
     }
 
-    input {
+    input, select {
       flex: 1;
       padding: 13px 15px;
       border: 1px solid #d2d6da;
@@ -253,7 +253,12 @@
       color: var(--text-main);
     }
 
-    input:focus {
+    select {
+      width: 100%;
+      appearance: none;
+    }
+
+    input:focus, select:focus {
       border-color: var(--primary);
       box-shadow: 0 0 0 3px rgba(74, 144, 226, 0.15);
     }
@@ -361,10 +366,23 @@
 
       <div class="card-header">
         <h2>歡迎回來</h2>
-        <p>請使用已審核的管理者帳號登入系統</p>
+        <p></p>
       </div>
 
       <form id="loginForm">
+        <div class="form-group">
+          <label>登入身分 / 公司</label>
+          <div class="input-wrapper">
+            <i data-lucide="building-2" size="20"></i>
+            <select id="companyKey" required>
+              <option value="">請選擇登入身分或公司</option>
+              {% for company in company_options %}
+                <option value="{{ company.key }}">{{ company.name }}</option>
+              {% endfor %}
+            </select>
+          </div>
+        </div>
+
         <div class="form-group">
           <label>管理員帳號 Manager ID</label>
           <div class="input-wrapper">
@@ -422,6 +440,7 @@
 
       const userid = document.getElementById('userid').value;
       const password = document.getElementById('password').value;
+      const companyKey = document.getElementById('companyKey').value;
 
       const response = await fetch("{% url 'login' %}", {
         method: "POST",
@@ -429,13 +448,13 @@
           "Content-Type": "application/json",
           "X-CSRFToken": "{{ csrf_token }}"
         },
-        body: JSON.stringify({ userid: userid, password: password })
+        body: JSON.stringify({ userid: userid, password: password, company_key: companyKey })
       });
 
       const result = await response.json();
 
       if (result.success) {
-        window.location.href = "{% url 'home' %}";
+        window.location.href = result.redirect_url || "{% url 'home' %}";
       } else {
         alert(result.message);
       }

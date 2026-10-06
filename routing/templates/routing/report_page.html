@@ -6,6 +6,7 @@
   <title>Dispatch Nav | 問題回報</title>
   <script src="https://unpkg.com/lucide@latest"></script>
   <link href="https://fonts.googleapis.com/css?family=Open+Sans:300,400,600,700" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/responsive.css" />
   <style>
     :root {
       --primary: #4A90E2;
@@ -540,13 +541,9 @@
           <div class="report-content">${escapeHtml(report.content || '')}</div>
 
           <div class="report-meta">
-            <div class="meta-chip">ID：${report.id || '-'}</div>
             <div class="meta-chip">司機：${escapeHtml(report.driver_code || '-')}</div>
             <div class="meta-chip">第幾天：${report.day || '-'}</div>
             <div class="meta-chip">第幾站：${report.stop_seq || '-'}</div>
-            <div class="meta-chip">路線：${escapeHtml(report.route_id || '-')}</div>
-            <div class="meta-chip">模式：${escapeHtml(report.variant || '-')}</div>
-            <div class="meta-chip">狀態：${escapeHtml(report.status || '-')}</div>
           </div>
 
           ${CAN_EDIT_REPORTS ? `

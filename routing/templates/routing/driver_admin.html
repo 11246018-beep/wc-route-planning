@@ -6,6 +6,7 @@
   <title>Dispatch Nav | 帳號管理</title>
   <script src="https://unpkg.com/lucide@latest"></script>
   <link href="https://fonts.googleapis.com/css?family=Open+Sans:300,400,600,700" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/responsive.css" />
   <style>
     :root {
       --primary: #4A90E2;
@@ -454,6 +455,13 @@
         <span>管理者帳號</span>
       </a>
 
+      {% if user.username == 'system_admin' %}
+      <a href="{% url 'company_management' %}" class="menu-item">
+        <div class="icon-box"><i data-lucide="building-2" size="18"></i></div>
+        <span>公司管理</span>
+      </a>
+      {% endif %}
+
       <a href="{% url 'admin_action_logs' %}" class="menu-item">
         <div class="icon-box"><i data-lucide="clipboard-list" size="18"></i></div>
        <span>操作紀錄</span>
@@ -495,7 +503,7 @@
         <div class="summary-value" id="summaryActive">0</div>
       </div>
       <div class="summary-card">
-        <div class="summary-label">已參與固定 14 車排程</div>
+        <div class="summary-label" id="summarySlotLabel">已參與固定排程</div>
         <div class="summary-value" id="summaryActiveWithSlot">0</div>
       </div>
       <div class="summary-card">
@@ -503,11 +511,11 @@
         <div class="summary-value" id="summaryActiveWithoutSlot">0</div>
       </div>
       <div class="summary-card">
-        <div class="summary-label">五股席位使用</div>
+        <div class="summary-label" id="summaryDepotALabel">五股席位使用</div>
         <div class="summary-value" id="summaryWugu">0 / 2</div>
       </div>
       <div class="summary-card">
-        <div class="summary-label">平鎮席位使用</div>
+        <div class="summary-label" id="summaryDepotBLabel">平鎮席位使用</div>
         <div class="summary-value" id="summaryPingzhen">0 / 12</div>
       </div>
     </section>
@@ -526,11 +534,6 @@
     {% if user.is_staff or user.is_superuser %}
     <section class="panel">
       <h3 id="formTitle">新增 / 編輯司機帳號</h3>
-      <div class="panel-note">
-        系統排程固定只有 <strong>14 個席位</strong>，其中 <strong>五股 2 位</strong>、<strong>平鎮 12 位</strong>。<br>
-        你現在新增的司機如果要參與排程，請在下方選一個固定席位，意思就是「這位新司機要替代哪一個原本的排程席位」。<br>
-        如果不選席位，帳號仍可建立，但 <strong>不會參與固定 14 車排程</strong>。
-      </div>
 
       <input type="hidden" id="formId" />
 
@@ -557,7 +560,7 @@
 
         <div>
           <label>App 密碼</label>
-          <input id="formPassword" type="text" placeholder="新增必填；編輯時留空代表不變更密碼" />
+          <input id="formPassword" type="password" autocomplete="new-password" placeholder="新增時必填，編輯時留空代表不變更密碼" />
         </div>
 
         <div>
@@ -568,7 +571,6 @@
         <div>
           <label>固定排程席位</label>
           <select id="formScheduleSlot"></select>
-          <div id="scheduleSlotHint" class="hint-box">未指定固定席位，這個帳號就不會參與固定 14 車排程。</div>
         </div>
 
         <div>
@@ -595,9 +597,6 @@
 
     <section class="slot-panel">
       <h3>固定排程席位總覽</h3>
-      <div class="panel-note">
-        這裡會顯示 14 個固定排程席位目前是由哪位帳號接手。新增司機後，只要指定席位，就等於替代該席位原本的固定排程角色。
-      </div>
       <div class="slot-grid" id="slotGrid">
         <div class="empty-box">載入中...</div>
       </div>
@@ -634,6 +633,7 @@
     let allDrivers = [];
     let fixedSlots = [];
     let summaryData = null;
+    let defaultWorkMinutes = 540;
 
     function updateLastUpdateTime() {
       const now = new Date();
@@ -658,7 +658,8 @@
       const select = document.getElementById('formScheduleSlot');
       if (!select) return;
       const currentValue = selectedValue || '';
-      const options = ['<option value="">不參與固定 14 車排程</option>'];
+      const limit = summaryData?.active_limit || fixedSlots.length || 14;
+      const options = [`<option value="">不參與固定 ${escapeHtml(limit)} 車排程</option>`];
 
       fixedSlots.forEach(item => {
         options.push(`<option value="${escapeHtml(item.slot)}">${escapeHtml(item.label)}｜${escapeHtml(item.depot_name)}</option>`);
@@ -666,22 +667,6 @@
 
       select.innerHTML = options.join('');
       select.value = currentValue;
-      updateScheduleSlotHint();
-    }
-
-    function updateScheduleSlotHint() {
-      const select = document.getElementById('formScheduleSlot');
-      const hint = document.getElementById('scheduleSlotHint');
-      if (!select || !hint) return;
-      const scheduleSlot = select.value;
-      const meta = slotMeta(scheduleSlot);
-
-      if (!scheduleSlot || !meta) {
-        hint.innerHTML = '未指定固定席位，這個帳號就不會參與固定 14 車排程。';
-        return;
-      }
-
-      hint.innerHTML = `目前選擇 <strong>${escapeHtml(meta.label)}</strong>，出發倉庫為 <strong>${escapeHtml(meta.depot_name)}</strong>。這表示這位司機會替代固定席位 <strong>${escapeHtml(meta.slot)}</strong> 進入排程。`;
     }
 
     async function loadDrivers() {
@@ -695,7 +680,7 @@
 
       try {
         const res = await fetch(url);
-        const data = await res.json();
+        const data = await readJsonResponse(res);
 
         if (!res.ok || !data.ok) {
           tbody.innerHTML = `<tr><td colspan="11" class="empty-box">讀取失敗：${escapeHtml(data.message || '未知錯誤')}</td></tr>`;
@@ -705,6 +690,7 @@
         allDrivers = Array.isArray(data.drivers) ? data.drivers : [];
         fixedSlots = Array.isArray(data.fixed_slots) ? data.fixed_slots : [];
         summaryData = data.summary || null;
+        defaultWorkMinutes = Number(data.default_work_minutes || summaryData?.default_work_minutes || 540);
 
         if (CAN_MANAGE_DRIVERS) {
           const slotSelect = document.getElementById('formScheduleSlot');
@@ -723,13 +709,26 @@
       const safeSummary = summary || {};
       const slotUsage = safeSummary.slot_usage || {};
       const slotLimits = safeSummary.slot_limits || {};
+      const activeLimit = safeSummary.active_limit || fixedSlots.length || 14;
+      const customDepot = safeSummary.custom_depot === true;
 
       document.getElementById('summaryTotal').textContent = safeSummary.total_count ?? allDrivers.length;
       document.getElementById('summaryActive').textContent = safeSummary.active_count ?? allDrivers.filter(d => d.is_active).length;
       document.getElementById('summaryActiveWithSlot').textContent = safeSummary.active_with_slot_count ?? allDrivers.filter(d => d.is_active && d.schedule_slot).length;
       document.getElementById('summaryActiveWithoutSlot').textContent = safeSummary.active_without_slot_count ?? allDrivers.filter(d => d.is_active && !d.schedule_slot).length;
-      document.getElementById('summaryWugu').textContent = `${slotUsage.Wugu ?? 0} / ${slotLimits.Wugu ?? 2}`;
-      document.getElementById('summaryPingzhen').textContent = `${slotUsage.Pingzhen ?? 0} / ${slotLimits.Pingzhen ?? 12}`;
+      document.getElementById('summarySlotLabel').textContent = `已參與固定 ${activeLimit} 車排程`;
+      if (customDepot) {
+        const depotName = fixedSlots[0]?.depot_name || '自訂倉庫';
+        document.getElementById('summaryDepotALabel').textContent = `${depotName}席位使用`;
+        document.getElementById('summaryWugu').textContent = `${slotUsage.Custom ?? 0} / ${slotLimits.Custom ?? activeLimit}`;
+        document.getElementById('summaryDepotBLabel').textContent = '其他席位使用';
+        document.getElementById('summaryPingzhen').textContent = `0 / 0`;
+      } else {
+        document.getElementById('summaryDepotALabel').textContent = '五股席位使用';
+        document.getElementById('summaryWugu').textContent = `${slotUsage.Wugu ?? 0} / ${slotLimits.Wugu ?? 2}`;
+        document.getElementById('summaryDepotBLabel').textContent = '平鎮席位使用';
+        document.getElementById('summaryPingzhen').textContent = `${slotUsage.Pingzhen ?? 0} / ${slotLimits.Pingzhen ?? 12}`;
+      }
     }
 
     function renderSlotGrid(drivers, slots) {
@@ -758,11 +757,6 @@
               ${driver
                 ? `${escapeHtml(driver.driver_code)}${driver.display_name ? `｜${escapeHtml(driver.display_name)}` : ''}`
                 : '目前沒有啟用中的接手帳號'}
-            </div>
-            <div class="small-text" style="margin-top:8px;">
-              ${driver
-                ? `這位司機現在會以 ${escapeHtml(slot.slot)} 的角色參與排程。`
-                : '若要讓新司機參與排程，可在表單把固定排程席位設成這個位置。'}
             </div>
           </div>
         `;
@@ -841,15 +835,13 @@
       document.getElementById('formDriverCode').value = driver.driver_code || '';
       document.getElementById('formDisplayName').value = driver.display_name || '';
       document.getElementById('formDepotId').value = driver.depot_id ?? '';
-      document.getElementById('formMaxMinutes').value = driver.max_minutes ?? 540;
+      document.getElementById('formMaxMinutes').value = driver.max_minutes ?? defaultWorkMinutes;
       document.getElementById('formPassword').value = '';
       document.getElementById('formPassword').placeholder = '留空代表不變更原本密碼';
       document.getElementById('formPhone').value = driver.phone || '';
       document.getElementById('formNote').value = driver.note || '';
       document.getElementById('formIsActive').value = String(driver.is_active);
       renderSlotOptions(driver.schedule_slot || '');
-      updateScheduleSlotHint();
-
       window.scrollTo({ top: 0, behavior: 'smooth' });
     }
 
@@ -860,14 +852,24 @@
       document.getElementById('formDriverCode').value = '';
       document.getElementById('formDisplayName').value = '';
       document.getElementById('formDepotId').value = '';
-      document.getElementById('formMaxMinutes').value = '540';
+      document.getElementById('formMaxMinutes').value = String(defaultWorkMinutes || 540);
       document.getElementById('formPassword').value = '';
-      document.getElementById('formPassword').placeholder = '新增必填；編輯時留空代表不變更密碼';
+      document.getElementById('formPassword').placeholder = '新增時必填，編輯時留空代表不變更密碼';
       document.getElementById('formPhone').value = '';
       document.getElementById('formNote').value = '';
       document.getElementById('formIsActive').value = 'true';
       renderSlotOptions('');
-      updateScheduleSlotHint();
+    }
+
+    async function readJsonResponse(response) {
+      const contentType = response.headers.get('content-type') || '';
+      if (!contentType.includes('application/json')) {
+        if (response.redirected || response.status === 401 || response.status === 403) {
+          throw new Error('登入狀態已失效，請重新登入後再操作');
+        }
+        throw new Error(`伺服器回應格式錯誤（HTTP ${response.status}）`);
+      }
+      return response.json();
     }
 
     async function saveDriver() {
@@ -877,7 +879,7 @@
         driver_code: document.getElementById('formDriverCode').value.trim().toUpperCase(),
         display_name: document.getElementById('formDisplayName').value.trim(),
         depot_id: Number(document.getElementById('formDepotId').value || 0),
-        max_minutes: Number(document.getElementById('formMaxMinutes').value || 540),
+        max_minutes: Number(document.getElementById('formMaxMinutes').value || defaultWorkMinutes || 540),
         password: document.getElementById('formPassword').value.trim(),
         phone: document.getElementById('formPhone').value.trim(),
         note: document.getElementById('formNote').value.trim(),
@@ -902,7 +904,7 @@
           body: JSON.stringify(payload)
         });
 
-        const data = await res.json();
+        const data = await readJsonResponse(res);
 
         if (!res.ok || !data.ok) {
           alert(data.message || '儲存失敗');
@@ -938,7 +940,7 @@
           })
         });
 
-        const data = await res.json();
+        const data = await readJsonResponse(res);
 
         if (!res.ok || !data.ok) {
           alert(data.message || '重設密碼失敗');
@@ -973,7 +975,7 @@
           })
         });
 
-        const data = await res.json();
+        const data = await readJsonResponse(res);
 
         if (!res.ok || !data.ok) {
           alert(data.message || '刪除失敗');
@@ -995,8 +997,6 @@
     }
 
     document.getElementById('keywordInput').addEventListener('input', loadDrivers);
-    if (document.getElementById('formScheduleSlot')) { document.getElementById('formScheduleSlot').addEventListener('change', updateScheduleSlotHint); }
-
     if (CAN_MANAGE_DRIVERS) {
       resetForm();
     }
