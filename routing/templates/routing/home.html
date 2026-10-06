@@ -7,6 +7,7 @@
   <script src="https://unpkg.com/lucide@latest"></script>
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <link href="https://fonts.googleapis.com/css?family=Open+Sans:300,400,600,700" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/responsive.css" />
   <style>
     :root {
       --primary: #4A90E2;
@@ -81,7 +82,8 @@
       display: flex;
       align-items: center;
       gap: 15px;
-      padding: 12px;
+      min-height: 46px;
+      padding: 8px 10px;
       border-radius: 10px;
       cursor: pointer;
       transition: background 0.2s;
@@ -91,8 +93,11 @@
     .menu-item:hover { background: #f8f9fa; }
 
     .menu-item .icon-box {
-      width: 32px;
-      height: 32px;
+      width: 34px;
+      height: 34px;
+      min-width: 34px;
+      padding: 0;
+      box-sizing: border-box;
       display: flex;
       align-items: center;
       justify-content: center;
@@ -107,7 +112,7 @@
     }
     .menu-item span {
       font-size: 14px;
-      font-weight: 600;
+      font-weight: 700;
       color: #67748e;
       white-space: nowrap;
       opacity: 0;
@@ -218,6 +223,19 @@
       background: #fff;
       color: var(--primary);
       border-radius: 7px;
+    }
+
+    .company-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 7px 10px;
+      border-radius: 999px;
+      background: #eef4ff;
+      color: #2563eb;
+      font-size: 12px;
+      font-weight: 800;
+      white-space: nowrap;
     }
 
     .status-container {
@@ -335,7 +353,43 @@
       border-radius: 14px;
       padding: 12px;
       margin-bottom: 12px;
-      max-height: 300px;
+      max-height: none;
+      min-width: 0;
+      overflow: visible;
+    }
+
+    .esg-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px;
+    }
+
+    .esg-card {
+      background: #ffffff;
+      border: 1px solid #e5e7eb;
+      border-radius: 12px;
+      padding: 10px;
+    }
+
+    .esg-label {
+      color: #64748b;
+      font-size: 11px;
+      font-weight: 800;
+      margin-bottom: 4px;
+    }
+
+    .esg-value {
+      color: #0f172a;
+      font-size: 17px;
+      font-weight: 900;
+      line-height: 1.2;
+    }
+
+    .esg-note {
+      color: #64748b;
+      font-size: 11px;
+      line-height: 1.5;
+      margin-top: 8px;
     }
 
     .progress-wrap {
@@ -457,12 +511,60 @@
       font-weight: 700;
       border: none;
       cursor: pointer;
+      max-width: 100%;
+      min-width: 0;
+      white-space: normal;
+      line-height: 1.35;
+      text-align: center;
     }
     .action-btn.success { background: #16a34a; }
     .action-btn.gray { background: #64748b; }
     .action-btn:disabled {
       opacity: 0.6;
       cursor: not-allowed;
+    }
+
+    .hint-wrap {
+      position: relative;
+      display: inline-flex;
+      align-items: center;
+    }
+
+    .hint-btn {
+      width: 36px;
+      height: 36px;
+      border-radius: 999px;
+      border: 1px solid #cbd5e1;
+      background: #ffffff;
+      color: #475569;
+      font-weight: 900;
+      cursor: pointer;
+      box-shadow: 0 4px 12px rgba(15, 23, 42, 0.08);
+    }
+
+    .hint-popover {
+      display: none;
+      position: fixed;
+      width: min(320px, calc(100vw - 32px));
+      z-index: 2500;
+      background: #ffffff;
+      border: 1px solid #dbeafe;
+      border-radius: 14px;
+      box-shadow: 0 12px 30px rgba(15, 23, 42, 0.18);
+      padding: 12px;
+      color: #334155;
+      font-size: 12px;
+      line-height: 1.6;
+      white-space: normal;
+      word-break: normal;
+    }
+
+    .hint-popover.show {
+      display: block;
+    }
+
+    .hint-popover strong {
+      color: #0f172a;
     }
 
     .toggle-row {
@@ -575,6 +677,12 @@
         width: 68px;
       }
     }
+    .progress-status-legend { margin-left: 100px !important; margin-bottom: 82px !important; }
+    @media (max-width: 760px) {
+      .progress-status-legend { margin-left: 86px !important; margin-bottom: 115px !important; font-size: 11px !important; }
+      .esg-grid { grid-template-columns: 1fr; }
+      #floating-panel { width: min(290px, calc(100vw - 105px)); }
+    }
   </style>
 </head>
 <body>
@@ -585,6 +693,7 @@
     <span>Dispatch Nav</span>
   </div>
   <div class="menu-list">
+    {% include "routing/_sidebar_items.html" %}
     <a href="{% url 'home' %}" class="menu-item active">
       <div class="icon-box"><i data-lucide="home" size="18"></i></div>
       <span>主要地圖</span>
@@ -605,11 +714,35 @@
       <span>司機帳號</span>
     </a>
 
+    <a href="{% url 'esg_page' %}" class="menu-item">
+      <div class="icon-box"><i data-lucide="leaf" size="18"></i></div>
+      <span>ESG 永續分析</span>
+    </a>
+
+    <a href="{% url 'ai_assistant_page' %}" class="menu-item">
+      <div class="icon-box"><i data-lucide="sparkles" size="18"></i></div>
+      <span>AI 助理</span>
+    </a>
+
     {% if user.is_superuser %}
     <a href="{% url 'account_management' %}" class="menu-item">
       <div class="icon-box"><i data-lucide="shield-check" size="18"></i></div>
       <span>管理者帳號</span>
     </a>
+
+    {% if user.username != 'system_admin' %}
+    <a href="{% url 'company_settings' %}" class="menu-item">
+      <div class="icon-box"><i data-lucide="sliders-horizontal" size="18"></i></div>
+      <span>營運設定</span>
+    </a>
+    {% endif %}
+
+    {% if user.username == 'system_admin' %}
+    <a href="{% url 'company_management' %}" class="menu-item">
+      <div class="icon-box"><i data-lucide="building-2" size="18"></i></div>
+      <span>公司管理</span>
+    </a>
+    {% endif %}
 
     <a href="{% url 'admin_action_logs' %}" class="menu-item">
       <div class="icon-box"><i data-lucide="clipboard-list" size="18"></i></div>
@@ -637,6 +770,10 @@
 <nav id="top-nav">
   <div class="nav-left">
     <div class="nav-brand"><i data-lucide="truck"></i> Dispatch</div>
+    <div class="company-pill" title="目前公司 / 租戶">
+      <i data-lucide="building-2" size="14"></i>
+      {{ company.name|default:"Dispatch Nav 示範公司" }}
+    </div>
     <div class="controls">
       <select id="driverSel"><option>載入中...</option></select>
 
@@ -682,6 +819,9 @@
         <button id="btnRunScheduler" class="action-btn success" type="button">
           <i data-lucide="route"></i> 重新計算最佳路徑
         </button>
+        <a href="{% url 'route_adjustments_page' %}" class="action-btn gray" style="text-decoration:none;">
+          <i data-lucide="list-plus"></i> 補排後續清掃點
+        </a>
         {% else %}
         <button id="btnRunScheduler" class="action-btn" type="button" disabled style="background:#94a3b8; cursor:not-allowed;">
           <i data-lucide="lock"></i> 只讀權限不可重新計算
@@ -706,27 +846,73 @@
         <input id="pointSearchInput" class="point-search-input" type="text" placeholder="輸入 ID / 名稱 / 地址 / N_0001" />
         <button id="btnPointSearch" class="action-btn gray" type="button" style="width:auto; padding:9px 12px;">查詢</button>
       </div>
-      <div id="pointSearchResults" class="point-search-results mini-text">輸入點位資訊後，可查詢它排在哪位司機、哪一天、第幾站。</div>
+      <div id="pointSearchResults" class="point-search-results mini-text"></div>
     </div>
 
     <div class="float-block">
       <div class="toggle-row">
         <div>
           <div style="font-weight:800; color:#0f172a;">顯示全部點位</div>
-          <div class="mini-text">開啟後會在地圖上加上所有點位，關閉只顯示本次清掃點位。</div>
+          <div class="mini-text"></div>
         </div>
         <label class="switch">
           <input type="checkbox" id="toggleAllPoints" />
           <span class="slider"></span>
         </label>
       </div>
-      <div id="allPointsStatus" class="mini-text" style="margin-top:10px;">目前只顯示清掃點位。</div>
+      <div id="allPointsStatus" class="mini-text" style="margin-top:10px;"></div>
     </div>
 
     <div class="float-block">
       <div style="font-weight:800; color:#0f172a; margin-bottom:8px;">路線摘要</div>
       <div id="routeSummaryTitle" style="font-size:16px; font-weight:800; color:#0f172a; margin-bottom:8px;">尚未載入路線</div>
       <div id="routeMeta" class="mini-text">請先選擇類型、司機與天數。</div>
+    </div>
+
+    <div class="float-block">
+      <div style="font-weight:800; color:#0f172a; margin-bottom:8px;">ESG 永續摘要</div>
+      <div class="esg-grid">
+        <div class="esg-card">
+          <div class="esg-label">本方案總里程</div>
+          <div id="esgTotalDistance" class="esg-value">-</div>
+        </div>
+        <div class="esg-card">
+          <div class="esg-label">預估碳排</div>
+          <div id="esgTotalCo2" class="esg-value">-</div>
+        </div>
+        <div class="esg-card">
+          <div class="esg-label">節省里程</div>
+          <div id="esgSavedDistance" class="esg-value">-</div>
+        </div>
+        <div class="esg-card">
+          <div class="esg-label">預估減碳</div>
+          <div id="esgSavedCo2" class="esg-value">-</div>
+        </div>
+      </div>
+      <div id="esgNote" class="esg-note">載入路線後顯示整體永續效益估算。</div>
+      <div class="btn-row" style="margin-top:10px;">
+        <a href="{% url 'esg_page' %}" class="action-btn gray" style="text-decoration:none;">
+          <i data-lucide="leaf"></i> 前往 ESG 永續分析
+        </a>
+      </div>
+      {% if user.is_staff or user.is_superuser %}
+      <input id="esgBaselineFile" type="file" accept=".xlsx,.xls,.json,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,application/json" style="display:none;" />
+      <div class="btn-row" style="margin-top:10px;">
+        <button id="btnUploadEsgBaseline" class="action-btn gray" type="button">
+          <i data-lucide="upload"></i> 上傳舊路線
+        </button>
+        <div class="hint-wrap">
+          <button id="btnEsgColumnHint" class="hint-btn" type="button" aria-label="欄位建議">!</button>
+          <div id="esgColumnHint" class="hint-popover">
+            <strong>舊路線 Excel 欄位建議</strong><br>
+            必要欄位：日程(Day)、員工代號、順序、地址、緯度、經度。<br>
+            建議欄位：工作區域、任務ID、維護時間(分)、預估車程(分)、累計工時(分)。<br>
+            系統會依「日程 + 員工代號」分組，依「順序」排列站點。
+          </div>
+        </div>
+      </div>
+      <div id="esgUploadStatus" class="mini-text" style="margin-top:8px;">可上傳舊路線 Excel 作為減碳比較基準。</div>
+      {% endif %}
     </div>
 
     <div class="float-block">
@@ -747,6 +933,7 @@
   <div class="kpi-item"><div class="kpi-label">車程(min)</div><div id="kpiDrive" class="kpi-value">-</div></div>
   <div class="kpi-item"><div class="kpi-label">總工時(min)</div><div id="kpiTotal" class="kpi-value">-</div></div>
   <div class="kpi-item"><div class="kpi-label">距離(km)</div><div id="kpiDist" class="kpi-value">-</div></div>
+  <div class="kpi-item"><div class="kpi-label">方案碳排(kg)</div><div id="kpiEsgCo2" class="kpi-value">-</div></div>
 </div>
 
 <div id="toast"></div>
@@ -764,6 +951,7 @@ const VARIANT_COLORS = {
   cross: "#ef4444",
   compact: "#8b5cf6"
 };
+const CURRENT_COMPANY_KEY = "{{ company.key|default:'toilet_demo'|escapejs }}";
 
 const driverSelEl = document.getElementById("driverSel");
 const currentDayTextEl = document.getElementById("currentDayText");
@@ -782,6 +970,16 @@ const allPointsStatusEl = document.getElementById("allPointsStatus");
 const noticeEl = document.getElementById("jsNotice");
 const routeSummaryTitleEl = document.getElementById("routeSummaryTitle");
 const routeMetaEl = document.getElementById("routeMeta");
+const esgTotalDistanceEl = document.getElementById("esgTotalDistance");
+const esgTotalCo2El = document.getElementById("esgTotalCo2");
+const esgSavedDistanceEl = document.getElementById("esgSavedDistance");
+const esgSavedCo2El = document.getElementById("esgSavedCo2");
+const esgNoteEl = document.getElementById("esgNote");
+const esgBaselineFileEl = document.getElementById("esgBaselineFile");
+const btnUploadEsgBaselineEl = document.getElementById("btnUploadEsgBaseline");
+const esgUploadStatusEl = document.getElementById("esgUploadStatus");
+const btnEsgColumnHintEl = document.getElementById("btnEsgColumnHint");
+const esgColumnHintEl = document.getElementById("esgColumnHint");
 const unassignedInfoTextEl = document.getElementById("unassignedInfoText");
 const btnDownloadUnassignedEl = document.getElementById("btnDownloadUnassigned");
 const panelToggleBtnEl = document.getElementById("panelToggleBtn");
@@ -893,13 +1091,13 @@ function initMap() {
   stopLayer = L.layerGroup().addTo(map);
   depotLayer = L.layerGroup().addTo(map);
   allPointsLayer = L.layerGroup().addTo(map);
+  const progressLegend = L.control({position:"bottomleft"});
+  progressLegend.onAdd = () => { const div=L.DomUtil.create("div","progress-status-legend"); div.style.cssText="background:white;padding:8px 11px;border-radius:10px;box-shadow:0 2px 10px #0002;font-weight:700;font-size:12px;white-space:nowrap"; div.innerHTML='<span style="color:#22c55e">●</span> 已完成　<span style="color:#f59e0b">●</span> 已跳過　<span style="color:#2563eb">●</span> 未處理'; return div; };
+  progressLegend.addTo(map);
 }
 
 async function fetchJSON(url) {
-  const res = await fetch(url);
-  const data = await res.json();
-  if (!res.ok) throw data;
-  return data;
+  return fetchJsonSafe(url, { credentials: "same-origin" });
 }
 
 function populateSelect(selectEl, items, selectedValue="") {
@@ -938,6 +1136,31 @@ function fmtNum(value, digits=0) {
   const num = Number(value);
   if (!Number.isFinite(num)) return "-";
   return num.toFixed(digits);
+}
+
+function fmtMetric(value, digits=1, suffix="") {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return "-";
+  return `${fmtNum(num, digits)}${suffix}`;
+}
+
+function updateEsgSummary(esg=null) {
+  const hasData = !!esg;
+  esgTotalDistanceEl.textContent = hasData ? fmtMetric(esg.total_distance_km, 1, " km") : "-";
+  esgTotalCo2El.textContent = hasData ? fmtMetric(esg.estimated_co2_kg, 1, " kg") : "-";
+  esgSavedDistanceEl.textContent = hasData ? fmtMetric(esg.saved_distance_km, 1, " km") : "-";
+  esgSavedCo2El.textContent = hasData ? fmtMetric(esg.saved_co2_kg, 1, " kg") : "-";
+
+  document.getElementById("kpiEsgCo2").textContent = hasData ? fmtMetric(esg.estimated_co2_kg, 0) : "-";
+
+  if (!hasData) {
+    esgNoteEl.textContent = "載入路線後顯示整體永續效益估算。";
+    return;
+  }
+
+  const savedPct = Number(esg.saved_pct);
+  const pctText = Number.isFinite(savedPct) && savedPct > 0 ? `，約降低 ${fmtNum(savedPct, 1)}%` : "";
+  esgNoteEl.textContent = `${esg.note || "碳排為路線里程估算值"}${pctText}。`;
 }
 
 function validPoint(item) {
@@ -989,6 +1212,13 @@ function escapeHtml(text) {
     .replaceAll("'", "&#039;");
 }
 
+function getCookie(name) {
+  const value = `; ${document.cookie}`;
+  const parts = value.split(`; ${name}=`);
+  if (parts.length === 2) return parts.pop().split(";").shift();
+  return "";
+}
+
 function clearMainLayers() {
   routeLayer.clearLayers();
   stopLayer.clearLayers();
@@ -1007,12 +1237,15 @@ function clearMapAndSummary() {
   document.getElementById("kpiDrive").textContent = "-";
   document.getElementById("kpiTotal").textContent = "-";
   document.getElementById("kpiDist").textContent = "-";
+  updateEsgSummary(state.options?.esg || null);
   routeSummaryTitleEl.textContent = "尚未載入路線";
   routeMetaEl.textContent = "請先選擇類型、司機與天數。";
 }
 
-function drawMarkers(route, color) {
-  if (validPoint(route.depot)) {
+function drawMarkers(route, color, progress={}, includeDepot=true) {
+  const completed = new Set((progress.completed_stop_seqs || []).map(Number));
+  const skipped = new Set((progress.skipped_stop_seqs || []).map(Number));
+  if (includeDepot && validPoint(route.depot)) {
     L.marker([Number(route.depot.lat), Number(route.depot.lon)], {
       icon: makeDepotIcon()
     }).addTo(depotLayer).bindPopup(`
@@ -1026,13 +1259,21 @@ function drawMarkers(route, color) {
   (route.stops || []).forEach(stop => {
     if (!validPoint(stop)) return;
 
+    const seq = Number(stop.seq);
+    const isCompleted = completed.has(seq);
+    const isSkipped = !isCompleted && skipped.has(seq);
+    const stopColor = isCompleted ? "#22c55e" : (isSkipped ? "#f59e0b" : color);
+    const statusLabel = isCompleted ? "已完成" : (isSkipped ? "已跳過" : "尚未處理");
+
     const marker = L.marker([Number(stop.lat), Number(stop.lon)], {
-      icon: makeStopIcon(stop.seq, color)
+      icon: makeStopIcon(stop.seq, stopColor),
+      zIndexOffset: isCompleted ? 300 : (isSkipped ? 200 : 100)
     }).addTo(stopLayer);
 
     marker.bindPopup(`
       <div>
         <div><strong>#${escapeHtml(stop.seq)} ${escapeHtml(stop.task_id || "")}</strong></div>
+        <div>清掃狀態：<strong style="color:${stopColor}">${statusLabel}</strong></div>
         <div>地址：${escapeHtml(stop.address || "-")}</div>
         <div>服務時間：${escapeHtml(fmtNum(stop.service_min || 0, 0))} 分</div>
         <div>縣市：${escapeHtml(stop.county || "-")}</div>
@@ -1132,11 +1373,9 @@ function updateSummary(route, visual) {
 
   const counties = route.counties || [];
   routeMetaEl.innerHTML = `
-    <div>司機代碼：<strong>${escapeHtml(route.driver)}</strong></div>
     <div>清掃點位：<strong>${escapeHtml(route.stop_count ?? route.stops.length)}</strong> 筆</div>
     <div>路線模式：<strong>${escapeHtml(VARIANT_LABELS[state.variant] || state.variant)}</strong></div>
     <div>縣市範圍：<strong>${escapeHtml(counties.length ? counties.join(" / ") : "-")}</strong></div>
-    <div>道路來源：<strong>${escapeHtml(visual.source)}</strong></div>
   `;
 }
 
@@ -1179,17 +1418,12 @@ function renderAllPointsLayer() {
   clearAllPointLayers();
 
   if (!toggleAllPointsEl.checked) {
-    allPointsStatusEl.textContent = "目前只顯示清掃點位。";
+    allPointsStatusEl.textContent = "";
     return;
   }
 
-  const scheduledIds = new Set(
-    (state.route?.stops || []).map(stop => String(stop.task_id ?? stop.id ?? ""))
-  );
-
   (state.allPoints || []).forEach(item => {
     if (!validPoint(item)) return;
-    if (scheduledIds.has(String(item.id))) return;
 
     const marker = L.marker([Number(item.lat), Number(item.lon)], {
       icon: makeAllPointIcon()
@@ -1205,7 +1439,7 @@ function renderAllPointsLayer() {
     `);
   });
 
-  allPointsStatusEl.textContent = `已顯示全部點位，共載入 ${state.allPoints.length} 筆資料（清掃點位維持彩色高亮）。`;
+  allPointsStatusEl.textContent = `已顯示全部點位，共載入 ${state.allPoints.length} 筆資料。`;
 }
 
 async function renderRoute() {
@@ -1221,11 +1455,19 @@ async function renderRoute() {
   try {
     const data = await fetchJSON(`/api/routes/detail/?variant=${state.variant}&driver=${encodeURIComponent(driver)}&day=${encodeURIComponent(day)}`);
     state.route = data.route;
+    let progress = {};
+    try {
+      const liveData = await fetchJSON(`/api/admin/live/overview/`);
+      const live = (liveData.drivers || []).find(item => String(item.driver_code || "").toUpperCase() === String(driver).toUpperCase()) || {};
+      if (String(live.route_id || "") === String(state.route.route_id || "") && Number(live.day || 0) === Number(day)) progress = live;
+    } catch (err) {
+      console.warn("Unable to load cleaning progress:", err);
+    }
 
     clearMainLayers();
 
     const color = VARIANT_COLORS[state.variant] || "#2563eb";
-    drawMarkers(state.route, color);
+    drawMarkers(state.route, color, progress);
     const visual = await drawRouteLine(state.route, color);
     updateSummary(state.route, visual);
     fitMapToRouteLayers();
@@ -1248,6 +1490,20 @@ async function renderRoute() {
   }
 }
 
+async function refreshCurrentRouteProgress() {
+  if (!state.route || !driverSelEl.value) return;
+  try {
+    const liveData = await fetchJSON(`/api/admin/live/overview/`);
+    const driver = driverSelEl.value;
+    const live = (liveData.drivers || []).find(item => String(item.driver_code || "").toUpperCase() === String(driver).toUpperCase()) || {};
+    if (String(live.route_id || "") !== String(state.route.route_id || "") || Number(live.day || 0) !== Number(state.route.day || 0)) return;
+    stopLayer.clearLayers();
+    drawMarkers(state.route, VARIANT_COLORS[state.variant] || "#2563eb", live, false);
+  } catch (err) {
+    console.warn("Unable to refresh cleaning progress:", err);
+  }
+}
+
 async function loadVariant(variant, preservedDriver=null, preservedDay=null) {
   state.variant = variant;
   document.querySelectorAll(".variant-btn").forEach(btn => {
@@ -1258,6 +1514,7 @@ async function loadVariant(variant, preservedDriver=null, preservedDay=null) {
     const data = await fetchJSON(`/api/routes/options/?variant=${variant}`);
     state.options = data;
     updateUnassignedUI(data.meta || {});
+    updateEsgSummary(data.esg || null);
 
     const driverItems = data.drivers || [];
     let selectedDriver = driverItems[0]?.value ?? "";
@@ -1353,6 +1610,73 @@ async function switchToSearchedRoute(driver, day) {
   showToast(`已切到 ${driver} 第 ${day} 天`, 1800);
 }
 
+function setEsgUploadStatus(message, isError=false) {
+  if (!esgUploadStatusEl) return;
+  esgUploadStatusEl.textContent = message;
+  esgUploadStatusEl.style.color = isError ? "#991b1b" : "#64748b";
+}
+
+function positionEsgColumnHint() {
+  if (!btnEsgColumnHintEl || !esgColumnHintEl) return;
+  const rect = btnEsgColumnHintEl.getBoundingClientRect();
+  const margin = 16;
+  const width = Math.min(320, window.innerWidth - margin * 2);
+  const left = Math.max(margin, Math.min(rect.right - width, window.innerWidth - width - margin));
+  const top = Math.min(rect.bottom + 8, window.innerHeight - 160);
+  esgColumnHintEl.style.width = `${width}px`;
+  esgColumnHintEl.style.left = `${left}px`;
+  esgColumnHintEl.style.top = `${Math.max(margin, top)}px`;
+}
+
+async function uploadEsgBaselineFile(file) {
+  if (!file) return;
+  const lowerName = file.name.toLowerCase();
+  if (!lowerName.endsWith(".xlsx") && !lowerName.endsWith(".xls") && !lowerName.endsWith(".json")) {
+    setEsgUploadStatus("請上傳舊路線 Excel（.xlsx/.xls）或 JSON 檔。", true);
+    return;
+  }
+
+  const formData = new FormData();
+  formData.append("file", file);
+  formData.append("variant", state.variant);
+
+  const originalText = btnUploadEsgBaselineEl?.innerHTML || "";
+  if (btnUploadEsgBaselineEl) {
+    btnUploadEsgBaselineEl.disabled = true;
+    btnUploadEsgBaselineEl.innerHTML = '<i data-lucide="loader-circle"></i> 上傳中...';
+    lucide.createIcons();
+  }
+  setEsgUploadStatus("正在上傳舊路線基準...");
+
+  try {
+    const data = await fetchJsonSafe("/api/routes/esg-baseline/upload/", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: {
+        "X-CSRFToken": getCookie("csrftoken")
+      },
+      body: formData
+    });
+
+    if (data.esg) {
+      updateEsgSummary(data.esg);
+    }
+    setEsgUploadStatus(data.message || "已更新舊路線基準。");
+    showToast(data.message || "已更新舊路線基準", 2500);
+
+    await loadVariant(state.variant, driverSelEl.value, getCurrentDays()[state.currentDayIndex]);
+  } catch (err) {
+    setEsgUploadStatus(`上傳失敗：${err.message || err}`, true);
+  } finally {
+    if (btnUploadEsgBaselineEl) {
+      btnUploadEsgBaselineEl.disabled = false;
+      btnUploadEsgBaselineEl.innerHTML = originalText;
+      lucide.createIcons();
+    }
+    if (esgBaselineFileEl) esgBaselineFileEl.value = "";
+  }
+}
+
 function delay(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
@@ -1365,6 +1689,9 @@ async function fetchJsonSafe(url, options = {}) {
   try {
     data = text ? JSON.parse(text) : {};
   } catch (err) {
+    if (res.redirected || res.status === 401 || res.status === 403) {
+      throw new Error("登入狀態已失效或帳號沒有權限，請重新登入。");
+    }
     throw new Error(`伺服器沒有回傳 JSON（HTTP ${res.status}）。請檢查 Django 是否有報錯，或 trycloudflare 是否逾時。`);
   }
 
@@ -1376,7 +1703,7 @@ async function fetchJsonSafe(url, options = {}) {
 }
 
 async function pollSchedulerUntilFinished(preservedDriver, preservedDay) {
-  const maxAttempts = 240;
+  const maxAttempts = 1250;
 
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
     const status = await fetchJsonSafe(`/api/run/status/?variant=${encodeURIComponent(state.variant)}`, {
@@ -1417,7 +1744,7 @@ async function pollSchedulerUntilFinished(preservedDriver, preservedDay) {
     await delay(3000);
   }
 
-  throw new Error(`等待排程完成逾時，請稍後重新整理頁面查看結果。若已在背景完成，重新整理後通常可看到新結果。`);
+  throw new Error(`排程執行已超過 60 分鐘，請稍後重新整理頁面查看結果。若已在背景完成，重新整理後會顯示新結果。`);
 }
 
 async function recalculateRoutes() {
@@ -1433,7 +1760,7 @@ async function recalculateRoutes() {
   setRunProgress(3, "準備啟動排程...", 0, true);
 
   try {
-    const startData = await fetchJsonSafe(`/run/?variant=${encodeURIComponent(state.variant)}&format=json`, {
+    const startData = await fetchJsonSafe(`/run/?variant=${encodeURIComponent(state.variant)}&format=json&company_key=${encodeURIComponent(CURRENT_COMPANY_KEY)}`, {
       method: "GET",
       credentials: "same-origin"
     });
@@ -1509,6 +1836,32 @@ function bindEvents() {
       await switchToSearchedRoute(btn.dataset.driver, btn.dataset.day);
     });
   }
+  if (btnUploadEsgBaselineEl && esgBaselineFileEl) {
+    btnUploadEsgBaselineEl.addEventListener("click", () => esgBaselineFileEl.click());
+    esgBaselineFileEl.addEventListener("change", () => {
+      const file = esgBaselineFileEl.files && esgBaselineFileEl.files[0];
+      uploadEsgBaselineFile(file);
+    });
+  }
+  if (btnEsgColumnHintEl && esgColumnHintEl) {
+    btnEsgColumnHintEl.addEventListener("click", (e) => {
+      e.stopPropagation();
+      esgColumnHintEl.classList.toggle("show");
+      if (esgColumnHintEl.classList.contains("show")) {
+        positionEsgColumnHint();
+      }
+    });
+    document.addEventListener("click", (e) => {
+      if (!esgColumnHintEl.classList.contains("show")) return;
+      if (e.target.closest(".hint-wrap")) return;
+      esgColumnHintEl.classList.remove("show");
+    });
+    window.addEventListener("resize", () => {
+      if (esgColumnHintEl.classList.contains("show")) {
+        positionEsgColumnHint();
+      }
+    });
+  }
 
   btnDownloadUnassignedEl.addEventListener("click", () => {
     const exportKey = btnDownloadUnassignedEl.dataset.exportKey || "";
@@ -1533,6 +1886,7 @@ bindEvents();
 startLiveTime();
 lucide.createIcons();
 loadVariant(INITIAL_VARIANT);
+setInterval(refreshCurrentRouteProgress, 10000);
 </script>
 </body>
 </html>

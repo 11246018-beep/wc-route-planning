@@ -1,4 +1,101 @@
 /* Shared mobile layout for Dispatch Nav administration pages. */
+#soft-sidebar {
+  display: flex;
+  flex-direction: column;
+  top: 15px !important;
+  left: 15px !important;
+  bottom: 15px !important;
+  width: 80px !important;
+  height: auto !important;
+  border-radius: 15px !important;
+}
+
+#soft-sidebar:hover {
+  width: 260px !important;
+}
+
+#soft-sidebar .sidebar-header {
+  display: flex !important;
+  align-items: center !important;
+  flex: 0 0 84px !important;
+  height: 84px !important;
+  min-height: 84px !important;
+  min-width: 260px !important;
+  padding: 25px 20px !important;
+  gap: 15px !important;
+  box-sizing: border-box !important;
+  overflow: hidden !important;
+}
+
+#soft-sidebar .menu-list,
+#soft-sidebar .sidebar-menu {
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: stretch !important;
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 12px 15px 16px !important;
+  gap: 7px !important;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+#soft-sidebar .menu-item {
+  min-width: 230px !important;
+  width: 230px !important;
+  height: 50px !important;
+  min-height: 50px !important;
+  flex: 0 0 50px !important;
+  padding: 8px 10px !important;
+  gap: 15px !important;
+  border-radius: 10px !important;
+  font-size: 14px !important;
+  line-height: 1.5 !important;
+  margin: 0 !important;
+}
+
+#soft-sidebar .menu-item .icon-box,
+#soft-sidebar .sidebar-header .logo-box {
+  width: 34px !important;
+  height: 34px !important;
+  min-width: 34px !important;
+  border-radius: 8px !important;
+  padding: 0 !important;
+  box-sizing: border-box !important;
+}
+
+#soft-sidebar .menu-item span {
+  font-size: 14px !important;
+  line-height: 1.5 !important;
+  white-space: nowrap !important;
+  font-weight: 700 !important;
+}
+
+#soft-sidebar .sidebar-header span {
+  font-size: 16px !important;
+  line-height: 1.3 !important;
+  font-weight: 700 !important;
+  white-space: nowrap !important;
+}
+
+#soft-sidebar .complete-sidebar-items {
+  display: contents;
+}
+
+#soft-sidebar .menu-list:has(.complete-sidebar-items) > .menu-item {
+  display: none !important;
+}
+
+#soft-sidebar .menu-list::-webkit-scrollbar,
+#soft-sidebar .sidebar-menu::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+  display: none;
+}
+
 @media (max-width: 768px) {
   html,
   body {
