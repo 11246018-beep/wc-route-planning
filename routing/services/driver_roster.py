@@ -162,6 +162,9 @@ def profiles_file(path=None):
     if path:
         return Path(path)
     company_key = str(os.environ.get("DISPATCH_COMPANY_KEY") or "").strip()
+    configured_output = str(os.environ.get("DISPATCH_OUTPUT_DIR") or "").strip()
+    if configured_output:
+        return Path(configured_output) / "driver_profiles.json"
     if company_key:
         return OUTPUT_DIR / "tenants" / company_key / "driver_profiles.json"
     return PROFILES_FILE
@@ -170,8 +173,6 @@ def profiles_file(path=None):
 def load_profiles(path=None):
     file_path = profiles_file(path)
     if not file_path.exists():
-        if file_path != PROFILES_FILE and PROFILES_FILE.exists():
-            return load_profiles(PROFILES_FILE)
         return {}
     try:
         with file_path.open("r", encoding="utf-8") as f:

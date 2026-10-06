@@ -243,6 +243,8 @@ def load_normal_routes_and_refresh(output_dir: Path):
         raw = load_json(routes_new_path)
         if isinstance(raw, list) and raw:
             payload = build_normal_routes_from_routes_new(raw)
+            payload["meta"]["company_key"] = str(os.environ.get("DISPATCH_COMPANY_KEY") or "")
+            payload["meta"]["generated_at"] = datetime.now().isoformat(timespec="seconds")
             summary_meta = load_normal_summary_meta(output_dir)
             if summary_meta:
                 payload["meta"].update(summary_meta)
@@ -396,8 +398,8 @@ def flatten_stop_rows(routes, variant):
     return rows
 
 
-def export_dashboard_assets(project_root: Path):
-    output_dir = project_root / "output"
+def export_dashboard_assets(project_root: Path, output_dir=None):
+    output_dir = Path(output_dir or os.environ.get("DISPATCH_OUTPUT_DIR") or (project_root / "output")).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
 
     normal_routes, normal_meta, normal_source = load_normal_routes_and_refresh(output_dir)
