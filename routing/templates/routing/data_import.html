@@ -2,9 +2,11 @@
 <html lang="zh-Hant">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>匯入 Excel / CSV</title>
     <script src="https://unpkg.com/lucide@latest"></script>
     <link href="https://fonts.googleapis.com/css?family=Open+Sans:300,400,600,700" rel="stylesheet" />
+    <link rel="stylesheet" href="/static/responsive.css" />
     <style>
         :root {
             --primary: #4A90E2;
@@ -250,7 +252,6 @@
                     <li>緯度 / lat</li>
                     <li>經度 / lon</li>
                 </ul>
-                <p>如果有 ID，系統會優先更新原資料。沒有 ID，系統會新增新資料。</p>
             </div>
 
             {% if error_message %}
@@ -265,10 +266,12 @@
 
             <form method="post" enctype="multipart/form-data">
                 {% csrf_token %}
+                {% if return_to_adjustments %}<input type="hidden" name="next" value="route-adjustments">{% endif %}
                 <p>
                     <input type="file" name="file" accept=".csv,.xlsx,.xls">
                 </p>
                 <button class="btn" type="submit">開始匯入</button>
+                {% if return_to_adjustments %}<a class="btn gray" href="{% url 'route_adjustments_page' %}">回後續路線補排</a>{% endif %}
                 <a class="btn gray" href="/data/">返回資料列表</a>
             </form>
         </div>
