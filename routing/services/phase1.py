@@ -45,6 +45,7 @@ sys.stdout.reconfigure(encoding='utf-8')
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "route_system.settings")
 django.setup()
 from routing.models import CompanyProfile, ServicePoint, ServicePointCompanyProfile
+from routing.tenant import resolve_company_key
 import html  # HTML特殊字元轉義
 import re  # 正則表達式處理
 from dataclasses import dataclass  # 資料類別定義
@@ -163,31 +164,31 @@ REAL_ANCHORS = REAL_ANCHORS.rename(columns={'name': 'IC_Name', 'lat': 'Lat', 'lo
 # ==========================================
 # 2. 資料處理核心函式 (Data Processing Core)
 # ==========================================
-def load_from_database():
+def load_from_database(company_key=None, user=None):
     """
     從 Django 資料庫讀取 ServicePoint
     """
     print("\n>>> 從資料庫讀取 ServicePoint ...")
 
-    company_key = os.environ.get("DISPATCH_COMPANY_KEY", "").strip()
-    qs = ServicePoint.objects.all()
-    if company_key:
-        company = CompanyProfile.objects.filter(key=company_key, is_active=True).first()
-        if company:
-            point_ids = list(
-                ServicePointCompanyProfile.objects.filter(company=company)
-                .values_list("service_point_id", flat=True)
-            )
-            qs = qs.filter(id__in=point_ids)
-            print(f"    公司隔離：{company.name} ({company.key})，點位 {len(point_ids)} 筆")
-        else:
-            print(f"    [WARNING] 找不到公司 {company_key}，改讀全部點位")
+    resolved_company_key, company_key_source = resolve_company_key(company_key, user=user)
+    company = CompanyProfile.objects.filter(key=resolved_company_key, is_active=True).first()
+    if not company:
+        raise ValueError(f"找不到有效公司 company_key={resolved_company_key}，停止讀取 service_points。")
+
+    point_ids = list(
+        ServicePointCompanyProfile.objects.filter(company=company)
+        .values_list("service_point_id", flat=True)
+    )
+    qs = ServicePoint.objects.filter(id__in=point_ids)
+    print(f"    company_key: {resolved_company_key}")
+    print(f"    company_key 來源: {company_key_source}")
+    print(f"    公司隔離：{company.name} ({company.key})，關聯點位 {len(point_ids)} 筆")
 
     qs = qs.values()
 
     df = pd.DataFrame(list(qs))
 
-    print(f"✓ 成功讀取 {len(df)} 筆資料")
+    print(f"✓ 成功讀取 {len(df)} 筆資料（company_key={resolved_company_key}）")
 
     return df
 def load_and_process_data(raw_df):
@@ -211,6 +212,13 @@ def load_and_process_data(raw_df):
     print(f"\n{'=' * 80}")
     print(f">>> [Phase 1] Processing data from Django database")
     print(f"{'=' * 80}")
+
+    if raw_df is None or raw_df.empty:
+        print("    沒有可處理的公司點位，回傳空白節點資料。")
+        return pd.DataFrame(columns=[
+            'Node_ID', 'Original_ID', 'Lat', 'Lon', 'Service_Time', 'Address',
+            'Depot_Raw', 'order_id', 'floor', 'weekly_1', 'weekly_2', 'Freq',
+        ])
 
     # ─────────────────────────────────────
     # 步驟 1: 欄位對應與型別轉換
