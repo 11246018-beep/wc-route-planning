@@ -11,15 +11,17 @@ import pandas as pd
 
 try:
     from .driver_roster import build_schedule_driver_slots, schedule_sort_key
+    from .cross_compact_costing import CrossCompactCosting
 except ImportError:
     PROJECT_ROOT = Path(__file__).resolve().parents[2]
     if str(PROJECT_ROOT) not in sys.path:
         sys.path.insert(0, str(PROJECT_ROOT))
     from routing.services.driver_roster import build_schedule_driver_slots, schedule_sort_key
+    from routing.services.cross_compact_costing import CrossCompactCosting
 
 
 BASE_DIR = Path(__file__).resolve().parents[2]
-OUTPUT_DIR = BASE_DIR / "output"
+OUTPUT_DIR = Path(os.environ.get("DISPATCH_OUTPUT_DIR") or (BASE_DIR / "output")).resolve()
 INPUT_CSV = OUTPUT_DIR / "processed_nodes_phase1.csv"
 
 def env_int(name, default):
@@ -45,6 +47,7 @@ def env_float(name, default=None):
 DAY_COUNT = env_int("DISPATCH_SCHEDULE_DAYS", 6)
 MAX_MINUTES = env_int("DISPATCH_DAILY_WORK_MINUTES", 540)
 DEFAULT_SERVICE_MINUTES = env_int("DISPATCH_DEFAULT_SERVICE_MINUTES", 10)
+SAMPLE_NODES = env_int("DISPATCH_SAMPLE_NODES", 0) if os.environ.get("DISPATCH_SAMPLE_NODES") else 0
 VARIANT_KEY = "compact"
 VARIANT_LABEL = "跨縣市精簡版"
 UNASSIGNED_EXPORT_NAME = "Unassigned_Points_compact.xlsx"
@@ -163,9 +166,18 @@ def route_distance_km(depot, tasks):
 
 
 
-def route_metrics(depot, tasks):
-    dist_km = route_distance_km(depot, tasks) if tasks else 0.0
-    drive_min = (dist_km / 35.0) * 60.0 if dist_km > 0 else 0.0
+def route_metrics(depot, tasks, costing=None):
+    if costing:
+        drive_cost = costing.route_cost(depot, tasks, return_to_depot=True)
+        dist_km = drive_cost["dist_km"]
+        drive_min = drive_cost["drive_min"]
+        source = drive_cost["source"]
+        used_fallback = drive_cost["used_fallback"]
+    else:
+        dist_km = route_distance_km(depot, tasks) if tasks else 0.0
+        drive_min = (dist_km / 35.0) * 60.0 if dist_km > 0 else 0.0
+        source = "Haversine"
+        used_fallback = True
     service_min = sum(task["service_time"] for task in tasks)
     total_min = drive_min + service_min
     counties = sorted({task["county"] for task in tasks if task["county"]})
@@ -177,11 +189,16 @@ def route_metrics(depot, tasks):
         "counties": counties,
         "cross_county": len(counties) > 1,
         "overtime_min": round(max(0.0, total_min - MAX_MINUTES), 2),
+        "cost_source": source,
+        "used_fallback": used_fallback,
     }
 
 
 
-def nearest_neighbor_order(depot, tasks):
+def nearest_neighbor_order(depot, tasks, costing=None):
+    if costing:
+        return costing.nearest_neighbor_order(depot, tasks)
+
     remaining = [dict(t) for t in tasks]
     ordered = []
     cur_lat = depot["lat"]
@@ -259,20 +276,27 @@ def make_route_slots():
 
 
 
-def task_order_key(task):
+def task_order_key(task, costing=None):
     depot = DEPOTS[task["depot_code"]]
-    dist = haversine(depot["lat"], depot["lon"], task["lat"], task["lon"])
+    if costing:
+        cost = costing.get_cost((depot["lat"], depot["lon"]), (task["lat"], task["lon"]), persist_fallback=False)
+        dist = cost["duration"]
+    else:
+        dist = haversine(depot["lat"], depot["lon"], task["lat"], task["lon"])
     return (task["depot_code"], -task["service_time"], -dist, task["task_id"])
 
 
 
-def candidate_score(route, task):
+def candidate_score(route, task, costing=None):
     if route["depot_code"] != task["depot_code"]:
         return None
 
     depot = DEPOTS[route["depot_code"]]
-    new_tasks = route["tasks"] + [task]
-    metrics = route_metrics(depot, new_tasks)
+    if costing:
+        metrics = costing.candidate_incremental_metrics(route, depot, task)
+    else:
+        new_tasks = route["tasks"] + [task]
+        metrics = route_metrics(depot, new_tasks)
 
     if metrics["total_min"] > MAX_MINUTES:
         return None
@@ -284,15 +308,19 @@ def candidate_score(route, task):
 
 
 
-def assign_compact(tasks):
+def assign_compact(tasks, costing=None):
     route_slots = make_route_slots()
-    ordered_tasks = sorted(tasks, key=task_order_key)
+    for route in route_slots:
+        route["_metrics"] = {"service_min": 0.0, "drive_min": 0.0, "dist_km": 0.0}
+        route["_counties"] = set()
+
+    ordered_tasks = sorted(tasks, key=lambda task: task_order_key(task, costing))
     unassigned_tasks = []
 
     for task in ordered_tasks:
         candidates = []
         for route in route_slots:
-            score = candidate_score(route, task)
+            score = candidate_score(route, task, costing)
             if score is not None:
                 candidates.append((score, route))
 
@@ -308,13 +336,16 @@ def assign_compact(tasks):
             )
         )
         best_route = candidates[0][1]
+        accepted_metrics = costing.candidate_incremental_metrics(best_route, DEPOTS[best_route["depot_code"]], task) if costing else None
         best_route["tasks"].append(task)
+        if costing and accepted_metrics:
+            costing.apply_route_metrics(best_route, accepted_metrics)
 
     return route_slots, unassigned_tasks
 
 
 
-def finalize_routes(route_slots):
+def finalize_routes(route_slots, costing=None):
     routes = []
     flat_rows = []
 
@@ -323,16 +354,45 @@ def finalize_routes(route_slots):
             continue
 
         depot = DEPOTS[route["depot_code"]].copy()
-        ordered = nearest_neighbor_order(depot, route["tasks"])
-        metrics = route_metrics(depot, ordered)
+        ordered = nearest_neighbor_order(depot, route["tasks"], costing)
+        estimated_metrics = route_metrics(depot, ordered, costing)
+        route_res = costing.osrm_route(depot, ordered) if costing else None
+        if route_res:
+            drive_min = round(route_res["duration"], 2)
+            dist_km = round(route_res["distance"], 2)
+            service_min = round(sum(task["service_time"] for task in ordered), 2)
+            counties = sorted({task["county"] for task in ordered if task["county"]})
+            metrics = {
+                "service_min": service_min,
+                "drive_min": drive_min,
+                "dist_km": dist_km,
+                "total_min": round(service_min + drive_min, 2),
+                "counties": counties,
+                "cross_county": len(counties) > 1,
+                "overtime_min": round(max(0.0, service_min + drive_min - MAX_MINUTES), 2),
+                "cost_source": route_res.get("source", "OSRM Route"),
+                "used_fallback": route_res.get("source") == "Haversine Route Fallback",
+                "legs": route_res.get("legs") or [],
+            }
+        else:
+            metrics = estimated_metrics
 
         stops = []
         prev_lat = depot["lat"]
         prev_lon = depot["lon"]
 
         for idx, task in enumerate(ordered, start=1):
-            leg_km = haversine(prev_lat, prev_lon, task["lat"], task["lon"]) * 1.25
-            leg_min = (leg_km / 35.0) * 60.0 if leg_km > 0 else 0.0
+            leg = metrics.get("legs", [])[idx - 1] if idx - 1 < len(metrics.get("legs", [])) else None
+            if leg:
+                leg_km = float(leg.get("distance", 0.0)) / 1000.0
+                leg_min = float(leg.get("duration", 0.0)) / 60.0
+            elif costing:
+                leg_cost = costing.get_cost((prev_lat, prev_lon), (task["lat"], task["lon"]), persist_fallback=False)
+                leg_km = leg_cost["distance"]
+                leg_min = leg_cost["duration"]
+            else:
+                leg_km = haversine(prev_lat, prev_lon, task["lat"], task["lon"]) * 1.25
+                leg_min = (leg_km / 35.0) * 60.0 if leg_km > 0 else 0.0
 
             stop = {
                 "seq": idx,
@@ -380,6 +440,8 @@ def finalize_routes(route_slots):
                     "dist_km": metrics["dist_km"],
                     "total_min": metrics["total_min"],
                     "overtime_min": metrics["overtime_min"],
+                    "cost_source": metrics.get("cost_source"),
+                    "used_fallback": metrics.get("used_fallback"),
                 },
                 "stops": stops,
             }
@@ -471,6 +533,7 @@ def save_outputs(routes, flat_rows, processed_df, unassigned_tasks):
         "meta": {
             "variant": VARIANT_KEY,
             "label": VARIANT_LABEL,
+            "company_key": str(os.environ.get("DISPATCH_COMPANY_KEY") or ""),
             "note": "跨縣市精簡版，由 phase2_scheduler_cross_county_compact.py 直接輸出。",
             **summary_meta,
         },
@@ -548,11 +611,24 @@ def main():
         raise FileNotFoundError(f"找不到 {INPUT_CSV}")
 
     df = pd.read_csv(INPUT_CSV)
+    print(f"[phase2-compact] input nodes: {len(df)}", flush=True)
+    if SAMPLE_NODES:
+        original_count = len(df)
+        df = df.head(SAMPLE_NODES).copy()
+        print(
+            f"[phase2-compact] 小資料測試模式啟用: DISPATCH_SAMPLE_NODES={SAMPLE_NODES}, "
+            f"nodes={len(df)}/{original_count}",
+            flush=True,
+        )
     tasks = build_tasks(df)
-    print(f"Total tasks generated: {len(tasks)}")
+    print(f"Total tasks generated: {len(tasks)}", flush=True)
+    costing = CrossCompactCosting(label="phase2-compact")
+    for depot_code in sorted({task["depot_code"] for task in tasks}):
+        depot_tasks = [task for task in tasks if task["depot_code"] == depot_code]
+        costing.warm_tasks(DEPOTS[depot_code], depot_tasks, context=f" depot={depot_code}")
 
-    route_slots, unassigned_tasks = assign_compact(tasks)
-    routes, flat_rows = finalize_routes(route_slots)
+    route_slots, unassigned_tasks = assign_compact(tasks, costing)
+    routes, flat_rows = finalize_routes(route_slots, costing)
     save_outputs(routes, flat_rows, df, unassigned_tasks)
 
     used_routes = len(routes)
@@ -568,6 +644,7 @@ def main():
     print(f"Drive minutes: {round(total_drive, 1)}")
     print(f"Cross-county routes: {cross_routes}")
     print(f"Unassigned tasks: {len(unassigned_tasks)}")
+    print(f"RoutingCostProvider stats: {costing.stats_json()}")
     print("phase2_scheduler_cross_county_compact.py completed successfully")
 
 
