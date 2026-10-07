@@ -89,6 +89,7 @@ urlpatterns = [
     path("api/admin/cleaning-record/delete/", mobile_api.admin_cleaning_record_delete_api, name="admin_cleaning_record_delete_api"),
     path("api/admin/cleaning-summary/", login_api(mobile_api.admin_cleaning_summary_api), name="admin_cleaning_summary_api"),
     path("api/ai-assistant/ask/", manager_api(views.api_ai_assistant_ask), name="api_ai_assistant_ask"),
+    path("api/ai-assistant/apply/", manager_api(views.api_ai_assistant_apply), name="api_ai_assistant_apply"),
     path("api/toilet-demand-analysis/", login_api(views.toilet_demand_analysis_api)),
     path("api/toilet-demand-analysis/delete/", manager_api(views.toilet_demand_analysis_delete_api)),
 
