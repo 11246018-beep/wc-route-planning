@@ -1,0 +1,19 @@
+{% include "routing/_sidebar_theme.html" %}
+<div class="complete-sidebar-items">
+  <a href="{% url 'home' %}" class="menu-item{% if request.resolver_match.url_name == 'home' %} active{% endif %}"><div class="icon-box"><i data-lucide="home" size="18"></i></div><span>主要地圖</span></a>
+  <a href="{% url 'live_monitor_page' %}" class="menu-item{% if request.resolver_match.url_name == 'live_monitor_page' %} active{% endif %}"><div class="icon-box"><i data-lucide="map-pinned" size="18"></i></div><span>即時監控</span></a>
+  <a href="{% url 'report_page' %}" class="menu-item{% if request.resolver_match.url_name == 'report_page' %} active{% endif %}"><div class="icon-box"><i data-lucide="triangle-alert" size="18"></i></div><span>問題回報</span></a>
+  <a href="{% url 'driver_admin_page' %}" class="menu-item{% if request.resolver_match.url_name == 'driver_admin_page' %} active{% endif %}"><div class="icon-box"><i data-lucide="users-round" size="18"></i></div><span>司機帳號</span></a>
+  <a href="{% url 'esg_page' %}" class="menu-item{% if request.resolver_match.url_name == 'esg_page' %} active{% endif %}"><div class="icon-box"><i data-lucide="leaf" size="18"></i></div><span>ESG 永續分析</span></a>
+  <a href="{% url 'route_adjustments_page' %}" class="menu-item{% if request.resolver_match.url_name == 'route_adjustments_page' %} active{% endif %}"><div class="icon-box"><i data-lucide="route" size="18"></i></div><span>點位調整</span></a>
+  <a href="{% url 'ai_assistant_page' %}" class="menu-item{% if request.resolver_match.url_name == 'ai_assistant_page' %} active{% endif %}"><div class="icon-box"><i data-lucide="sparkles" size="18"></i></div><span>AI 助理</span></a>
+  {% if user.is_superuser %}
+    <a href="{% url 'account_management' %}" class="menu-item{% if request.resolver_match.url_name == 'account_management' %} active{% endif %}"><div class="icon-box"><i data-lucide="shield-check" size="18"></i></div><span>管理者帳號</span></a>
+    {% if user.username != 'system_admin' %}<a href="{% url 'company_settings' %}" class="menu-item{% if request.resolver_match.url_name == 'company_settings' %} active{% endif %}"><div class="icon-box"><i data-lucide="sliders-horizontal" size="18"></i></div><span>營運設定</span></a>{% endif %}
+    {% if user.username == 'system_admin' %}<a href="{% url 'company_management' %}" class="menu-item{% if request.resolver_match.url_name == 'company_management' %} active{% endif %}"><div class="icon-box"><i data-lucide="building-2" size="18"></i></div><span>公司管理</span></a>{% endif %}
+    <a href="{% url 'admin_action_logs' %}" class="menu-item{% if request.resolver_match.url_name == 'admin_action_logs' %} active{% endif %}"><div class="icon-box"><i data-lucide="clipboard-list" size="18"></i></div><span>操作紀錄</span></a>
+  {% endif %}
+  <a href="{% url 'data_list' %}" class="menu-item{% if request.resolver_match.url_name == 'data_list' or request.resolver_match.url_name == 'data_import' or request.resolver_match.url_name == 'data_create' or request.resolver_match.url_name == 'data_edit' or request.resolver_match.url_name == 'data_delete' %} active{% endif %}"><div class="icon-box"><i data-lucide="table" size="18"></i></div><span>資料管理</span></a>
+  <a href="{% url 'cleaning_records_page' %}" class="menu-item{% if request.resolver_match.url_name == 'cleaning_records_page' or request.resolver_match.url_name == 'cleaning_report_page' %} active{% endif %}"><div class="icon-box"><i data-lucide="file-box" size="18"></i></div><span>清掃紀錄</span></a>
+  <a href="{% url 'logout' %}" class="menu-item"><div class="icon-box"><i data-lucide="log-out" size="18"></i></div><span>登出</span></a>
+</div>
