@@ -27,16 +27,18 @@ SECRET_KEY = os.environ.get('DJANGO_SECRET_KEY', 'django-insecure-7w#+x@h&fyo2%x
 DEBUG = os.environ.get('DJANGO_DEBUG', 'true').strip().lower() in {'1', 'true', 'yes', 'on'}
 
 ALLOWED_HOSTS = [
-    'obituaries-decisions-bye-been.trycloudflare.com',
+    'immigration-dated-almost-located.trycloudflare.com',
     'localhost',
     '192.168.0.32',
     '192.168.0.24',
     '192.168.0.136',
     '127.0.0.1',
+    'testserver',
+    '192.168.18.4',
 ]
 ALLOWED_HOSTS += [host.strip() for host in os.environ.get('DJANGO_ALLOWED_HOSTS', '').split(',') if host.strip()]
 CSRF_TRUSTED_ORIGINS = [
-    'https://obituaries-decisions-bye-been.trycloudflare.com',
+    'https://immigration-dated-almost-located.trycloudflare.com',
 ]
 CSRF_TRUSTED_ORIGINS += [origin.strip() for origin in os.environ.get('DJANGO_CSRF_TRUSTED_ORIGINS', '').split(',') if origin.strip()]
 
@@ -61,11 +63,13 @@ MIDDLEWARE = [
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
+    'routing.middleware.RequireAuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
 
 ROOT_URLCONF = 'route_system.urls'
+LOGIN_URL = '/'
 
 TEMPLATES = [
     {
@@ -93,10 +97,12 @@ WSGI_APPLICATION = 'route_system.wsgi.application'
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.postgresql',
-        'NAME': os.environ.get('DB_NAME', 'postgres'),
-        'USER': os.environ.get('DB_USER', 'postgres.evwzonunmjvulzitxjmn'),
-        'PASSWORD': os.environ.get('DB_PASSWORD', 'RoutePlan2026'),
-        'HOST': os.environ.get('DB_HOST', 'aws-1-ap-northeast-1.pooler.supabase.com'),
+        # Local PostgreSQL is the development default. Supabase remains
+        # supported by setting DB_NAME/DB_USER/DB_PASSWORD/DB_HOST explicitly.
+        'NAME': os.environ.get('DB_NAME', 'route_system_db'),
+        'USER': os.environ.get('DB_USER', 'postgres'),
+        'PASSWORD': os.environ.get('DB_PASSWORD', ''),
+        'HOST': os.environ.get('DB_HOST', 'localhost'),
         'PORT': os.environ.get('DB_PORT', '5432'),
         # Supabase session pooler has a small connection limit. Keep Django from
         # holding idle connections between requests unless explicitly overridden.
