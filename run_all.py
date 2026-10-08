@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 """
 ?堆?桃?蹓???1. Phase1?城????冽???????? processed_nodes_phase1.csv
-2. Phase2-Normal?垢???行?3. Phase2-Cross?城?駁??質??4. Phase2-Compact?奕璆???????5. Dashboard Assets?垮?????????Dispatch_Report
+2. Phase2-Normal?垢???行?3. Phase2-Cross?城?駁??質??4. Dashboard Assets?垮?????????Dispatch_Report
 """
 
 from pathlib import Path
@@ -30,6 +30,11 @@ from routing.tenant import resolve_company_key
 
 
 BASE_DIR = Path(__file__).resolve().parent
+PHASE2_SCRIPTS = (
+    ("NORMAL", "phase2_scheduler.py"),
+    ("CROSS", "phase2_scheduler_cross_county.py"),
+    ("COMPACT", "phase2_scheduler_cross_county_compact.py"),
+)
 OUTPUT_DIR = BASE_DIR / "output"
 
 
@@ -151,7 +156,6 @@ def run_dashboard_assets():
     print("[OK] Dashboard assets completed")
     print(f"  - normal routes: {info['normal_routes_count']}")
     print(f"  - cross routes: {info['cross_routes_count']}")
-    print(f"  - compact routes: {info['compact_routes_count']}")
     print(f"  - old routes: {info['old_routes_count']}")
     print(f"  - latest report: {info['latest_report']}")
     print(f"  - stamped report: {info['stamped_report']}")
@@ -183,9 +187,8 @@ def main():
     log_sections = []
 
     phase2_scripts = [
-        ("NORMAL", BASE_DIR / "routing" / "services" / "phase2_scheduler.py"),
-        ("CROSS", BASE_DIR / "routing" / "services" / "phase2_scheduler_cross_county.py"),
-        ("COMPACT", BASE_DIR / "routing" / "services" / "phase2_scheduler_cross_county_compact.py"),
+        (label, BASE_DIR / "routing" / "services" / filename)
+        for label, filename in PHASE2_SCRIPTS
     ]
 
     max_workers = min(len(phase2_scripts), max(int(os.environ.get("DISPATCH_PHASE2_WORKERS", "3")), 1))
