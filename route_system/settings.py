@@ -30,11 +30,10 @@ ALLOWED_HOSTS = [
     'immigration-dated-almost-located.trycloudflare.com',
     'localhost',
     '192.168.0.32',
-    '192.168.0.24',
-    '192.168.0.136',
+    '172.16.39.70',
+    '192.168.0.29',
     '127.0.0.1',
     'testserver',
-    '192.168.18.4',
 ]
 ALLOWED_HOSTS += [host.strip() for host in os.environ.get('DJANGO_ALLOWED_HOSTS', '').split(',') if host.strip()]
 CSRF_TRUSTED_ORIGINS = [

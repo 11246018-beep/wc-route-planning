@@ -3,6 +3,7 @@ from django.urls import path
 from django.views.generic import TemplateView
 from django.contrib.auth.decorators import login_required, user_passes_test
 from routing import account_api, live_api, mobile_api, views
+from routing.photo_upload import upload_cleaning_photo_api
 from django.conf import settings
 from django.conf.urls.static import static
 
@@ -78,6 +79,7 @@ urlpatterns = [
     path("api/driver/live/update/", live_api.driver_live_update_api, name="driver_live_update_api"),
     path("api/driver/live/state/", live_api.driver_live_state_api, name="driver_live_state_api"),
     path("api/ai/detect/", mobile_api.detect_cleaning_ai_api, name="detect_cleaning_ai_api"),
+    path("api/driver/upload-image/", upload_cleaning_photo_api, name="upload_cleaning_photo_api"),
 
     path("api/admin/drivers/", login_api(account_api.admin_drivers_api), name="admin_drivers_api"),
     path("api/admin/driver/save/", account_api.admin_driver_save_api, name="admin_driver_save_api"),
