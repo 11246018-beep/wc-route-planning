@@ -25,7 +25,6 @@ class CompanyProfile(models.Model):
 class CompanyScheduleSettings(models.Model):
     ROUTE_VARIANT_CHOICES = [
         ("normal", "不跨縣市"),
-        ("compact", "可跨縣市"),
         ("cross", "跨縣市完整"),
     ]
 

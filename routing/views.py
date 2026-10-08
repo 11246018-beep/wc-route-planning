@@ -11,6 +11,7 @@ import re
 import requests
 import csv
 import hashlib
+import logging
 
 from django.core.paginator import Paginator
 from django.db.models import Q
@@ -22,6 +23,7 @@ from django.views.decorators.csrf import csrf_exempt, ensure_csrf_cookie
 from django.contrib.auth import authenticate, login, logout
 from django.contrib.auth.models import User
 from django.contrib.auth.decorators import login_required, user_passes_test
+from django.utils.http import url_has_allowed_host_and_scheme
 from django.views.decorators.http import require_POST
 
 import pandas as pd
@@ -56,12 +58,16 @@ from .tenant import (
 )
 
 from collections import defaultdict
+from .services.route_mileage import normalize_route_mileage
+
+logger = logging.getLogger(__name__)
 from supabase import create_client
 
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "https://evwzonunmjvulzitxjmn.supabase.co")
 SUPABASE_KEY = os.environ.get("SUPABASE_ANON_KEY", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImV2d3pvbnVubWp2dWx6aXR4am1uIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI3OTAzOTUsImV4cCI6MjA4ODM2NjM5NX0.lWMaSu_B6q4AhzAxFykA6YBkwMN0QqNptAoUaraM2E4")
 
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+USE_SUPABASE_LEGACY = os.environ.get("USE_SUPABASE_LEGACY", "false").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def health_api(request):
@@ -137,6 +143,8 @@ def append_driver_company_filter(sql, params, request, column="driver_code"):
 
 
 def toilet_demand_analysis_api(request):
+    if not USE_SUPABASE_LEGACY:
+        return JsonResponse({"ok": True, "records": [], "message": "本機模式未啟用 Supabase 歷史照片分析。"})
     try:
         response = (
             supabase.table("uploaded_photos")
@@ -336,8 +344,9 @@ def ensure_admin_superuser(username="admin"):
 def ensure_system_admin():
     """建立平台層系統管理員。這個帳號只負責公司租戶管理，不屬於任何公司。"""
     try:
-        user, _ = User.objects.get_or_create(username="system_admin")
-        user.set_password("admin")
+        user, created = User.objects.get_or_create(username="system_admin")
+        if created:
+            user.set_unusable_password()
         user.is_active = True
         user.is_staff = True
         user.is_superuser = True
@@ -498,18 +507,17 @@ def read_admin_logs(limit=300, company=None):
 VARIANT_LABELS = {
     "normal": "不跨縣市",
     "cross": "可跨縣市",
-    "compact": "跨縣市精簡版",
 }
 
 VARIANT_FILES = {
     "normal": "routes_normal.json",
     "cross": "routes_cross.json",
-    "compact": "routes_compact.json",
 }
 
 ESG_CO2_KG_PER_KM = 0.21
 ESG_FUEL_KM_PER_LITER = 10.0
 ESG_BASELINE_FILE = "old_routes.json"
+ESG_OSRM_BASELINE_FILE = "esg_osrm_baseline.json"
 
 # ESG equivalency constants are kept in Python so templates only render values.
 # Sources:
@@ -685,6 +693,29 @@ def serialize_company_depot(depot):
     }
 
 
+def _scheduler_failure_message(result):
+    text = str(result.stderr or "").strip()
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    detail = next((line for line in reversed(lines) if "Error:" in line or "Exception:" in line), "")
+    if not detail:
+        detail = next((line.strip() for line in str(result.stdout or "").splitlines()
+                       if "[ERROR]" in line or "[FAILED]" in line), "")
+    detail = detail[:350]
+    return f"排程執行失敗（結束碼 {result.returncode}）" + (f"：{detail}" if detail else "；請查看目前公司 output 下的 run_all_last.log。")
+
+
+def _reserve_scheduler_run(variant):
+    # Mark the run before starting the thread so polling cannot see the
+    # previous run's completed state and parallel clicks cannot start two jobs.
+    with RUN_LOCK:
+        if RUN_STATE.get("running"):
+            return False
+        RUN_STATE.update(running=True, finished=False, success=False, variant=variant,
+                         started_at=time.time(), ended_at=None, elapsed_sec=0,
+                         progress=3, run_meta=None, message="排程啟動中，請稍候。")
+        return True
+
+
 def _run_scheduler_background(variant, output_dir=None, company_key="", settings_env=None):
     output_dir = output_dir or OUTPUT_DIR
     settings_env = settings_env or {}
@@ -748,14 +779,14 @@ def _run_scheduler_background(variant, output_dir=None, company_key="", settings
                 running=False,
                 finished=True,
                 success=False,
-                message="排程執行失敗，請檢查 output/run_all_last.log。",
+                message=_scheduler_failure_message(result),
                 ended_at=time.time(),
                 elapsed_sec=_safe_elapsed(RUN_STATE.get("started_at")),
                 progress=100,
                 run_meta=None,
             )
     except Exception as e:
-        (OUTPUT_DIR / "run_all_last.log").write_text(
+        (output_dir / "run_all_last.log").write_text(
             f"Exception while running scheduler:\n{e}",
             encoding="utf-8",
         )
@@ -957,6 +988,16 @@ def route_metric(route, key):
 
 
 def route_distance_km(route, prefer_metric=True):
+    metrics = route.get("metrics") or {}
+    stops = route.get("stops") or []
+    if prefer_metric:
+        legs = metrics.get("legs") or []
+        if legs and all(to_float(leg.get("distance")) is not None for leg in legs):
+            return sum(to_float(leg["distance"]) for leg in legs) / 1000.0
+        # Each stop stores the distance from the preceding point, not depot.
+        if stops and all(to_float(stop.get("travel_dist_km")) is not None for stop in stops):
+            if route.get("return_to_depot") is False or "return_distance_km" in metrics:
+                return sum(to_float(stop["travel_dist_km"]) for stop in stops) + (to_float(metrics.get("return_distance_km")) or 0.0)
     dist = route_metric(route, "dist_km")
     if prefer_metric and dist > 0:
         return dist
@@ -980,7 +1021,7 @@ def route_distance_km(route, prefer_metric=True):
     if len(points) < 2:
         return 0.0
 
-    if isinstance(depot, dict) and points[0] != points[-1]:
+    if route.get("return_to_depot", True) and isinstance(depot, dict) and to_float(depot.get("lat")) is not None and to_float(depot.get("lon")) is not None and points[0] != points[-1]:
         points.append(points[0])
 
     return sum(haversine_km(a[0], a[1], b[0], b[1]) for a, b in zip(points, points[1:]))
@@ -995,7 +1036,6 @@ def build_esg_summary(routes, variant, output_dir=None, settings=None):
         except Exception:
             emission_factor = ESG_CO2_KG_PER_KM
     total_distance = sum(route_distance_km(route) for route in routes)
-    current_coord_distance = sum(route_distance_km(route, prefer_metric=False) for route in routes)
     total_drive = sum(route_metric(route, "drive_min") for route in routes)
     total_service = sum(route_metric(route, "service_min") for route in routes)
     total_work = sum(route_metric(route, "total_min") for route in routes)
@@ -1006,24 +1046,44 @@ def build_esg_summary(routes, variant, output_dir=None, settings=None):
     )
 
     baseline_distance = 0.0
-    baseline_path = output_dir / ESG_BASELINE_FILE
+    calculated_baseline = output_dir / ESG_OSRM_BASELINE_FILE
+    baseline_path = calculated_baseline if calculated_baseline.exists() else output_dir / ESG_BASELINE_FILE
+    baseline_method = ""
+    baseline_complete = True
     if baseline_path.exists():
         raw = load_json(baseline_path)
         baseline_routes = raw.get("routes", []) if isinstance(raw, dict) else []
-        baseline_metric_distance = sum(route_metric(route, "dist_km") for route in baseline_routes)
-        baseline_coord_distance = sum(route_distance_km(route, prefer_metric=False) for route in baseline_routes)
-        road_factor = total_distance / current_coord_distance if current_coord_distance > 0 else 1.0
-        if baseline_metric_distance > 0:
+        baseline_meta = raw.get("meta", {}) if isinstance(raw, dict) else {}
+        baseline_method = str(baseline_meta.get("distance_source") or "")
+        if baseline_method.startswith("OSRM Route"):
+            baseline_complete = bool(baseline_meta.get("osrm_baseline_complete"))
+        # Imported verified baseline provides both route boundaries. Select
+        # the same boundary as the current plan instead of comparing open/closed.
+        boundary_key = "closed_distance_km" if variant in ("cross", "compact") else "open_distance_km"
+        baseline_metric_distance = sum(
+            to_float((route.get("metrics") or {}).get(boundary_key))
+            if (route.get("metrics") or {}).get(boundary_key) is not None
+            else route_metric(route, "dist_km")
+            for route in baseline_routes
+        )
+        # A comparison requires complete source mileage. Missing depot legs
+        # and straight-line estimates must not be presented as a road baseline.
+        complete_metrics = bool(baseline_routes) and all(
+            route_metric(route, "dist_km") > 0 or not route.get("stops")
+            for route in baseline_routes
+        )
+        if complete_metrics and baseline_complete:
             baseline_distance = baseline_metric_distance
-        elif baseline_coord_distance > 0:
-            baseline_distance = baseline_coord_distance * max(road_factor, 1.0)
 
-    if baseline_distance <= 0:
-        baseline_distance = total_distance / 0.9 if total_distance > 0 else 0.0
-    elif total_distance > 0 and baseline_distance <= total_distance:
-        baseline_distance = total_distance / 0.9
-
-    saved_distance = max(baseline_distance - total_distance, 0.0)
+    time_key = "closed_drive_min" if variant in ("cross", "compact") else "open_drive_min"
+    baseline_drive = None
+    if baseline_path.exists() and baseline_complete and baseline_routes and all(
+        (route.get("metrics") or {}).get(time_key) is not None for route in baseline_routes
+    ):
+        baseline_drive = sum(float(route["metrics"][time_key]) for route in baseline_routes)
+    comparison_available = baseline_distance > 0
+    # Keep negative savings visible when the current plan travels farther.
+    saved_distance = baseline_distance - total_distance if comparison_available else 0.0
     co2 = total_distance * emission_factor
     baseline_co2 = baseline_distance * emission_factor
     saved_co2 = saved_distance * emission_factor
@@ -1037,18 +1097,102 @@ def build_esg_summary(routes, variant, output_dir=None, settings=None):
         "stop_count": stop_count,
         "total_distance_km": round(total_distance, 2),
         "total_drive_min": round(total_drive, 1),
+        "baseline_drive_min": round(baseline_drive, 2) if baseline_drive is not None else None,
+        "saved_drive_min": round(baseline_drive - total_drive, 2) if baseline_drive is not None else None,
         "total_service_min": round(total_service, 1),
         "total_work_min": round(total_work, 1),
         "estimated_fuel_liter": round(fuel_liters, 2),
         "estimated_co2_kg": round(co2, 2),
+        "comparison_available": comparison_available,
+        "baseline_file": baseline_path.name,
         "baseline_distance_km": round(baseline_distance, 2),
         "baseline_co2_kg": round(baseline_co2, 2),
         "saved_distance_km": round(saved_distance, 2),
         "saved_co2_kg": round(saved_co2, 2),
         "saved_pct": round((saved_distance / baseline_distance) * 100, 1) if baseline_distance > 0 else 0.0,
-        "baseline_label": "原始/人工路線估算",
-        "note": "碳排為展示估算值，依路線里程與平均車輛排放係數換算；正式導入可依廠商車種、油耗或電動車耗電係數調整。",
+        "baseline_label": "原始排程 OSRM 基準" if baseline_method.startswith("OSRM Route") and baseline_complete else "原始/人工路線估算",
+        "note": (
+            "人工排程缺少完整道路里程，暫不顯示節省比較；請補齊場站後重新計算原始排程。"
+            if not comparison_available else
+            "節省值為人工里程減目前里程；負值表示目前排程增加里程。不同點位數應分開比較。"
+            + ("人工基準：PZ採平鎮、WG採五股；S13、S14第4天暫採五股場站。" if calculated_baseline.exists() else "")
+        ) + (
+            "碳排依原始排程與目前排程的 OSRM 道路里程計算；"
+            "若上傳基準仍有缺少倉庫或 OSRM fallback 路線，系統不顯示混合估算的節省成果。"
+            if baseline_method.startswith("OSRM Route") else
+            "碳排為展示估算值，依路線里程與平均車輛排放係數換算；正式導入可依廠商車種、油耗或電動車耗電係數調整。"
+        ),
     }
+
+
+def build_driver_esg_summary(routes, company):
+    """Selected plan's workload and company-scoped historical after-photo quality."""
+    rows = {}
+
+    def ensure(code, label=None):
+        code = str(code or "").strip().upper()
+        if not code:
+            return None
+        return rows.setdefault(code, {
+            "driver_code": code, "driver_label": label or code,
+            "route_count": 0, "stop_count": 0, "service_min": 0.0,
+            "drive_min": 0.0, "work_min": 0.0, "distance_km": 0.0,
+            "cleaning_count": None, "qualified_count": None,
+            "failed_count": None, "pending_count": None, "qualified_pct": None,
+        })
+
+    warning = ""
+    try:
+        for code in DriverCompanyProfile.objects.filter(company=company).values_list("driver_code", flat=True):
+            ensure(code)
+    except Exception:
+        warning = "無法讀取司機名冊，請確認資料庫連線。"
+    for route in routes:
+        row = ensure(route.get("driver"), route.get("driver_label"))
+        if row is None:
+            continue
+        if route.get("driver_label"):
+            row["driver_label"] = route["driver_label"]
+        row["route_count"] += 1
+        row["stop_count"] += len(route.get("stops") or [])
+        row["service_min"] += route_metric(route, "service_min")
+        row["drive_min"] += route_metric(route, "drive_min")
+        row["work_min"] += route_metric(route, "service_min") + route_metric(route, "drive_min")
+        row["distance_km"] += route_distance_km(route)
+
+    try:
+        # Legacy photos must match both a company driver and company point.
+        point_ids = ServicePointCompanyProfile.objects.filter(company=company).values_list("service_point_id", flat=True)
+        addresses = list(ServicePoint.objects.filter(id__in=point_ids).values_list("address", flat=True))
+        sql = """
+            SELECT UPPER(TRIM(driver_code)), COUNT(*),
+                   COUNT(*) FILTER (WHERE is_qualified = true),
+                   COUNT(*) FILTER (WHERE is_qualified = false),
+                   COUNT(*) FILTER (WHERE is_qualified IS NULL)
+            FROM uploaded_photos
+            WHERE photo_type = 'after' AND
+                  (company_key = %s OR
+                   (NULLIF(company_key, '') IS NULL AND
+                    UPPER(TRIM(driver_code)) = ANY(%s) AND stop_address = ANY(%s)))
+            GROUP BY UPPER(TRIM(driver_code))
+        """
+        with connection.cursor() as cursor:
+            cursor.execute(sql, [company.key, list(rows), addresses])
+            counts = cursor.fetchall()
+        for row in rows.values():
+            row.update(cleaning_count=0, qualified_count=0, failed_count=0, pending_count=0)
+        for code, total, qualified, failed, pending in counts:
+            row = ensure(code)
+            if row is not None:
+                row.update(cleaning_count=total, qualified_count=qualified, failed_count=failed,
+                           pending_count=pending, qualified_pct=round(qualified / (qualified + failed) * 100, 1) if qualified + failed else None)
+    except Exception:
+        logger.exception("Unable to read ESG cleaning statistics")
+        warning = "清潔統計無法讀取，請確認資料庫連線及 uploaded_photos 資料表；路線統計仍可查看。"
+    for row in rows.values():
+        for key in ("service_min", "drive_min", "work_min", "distance_km"):
+            row[key] = round(row[key], 2)
+    return sorted(rows.values(), key=lambda row: row["driver_code"]), warning
 
 
 def build_esg_equivalents(esg):
@@ -1169,6 +1313,9 @@ def normalize_route_meta(meta, company=None):
     if current_total <= 0:
         return data
 
+    if "unassigned_db_points" not in data:
+        data["total_db_points"] = current_total
+        return data
     unassigned = to_int(data.get("unassigned_db_points"), 0)
     if unassigned < 0 or unassigned > current_total:
         unassigned = 0
@@ -1199,6 +1346,10 @@ def load_variant_payload(variant, output_dir=None, settings=None, company=None):
 
     raw = load_json(file_path)
     routes = raw.get("routes", []) if isinstance(raw, dict) else []
+    for route in routes:
+        route.setdefault("return_to_depot", variant != "normal")
+        route.update(normalize_route_mileage(route, variant))
+        route.setdefault("metrics", {})["dist_km"] = round(route_distance_km(route), 2)
     meta = raw.get("meta", {}) if isinstance(raw, dict) else {}
     meta = normalize_route_meta(meta, company)
 
@@ -1831,9 +1982,6 @@ def requested_route_variant(question):
     if any(k in text for k in ["不跨縣市", "normal"]):
         return "normal"
 
-    if any(k in text for k in ["精簡", "compact"]):
-        return "compact"
-
     if any(k in text for k in ["跨縣市", "跨區", "cross"]):
         return "cross"
 
@@ -2010,13 +2158,11 @@ def collect_dispatch_ai_context(company, output_dir, settings, question=""):
     evidence = [
         str(output_dir / "routes_normal.json"),
         str(output_dir / "routes_cross.json"),
-        str(output_dir / "routes_compact.json"),
         str(output_dir / "Daily_Route_Summary.xlsx"),
         str(output_dir / "Driver_Weekly_Load_Strict.xlsx"),
         str(output_dir / "Weekly_Unassigned_Strict.xlsx"),
         str(output_dir / "Unassigned_Points_normal.xlsx"),
         str(output_dir / "Unassigned_Points_cross.xlsx"),
-        str(output_dir / "Unassigned_Points_compact.xlsx"),
     ]
     requested_limit = requested_list_limit(question)
 
@@ -2180,7 +2326,6 @@ def collect_dispatch_ai_context(company, output_dir, settings, question=""):
 
     normal_payload = load_variant_payload("normal", output_dir, settings=settings, company=company)
     cross_payload = load_variant_payload("cross", output_dir, settings=settings, company=company)
-    compact_payload = load_variant_payload("compact", output_dir, settings=settings, company=company)
 
     daily_rows = ai_load_excel_records(output_dir / "Daily_Route_Summary.xlsx", limit=200)
     load_rows = ai_load_excel_records(output_dir / "Driver_Weekly_Load_Strict.xlsx", limit=200)
@@ -2199,7 +2344,6 @@ def collect_dispatch_ai_context(company, output_dir, settings, question=""):
     variant_payloads = {
         "normal": normal_payload,
         "cross": cross_payload,
-        "compact": compact_payload,
     }
 
     variants = {}
@@ -2240,7 +2384,7 @@ def collect_dispatch_ai_context(company, output_dir, settings, question=""):
                         target_ids,
                         max_minutes,
                         limit=3,
-                        allow_cross_county=variant in {"cross", "compact"},
+                            allow_cross_county=variant == "cross",
                     )
                     for recommendation in recommendations:
                         verified_candidates.append({
@@ -2251,7 +2395,7 @@ def collect_dispatch_ai_context(company, output_dir, settings, question=""):
                             "source_total_min": low_route.get("total_min"),
                             "analysis_type": "incremental_scheduler_dry_run",
                             "verified_by_route_cost": True,
-                            "allow_cross_county": variant in {"cross", "compact"},
+                            "allow_cross_county": variant == "cross",
                         })
                 if verified_candidates:
                     merge_candidates = verified_candidates
@@ -2329,11 +2473,10 @@ def collect_carbon_ai_context(company, output_dir, settings):
     evidence = [
         str(output_dir / "routes_normal.json"),
         str(output_dir / "routes_cross.json"),
-        str(output_dir / "routes_compact.json"),
         str(output_dir / ESG_BASELINE_FILE),
     ]
     contexts = {}
-    for variant in ["normal", "cross", "compact"]:
+    for variant in ["normal", "cross"]:
         payload = load_variant_payload(variant, output_dir, settings=settings, company=company)
         contexts[variant] = {
             "ok": payload.get("ok"),
@@ -2400,7 +2543,8 @@ def collect_carbon_ai_context(company, output_dir, settings):
             "baseline_co2_kg": round(baseline_distance * emission_factor, 2),
             "saved_co2_kg": round(max(baseline_distance - current_distance, 0) * emission_factor, 2),
             "current_distance_km": round(current_distance, 2),
-            "baseline_distance_km": round(baseline_distance, 2),
+            "comparison_available": comparison_available,
+        "baseline_distance_km": round(baseline_distance, 2),
         })
     reduction_items.sort(key=lambda item: item["saved_co2_kg"], reverse=True)
     carbon_reduction_analysis = {
@@ -2890,11 +3034,11 @@ def build_mock_ai_answer(question, context):
         if normal_eq:
             lines.append(
                 f"具象化來看，節省量約等於 {normal_eq.get('tree_count_year', '未知')} 棵都市樹苗一年吸收量，"
-                f"或少開約 {normal_eq.get('car_km_equivalent', '未知')} 公里乘用車。"
+                f"或相當於少排放一輛乘用車行駛約 {normal_eq.get('car_km_equivalent', '未知')} 公里。"
             )
         lowest = data.get("lowest_carbon_variant")
         if lowest:
-            lines.append(f"三種模式中，目前碳排最低的是 {lowest.get('label')}，約 {lowest.get('estimated_co2_kg')} kg CO2e。")
+            lines.append(f"目前比較的路線模式中，碳排最低的是 {lowest.get('label')}，約 {lowest.get('estimated_co2_kg')} kg CO2e。")
         high_routes = data.get("carbon_route_rankings") or data.get("highest_distance_routes") or []
         if high_routes:
             limit = requested_list_limit(q, default=3, maximum=20)
@@ -2946,12 +3090,6 @@ def build_mock_ai_answer(question, context):
         total = unassigned.get("total_count", 0)
         limit = requested_list_limit(q)
         label = variant_data.get("label") or requested_variant
-        if requested_variant == "cross" and not total and variants.get("compact", {}).get("unassigned", {}).get("total_count"):
-            compact = variants.get("compact") or {}
-            unassigned = compact.get("unassigned") or {}
-            rows = unassigned.get("items") or []
-            total = unassigned.get("total_count", 0)
-            label = f"{label}（本模式未提供未排入檔；以下同時提供跨縣市精簡版資料）"
         if not total:
             return f"{label} 目前沒有未排入點位資料；若報表沒有輸出未排入檔，表示目前資料不足，無法列出明細。"
         lines = [f"{label} 目前未排入點位共 {total} 筆。你要求列出前 {limit} 筆，以下列出 {min(limit, len(rows), total)} 筆："]
@@ -3047,6 +3185,8 @@ def normalize_gemini_model(value):
 
 
 @require_POST
+@login_required(login_url="login")
+@user_passes_test(is_manager, login_url="home")
 def api_ai_assistant_ask(request):
     try:
         payload = json.loads(request.body.decode("utf-8") or "{}")
@@ -3183,7 +3323,6 @@ def copy_scheduler_outputs_to_tenant(output_dir):
         "routes_unassigned_strict.json",
         "Unassigned_Points_normal.xlsx",
         "Unassigned_Points_cross.xlsx",
-        "Unassigned_Points_compact.xlsx",
         "Daily_Route_Summary.xlsx",
         "Weekly_Schedule_Summary.xlsx",
         "Driver_Weekly_Load_Strict.xlsx",
@@ -3218,6 +3357,12 @@ def extract_variant_run_meta(variant, output_dir=None, company=None):
 def login_view(request):
     """管理者登入。未審核帳號不能登入，admin 帳號固定視為高階管理者。"""
     ensure_system_admin()
+    requested_next = (request.GET.get("next") or "").strip()
+    safe_next = requested_next if url_has_allowed_host_and_scheme(
+        requested_next,
+        allowed_hosts={request.get_host()},
+        require_https=request.is_secure(),
+    ) else ""
     if request.method == "POST":
         try:
             data = json.loads(request.body or "{}")
@@ -3264,7 +3409,7 @@ def login_view(request):
                         return JsonResponse({"success": False, "message": "系統管理員請選擇「系統管理員」登入。"})
                     login(request, user)
                     write_admin_log(request, "系統管理員登入", user.username)
-                    return JsonResponse({"success": True, "redirect_url": "/companies/"})
+                    return JsonResponse({"success": True, "redirect_url": safe_next or "/companies/"})
 
                 if company_key == "__system__":
                     return JsonResponse({"success": False, "message": "一般管理者請選擇所屬公司登入。"})
@@ -3277,7 +3422,7 @@ def login_view(request):
 
                 login(request, user)
                 write_admin_log(request, "管理者登入", public_company_username(user, company), {"company": company.key})
-                return JsonResponse({"success": True, "redirect_url": "/home/"})
+                return JsonResponse({"success": True, "redirect_url": safe_next or "/home/"})
 
             # authenticate 對 is_active=False 會直接失敗，所以額外判斷提示更清楚。
             pending_user = User.objects.filter(username=auth_username).first()
@@ -3301,6 +3446,12 @@ def logout_view(request):
         extra = {"company": company.key} if getattr(company, "id", None) and not is_system_admin(request.user) else {}
         write_admin_log(request, "管理者登出", target, extra)
     logout(request)
+    logger.warning(
+        "AUTH DEBUG logout path=%s user=%s authenticated=%s",
+        request.path,
+        getattr(request.user, "username", "<anonymous>"),
+        getattr(request.user, "is_authenticated", False),
+    )
     return redirect("login")
 
 
@@ -3901,7 +4052,7 @@ def admin_action_logs_page(request):
     return render(request, "routing/admin_action_logs.html", {"logs": logs})
 
 
-@login_required(login_url="login")
+@login_required(login_url="/")
 @ensure_csrf_cookie
 def home(request):
     if is_system_admin(request.user):
@@ -3989,8 +4140,16 @@ def run_scheduler(request):
             variant,
             {"mode": "background", "company": company.key, "company_key_source": company_key_source},
         )
+        if not _reserve_scheduler_run(variant):
+            return JsonResponse({"ok": True, "started": False, "running": True,
+                                 "message": "排程已在執行中，請等待目前這次完成。"})
         thread = threading.Thread(target=_run_scheduler_background, args=(variant, tenant_output, company.key, settings_env), daemon=True)
-        thread.start()
+        try:
+            thread.start()
+        except Exception as exc:
+            _set_run_state(running=False, finished=True, success=False,
+                           message=f"無法啟動背景排程：{exc}")
+            return JsonResponse({"ok": False, "message": f"無法啟動背景排程：{exc}"}, status=500)
         return JsonResponse({
             "ok": True,
             "started": True,
@@ -4038,13 +4197,15 @@ def run_scheduler(request):
             return redirect(f"/home/?variant={variant}&run=success")
         return redirect(f"/home/?variant={variant}&run=failed")
     except Exception as e:
-        (OUTPUT_DIR / "run_all_last.log").write_text(
+        (tenant_output / "run_all_last.log").write_text(
             f"Exception while running scheduler:\n{e}",
             encoding="utf-8",
         )
         return redirect(f"/home/?variant={variant}&run=failed")
 
 
+@login_required(login_url="login")
+@user_passes_test(is_manager, login_url="home")
 def api_run_status(request):
     variant = request.GET.get("variant", "normal")
     if variant not in VARIANT_LABELS:
@@ -4063,6 +4224,7 @@ def api_run_status(request):
     })
 
 
+@login_required(login_url="login")
 def api_esg_summary(request):
     variant = request.GET.get("variant", "normal")
     if variant not in VARIANT_LABELS:
@@ -4072,6 +4234,7 @@ def api_esg_summary(request):
     output_dir = current_company_output_dir(OUTPUT_DIR, request.user)
     payload = load_variant_payload(variant, output_dir, settings=settings, company=company)
     esg = payload.get("esg") or build_esg_summary([], variant, output_dir, settings=settings)
+    drivers, cleaning_warning = build_driver_esg_summary(payload.get("routes") or [], company)
     return JsonResponse({
         "ok": bool(payload.get("ok")),
         "warning": payload.get("warning") or "",
@@ -4083,9 +4246,12 @@ def api_esg_summary(request):
         "meta": payload.get("meta") or {},
         "esg": esg,
         "equivalents": build_esg_equivalents(esg),
+        "drivers": drivers,
+        "cleaning_warning": cleaning_warning,
     }, status=200 if payload.get("ok") else 404)
 
 
+@login_required(login_url="login")
 def api_route_options(request):
     variant = request.GET.get("variant", "normal")
     output_dir = current_company_output_dir(OUTPUT_DIR, request.user)
@@ -4138,6 +4304,7 @@ def api_route_options(request):
     )
 
 
+@login_required(login_url="login")
 def api_route_detail(request):
     variant = request.GET.get("variant", "normal")
     company = get_user_company(request.user)
@@ -4218,6 +4385,7 @@ def api_route_detail(request):
     )
 
 
+@login_required(login_url="login")
 def api_old_route_options(request):
     payload = load_old_payload(current_company_output_dir(OUTPUT_DIR, request.user))
 
@@ -4310,6 +4478,7 @@ def api_old_route_options(request):
     )
 
 
+@login_required(login_url="login")
 def api_old_route_detail(request):
     payload = load_old_payload(current_company_output_dir(OUTPUT_DIR, request.user))
 
@@ -4368,6 +4537,22 @@ def _county_from_address(address):
     return ""
 
 
+def _baseline_day_token(value):
+    """Keep source dates readable while allowing the importer to assign day 1..N."""
+    if value is None or (isinstance(value, float) and math.isnan(value)):
+        return ""
+    if hasattr(value, "strftime"):
+        return value.strftime("%Y-%m-%d")
+    text = clean_text(value) or ""
+    if not text:
+        return ""
+    try:
+        number = int(float(text))
+        return str(number)
+    except (TypeError, ValueError):
+        return text
+
+
 def _routes_from_baseline_excel(upload_file):
     sheets = pd.read_excel(upload_file, sheet_name=None)
     frames = []
@@ -4385,23 +4570,26 @@ def _routes_from_baseline_excel(upload_file):
     df = df.dropna(how="all")
     columns = list(df.columns)
 
-    day_col = _find_excel_column(columns, ["日程(Day)", "日程", "Day", "天數", "第幾天"])
+    day_col = _find_excel_column(columns, ["日程(Day)", "日程", "Day", "天數", "第幾天", "維護日期", "日期"])
     driver_col = _find_excel_column(columns, ["員工代號", "司機代碼", "司機", "driver", "driver_code"])
+    depot_col = _find_excel_column(columns, ["倉庫別", "倉庫", "場站", "depot"])
     area_col = _find_excel_column(columns, ["工作區域", "區域", "area"])
-    seq_col = _find_excel_column(columns, ["順序", "站序", "序號", "seq"])
-    task_col = _find_excel_column(columns, ["任務ID", "任務 ID", "點位ID", "點位 ID", "task_id", "id"])
-    address_col = _find_excel_column(columns, ["地址", "站點地址", "stop_address", "address"])
+    # The supplied weekly file has no per-stop sequence column. In that case
+    # the original Excel row order is the authoritative route order.
+    seq_col = _find_excel_column(columns, ["順序", "站序", "序號", "stop_seq", "seq"])
+    task_col = _find_excel_column(columns, ["任務ID", "任務 ID", "點位ID", "點位 ID", "出租單號", "異動單號", "task_id", "id"])
+    address_col = _find_excel_column(columns, ["地址", "服務地點", "站點地址", "stop_address", "address"])
     lat_col = _find_excel_column(columns, ["緯度", "lat", "latitude"])
     lon_col = _find_excel_column(columns, ["經度", "lon", "lng", "longitude"])
     service_col = _find_excel_column(columns, ["維護時間(分)", "維護時間", "服務時間", "服務時間(分)", "service_min"])
     drive_col = _find_excel_column(columns, ["預估車程(分)", "預估車程", "車程", "車程(分)", "drive_min"])
+    reported_distance_col = _find_excel_column(columns, ["行車距離", "原始里程", "距離", "distance_km", "distance"])
     total_col = _find_excel_column(columns, ["累計工時(分)", "累計工時", "總工時", "total_min"])
 
     missing = []
     for label, col in [
-        ("日程(Day)", day_col),
+        ("日程／維護日期", day_col),
         ("員工代號", driver_col),
-        ("順序", seq_col),
         ("地址", address_col),
         ("緯度", lat_col),
         ("經度", lon_col),
@@ -4411,28 +4599,44 @@ def _routes_from_baseline_excel(upload_file):
     if missing:
         raise ValueError(f"Excel 缺少必要欄位：{', '.join(missing)}")
 
+    source_days = []
+    for value in df[day_col].tolist():
+        token = _baseline_day_token(value)
+        if token and token not in source_days:
+            source_days.append(token)
+    day_sort_key = lambda token: (0, int(token)) if token.isdigit() else (1, token)
+    source_days.sort(key=day_sort_key)
+    day_number = {token: index + 1 for index, token in enumerate(source_days)}
+
     grouped = {}
-    for _, row in df.iterrows():
-        day = to_int(row.get(day_col), None)
+    for row_index, row in df.iterrows():
+        source_day = _baseline_day_token(row.get(day_col))
+        day = day_number.get(source_day)
         driver = clean_text(row.get(driver_col))
-        seq = to_int(row.get(seq_col), None)
+        seq = to_int(row.get(seq_col), None) if seq_col is not None else None
+        if seq is None:
+            seq = int(row_index) + 1
         lat = to_float(row.get(lat_col))
         lon = to_float(row.get(lon_col))
         address = clean_text(row.get(address_col))
+        depot_name = clean_text(row.get(depot_col)) if depot_col is not None else ""
 
-        if day is None or not driver or seq is None or lat is None or lon is None:
+        if day is None or not driver or lat is None or lon is None:
             continue
 
-        key = (driver, day)
+        key = (driver, day, depot_name)
         grouped.setdefault(key, {
             "driver": driver,
             "day": day,
+            "source_day": source_day,
+            "depot_name": depot_name,
             "area": clean_text(row.get(area_col)) if area_col is not None else "",
             "stops": [],
         })
 
         service_min = to_float(row.get(service_col)) if service_col is not None else 0.0
         drive_min = to_float(row.get(drive_col)) if drive_col is not None else 0.0
+        reported_distance = to_float(row.get(reported_distance_col)) if reported_distance_col is not None else None
         total_min = to_float(row.get(total_col)) if total_col is not None else None
         county = _county_from_address(address)
 
@@ -4446,10 +4650,12 @@ def _routes_from_baseline_excel(upload_file):
             "drive_min": drive_min or 0.0,
             "total_min": total_min,
             "county": county,
+            "source_row": int(row_index) + 1,
+            "reported_distance_km": reported_distance,
         })
 
     routes = []
-    for (driver, day), item in sorted(grouped.items(), key=lambda kv: (kv[0][0], kv[0][1])):
+    for (driver, day, depot_name), item in sorted(grouped.items(), key=lambda kv: (kv[0][1], kv[0][0], kv[0][2])):
         stops = sorted(item["stops"], key=lambda stop: to_int(stop.get("seq"), 0))
         if not stops:
             continue
@@ -4458,6 +4664,8 @@ def _routes_from_baseline_excel(upload_file):
         drive_min = sum(to_float(stop.get("drive_min")) or 0.0 for stop in stops)
         total_values = [to_float(stop.get("total_min")) for stop in stops if to_float(stop.get("total_min")) is not None]
         total_min = max(total_values) if total_values else service_min + drive_min
+        reported_distances = [to_float(stop.get("reported_distance_km")) for stop in stops
+                              if to_float(stop.get("reported_distance_km")) is not None]
 
         routes.append({
             "route_id": f"OLD-{driver}-D{day}",
@@ -4465,6 +4673,8 @@ def _routes_from_baseline_excel(upload_file):
             "driver_label": f"{driver}" + (f"｜{item['area']}" if item.get("area") else ""),
             "original_driver_name": driver,
             "day": day,
+            "source_day": item.get("source_day"),
+            "source_depot_name": item.get("depot_name") or "",
             "depot": {},
             "stop_count": len(stops),
             "counties": counties,
@@ -4476,6 +4686,7 @@ def _routes_from_baseline_excel(upload_file):
                 "total_min": round(total_min, 2),
                 "overtime_min": 0,
             },
+            "original_reported_distance_km": round(max(reported_distances), 2) if reported_distances else None,
             "stops": stops,
         })
 
@@ -4488,12 +4699,121 @@ def _routes_from_baseline_excel(upload_file):
             "source_filename": upload_file.name,
             "sheet_count": len(sheets),
             "row_count": int(len(df)),
+            "source_day_values": source_days,
+            "distance_source": "original_uploaded_route_data",
         },
         "routes": routes,
     }
 
 
+def _normalised_text(value):
+    return re.sub(r"[^0-9a-z\u4e00-\u9fff]+", "", str(value or "").strip().lower())
+
+
+def _baseline_depot_lookup(company, output_dir):
+    """Build a tolerant name/code lookup for uploaded warehouse labels."""
+    lookup = {}
+
+    def add(item, aliases):
+        if not item or to_float(item.get("lat")) is None or to_float(item.get("lon")) is None:
+            return
+        payload = {
+            "code": str(item.get("code") or ""),
+            "name": str(item.get("name") or item.get("code") or ""),
+            "lat": to_float(item.get("lat")),
+            "lon": to_float(item.get("lon")),
+        }
+        for alias in aliases:
+            key = _normalised_text(alias)
+            if key:
+                lookup[key] = payload
+
+    try:
+        if getattr(company, "id", None):
+            for depot in CompanyDepot.objects.filter(company=company, is_active=True):
+                add({"code": depot.code, "name": depot.name, "lat": depot.lat, "lon": depot.lon},
+                    [depot.code, depot.name, depot.address])
+    except Exception:
+        # A baseline upload can still use depot coordinates already present in
+        # route output (or the known demo aliases) when the settings database
+        # is temporarily unavailable.
+        logger.exception("Unable to load company depots while importing baseline")
+
+    for variant in ("normal", "cross"):
+        payload = load_variant_payload(variant, output_dir, company=company)
+        for route in payload.get("routes") or []:
+            depot = route.get("depot") or {}
+            add(depot, [depot.get("code"), depot.get("name")])
+
+    # These aliases cover the supplied demo workbook when the database label
+    # uses a business name such as 5A-平鎮倉 instead of the route code.
+    add({"code": "Pingzhen", "name": "平鎮總部", "lat": 24.90703, "lon": 121.226872},
+        ["5A-平鎮倉", "平鎮", "pingzhen"])
+    add({"code": "Wugu", "name": "五股總部", "lat": 25.07154, "lon": 121.44169},
+        ["5D-五股倉", "五股", "wugu"])
+    return lookup
+
+
+def _calculate_baseline_osrm(data, company, output_dir):
+    """Calculate exact OSRM Route metrics for each uploaded source route."""
+    from .services.routing_cost_provider import RoutingCostProvider
+
+    lookup = _baseline_depot_lookup(company, output_dir)
+    provider = RoutingCostProvider()
+    exact_routes = 0
+    fallback_routes = 0
+    missing_depot_routes = 0
+    errors = []
+    try:
+        for route in data.get("routes") or []:
+            source_depot = str(route.get("source_depot_name") or "")
+            depot = lookup.get(_normalised_text(source_depot))
+            if depot is None:
+                for alias, candidate in lookup.items():
+                    if alias in _normalised_text(source_depot) or _normalised_text(source_depot) in alias:
+                        depot = candidate
+                        break
+            stops = [stop for stop in route.get("stops") or []
+                     if to_float(stop.get("lat")) is not None and to_float(stop.get("lon")) is not None]
+            if depot is None:
+                missing_depot_routes += 1
+                route.setdefault("osrm", {})["status"] = "missing_depot"
+                errors.append(f"{route.get('route_id')}: 找不到倉庫座標（{source_depot or '未提供'}）")
+                continue
+            route["depot"] = depot
+            coords = [(depot["lat"], depot["lon"])] + [(to_float(stop["lat"]), to_float(stop["lon"])) for stop in stops]
+            if len(coords) < 2:
+                route.setdefault("osrm", {})["status"] = "insufficient_points"
+                continue
+            exact = provider.route_geometry(coords)
+            route.setdefault("osrm", {})["source"] = exact.get("source")
+            route["osrm"]["used_fallback"] = bool(exact.get("used_fallback"))
+            if exact.get("used_fallback") or exact.get("distance") is None or exact.get("duration") is None:
+                fallback_routes += 1
+                route["osrm"]["status"] = "fallback"
+                continue
+            metrics = route.setdefault("metrics", {})
+            metrics["drive_min"] = round(float(exact["duration"]), 2)
+            metrics["dist_km"] = round(float(exact["distance"]), 2)
+            metrics["total_min"] = round((to_float(metrics.get("service_min")) or 0.0) + float(exact["duration"]), 2)
+            route["osrm"]["status"] = "osrm"
+            exact_routes += 1
+    finally:
+        provider.close()
+
+    meta = data.setdefault("meta", {})
+    meta["distance_source"] = "OSRM Route（原始站點順序）"
+    meta["osrm_baseline_complete"] = missing_depot_routes == 0 and fallback_routes == 0
+    meta["osrm_exact_route_count"] = exact_routes
+    meta["osrm_fallback_route_count"] = fallback_routes
+    meta["osrm_missing_depot_route_count"] = missing_depot_routes
+    meta["osrm_errors"] = errors[:20]
+    return data
+
+
 @require_POST
+@login_required(login_url="login")
+@user_passes_test(is_manager, login_url="home")
 def api_upload_esg_baseline(request):
     upload_file = request.FILES.get("file")
     if not upload_file:
@@ -4540,6 +4860,10 @@ def api_upload_esg_baseline(request):
             (tenant_output / backup_name).write_bytes(baseline_path.read_bytes())
 
         baseline_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        # A new user-uploaded source supersedes the separately verified baseline.
+        calculated_baseline = tenant_output / ESG_OSRM_BASELINE_FILE
+        if calculated_baseline.exists():
+            calculated_baseline.replace(tenant_output / f"{ESG_OSRM_BASELINE_FILE}.{timezone.now().strftime('%Y%m%d_%H%M%S_%f')}.bak")
         current_payload = load_variant_payload(variant, tenant_output, company=company)
         esg = current_payload.get("esg") if current_payload.get("ok") else build_esg_summary([], variant, tenant_output)
 
@@ -4547,7 +4871,12 @@ def api_upload_esg_baseline(request):
             request,
             "上傳 ESG 舊路線基準",
             upload_file.name,
-            {"route_count": len(routes), "valid_route_count": valid_route_count, "company": company.key},
+            {
+                "route_count": len(routes),
+                "valid_route_count": valid_route_count,
+                "company": company.key,
+                "upload_mode": "original_source_only",
+            },
         )
 
         return JsonResponse({
@@ -4555,6 +4884,7 @@ def api_upload_esg_baseline(request):
             "message": f"已更新舊路線基準，共讀取 {len(routes)} 條路線。",
             "route_count": len(routes),
             "valid_route_count": valid_route_count,
+            "upload_mode": "original_source_only",
             "esg": esg,
         })
     except Exception as e:
@@ -4572,6 +4902,7 @@ def _rough_same_coord(a, b):
         return False
 
 
+@login_required(login_url="login")
 def api_search_point_route(request):
     variant = request.GET.get("variant", "normal")
     q = clean_text(request.GET.get("q")) or ""
@@ -4693,6 +5024,7 @@ def api_search_point_route(request):
     })
 
 
+@login_required(login_url="login")
 def api_points_page(request):
     q = request.GET.get("q", "").strip()
     selected_depot = request.GET.get("depot", "").strip()

@@ -7,7 +7,6 @@ from django.db import connection
 import os
 import tempfile
 from django.conf import settings
-from ultralytics import YOLO
 
 from .views import OUTPUT_DIR, VARIANT_LABELS, load_variant_payload, to_float, to_int, write_admin_log, is_manager
 from .security import authenticate_driver_token, find_driver_by_code, is_manager_user
@@ -18,7 +17,15 @@ import json
 from datetime import datetime
 
 MODEL_PATH = os.path.join(settings.BASE_DIR, "models_ai", "best.pt")
-yolo_model = YOLO(MODEL_PATH)
+_yolo_model = None
+
+
+def get_yolo_model():
+    global _yolo_model
+    if _yolo_model is None:
+        from ultralytics import YOLO
+        _yolo_model = YOLO(MODEL_PATH)
+    return _yolo_model
 
 
 EXPORTABLE_FILES = {
@@ -33,7 +40,6 @@ EXPORTABLE_FILES = {
     "daily_compact": "Daily_Route_Summary_compact.xlsx",
     "unassigned_normal": "Unassigned_Points_normal.xlsx",
     "unassigned_cross": "Unassigned_Points_cross.xlsx",
-    "unassigned_compact": "Unassigned_Points_compact.xlsx",
 }
 
 REPORTS_FILE = OUTPUT_DIR / "driver_reports.json"
@@ -605,6 +611,24 @@ def driver_report_delete_api(request):
         )
 
 
+def _load_export_variant(variant, output_dir, company):
+    # Hidden export variants must not be coerced into a visible UI variant.
+    if variant in VARIANT_LABELS:
+        return load_variant_payload(variant, output_dir, company=company)
+    if variant == 'compact':
+        route_path = output_dir / 'routes_compact.json'
+        if not route_path.exists():
+            return {'ok': False, 'routes': []}
+        with route_path.open(encoding='utf-8') as source:
+            payload = json.load(source)
+        if not isinstance(payload, dict) or not isinstance(payload.get('routes'), list):
+            raise ValueError('compact 路線檔格式不正確，請重新計算路線。')
+        if (payload.get('meta') or {}).get('variant', 'compact') != 'compact':
+            raise ValueError('compact 路線檔的模式不符，請重新計算路線。')
+        return {'ok': True, 'routes': payload['routes']}
+    return {'ok': False, 'routes': []}
+
+
 def export_excel_api(request):
     if request.method != "GET":
         return JsonResponse({"ok": False, "message": "只支援 GET"}, status=405)
@@ -624,6 +648,28 @@ def export_excel_api(request):
 
     company = get_user_company(getattr(request, "user", None))
     file_path = tenant_file_path(OUTPUT_DIR, company, filename, fallback=False)
+    route_variants = {
+        'dispatch_latest': ('normal', 'cross', 'compact'),
+        'weekly_summary': ('normal',), 'daily_summary': ('normal',),
+        'weekly_normal': ('normal',), 'daily_normal': ('normal',),
+        'weekly_cross': ('cross',), 'daily_cross': ('cross',),
+        'weekly_compact': ('compact',), 'daily_compact': ('compact',),
+    }
+    if key in route_variants:
+        from .services.route_export import build_route_workbook
+        payloads = {}
+        output_dir = company_output_dir(OUTPUT_DIR, company)
+        try:
+            for variant in route_variants[key]:
+                payload = _load_export_variant(variant, output_dir, company)
+                if payload.get('ok'):
+                    payloads[variant] = payload.get('routes') or []
+            if not payloads:
+                return JsonResponse({'ok': False, 'message': '目前公司尚無路線資料，請先重新計算路線。'}, status=404)
+            stream = build_route_workbook(key, payloads, file_path)
+            return FileResponse(stream, as_attachment=True, filename=filename)
+        except ValueError as error:
+            return JsonResponse({'ok': False, 'message': str(error)}, status=409)
     if not file_path.exists():
         return JsonResponse(
             {
@@ -737,6 +783,10 @@ def admin_cleaning_records_api(request):
             "risk_score": row.get("risk_score"),
             "risk_reason": row.get("risk_reason"),
             "stop_address": address,
+            "day": row.get("day"),
+            "route_id": row.get("route_id"),
+            "stop_seq": row.get("stop_seq"),
+            "point_key": row.get("point_key"),
             "created_at": format_taipei_datetime(row.get("created_at")),
             "timezone": "Asia/Taipei",
             "point_lat": point_lat,
@@ -920,7 +970,7 @@ def detect_cleaning_ai_api(request):
                 temp_file.write(chunk)
             temp_file_path = temp_file.name
 
-        results = yolo_model.predict(source=temp_file_path, conf=0.10, save=False)
+        results = get_yolo_model().predict(source=temp_file_path, conf=0.10, save=False)
 
         predictions = []
         class_counts = {}
@@ -933,6 +983,9 @@ def detect_cleaning_ai_api(request):
                 cls_id = int(box.cls[0].item())
                 conf = float(box.conf[0].item())
                 class_name = names[cls_id]
+                # Only the supported cleaning objects reach photo results.
+                if class_name not in {"overflow_bin", "bottle", "toiletpaper"}:
+                    continue
 
                 predictions.append({
                     "class": class_name,
@@ -942,12 +995,11 @@ def detect_cleaning_ai_api(request):
                 class_counts[class_name] = class_counts.get(class_name, 0) + 1
 
         overflow_bin = class_counts.get("overflow_bin", 0)
-        dirty_area = class_counts.get("dirty_area", 0)
         bottle = class_counts.get("bottle", 0)
         toiletpaper = class_counts.get("toiletpaper", 0)
 
         if photo_type == "before":
-            risk_score = overflow_bin * 3 + dirty_area * 2 + bottle + toiletpaper
+            risk_score = overflow_bin * 3 + bottle + toiletpaper
             is_risk = risk_score > 8
             reason = "環境狀況需注意" if is_risk else "環境狀況尚可"
 
@@ -965,7 +1017,6 @@ def detect_cleaning_ai_api(request):
         else:
             is_qualified = (
                 overflow_bin == 0 and
-                dirty_area == 0 and
                 bottle == 0 and
                 toiletpaper == 0
             )
