@@ -1,0 +1,1717 @@
+﻿{% load static %}
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Dispatch Nav | 清掃紀錄</title>
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <link href="https://fonts.googleapis.com/css?family=Open+Sans:300,400,600,700" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/responsive.css" />
+  <style>
+    :root {
+      --primary: #4A90E2;
+      --success: #16a34a;
+      --warning: #f59e0b;
+      --danger: #ef4444;
+      --gray: #6b7280;
+      --glass: rgba(255, 255, 255, 0.95);
+      --soft-shadow: 0 10px 30px rgba(0, 0, 0, 0.08);
+      --text-main: #344767;
+      --sidebar-width: 80px;
+      --sidebar-expanded: 260px;
+      --bg: #f8f9fa;
+      --line: #e5e7eb;
+    }
+
+    * { box-sizing: border-box; }
+
+    body, html {
+      height: 100%;
+      margin: 0;
+      font-family: "Open Sans", sans-serif;
+      background: var(--bg);
+      color: var(--text-main);
+    }
+
+    #soft-sidebar {
+      position: fixed;
+      top: 15px;
+      left: 15px;
+      bottom: 15px;
+      width: var(--sidebar-width);
+      z-index: 1200;
+      background: var(--glass);
+      backdrop-filter: blur(10px);
+      border-radius: 15px;
+      box-shadow: var(--soft-shadow);
+      transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      border: 1px solid rgba(255, 255, 255, 0.3);
+    }
+
+    #soft-sidebar:hover { width: var(--sidebar-expanded); }
+
+    .sidebar-header {
+      padding: 25px 20px;
+      display: flex;
+      align-items: center;
+      gap: 15px;
+      min-width: 260px;
+    }
+
+    .sidebar-header .logo-box {
+      background: var(--primary);
+      color: white;
+      padding: 8px;
+      border-radius: 8px;
+      display: flex;
+    }
+
+    .sidebar-header span {
+      font-weight: 700;
+      color: var(--text-main);
+      white-space: nowrap;
+      opacity: 0;
+      transition: 0.3s;
+    }
+
+    #soft-sidebar:hover .sidebar-header span { opacity: 1; }
+
+    .menu-list {
+      flex: 1;
+      padding: 10px 15px;
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+    }
+
+    .menu-item {
+      display: flex;
+      align-items: center;
+      gap: 15px;
+      padding: 12px;
+      border-radius: 10px;
+      cursor: pointer;
+      transition: background 0.2s;
+      min-width: 230px;
+      text-decoration: none;
+    }
+
+    .menu-item:hover { background: #f8f9fa; }
+
+    .menu-item .icon-box {
+      width: 32px;
+      height: 32px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 8px;
+      background: white;
+      box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+      color: #8392ab;
+    }
+
+    .menu-item.active .icon-box {
+      background: var(--primary);
+      color: white;
+    }
+
+    .menu-item span {
+      font-size: 14px;
+      font-weight: 600;
+      color: #67748e;
+      white-space: nowrap;
+      opacity: 0;
+      transition: 0.2s;
+    }
+
+    #soft-sidebar:hover .menu-item span { opacity: 1; }
+
+    #top-nav {
+      position: fixed;
+      top: 15px;
+      left: 110px;
+      right: 15px;
+      height: 60px;
+      z-index: 1000;
+      background: var(--glass);
+      backdrop-filter: blur(10px);
+      border-radius: 12px;
+      box-shadow: var(--soft-shadow);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 20px;
+      border: 1px solid rgba(255, 255, 255, 0.3);
+      transition: left 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    body:has(#soft-sidebar:hover) #top-nav { left: 290px; }
+
+    .nav-brand {
+      font-weight: 700;
+      font-size: 18px;
+      color: var(--text-main);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .nav-right {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      font-size: 13px;
+      color: #67748e;
+      font-weight: 600;
+    }
+
+    .page-wrap {
+      margin-left: 110px;
+      padding: 95px 20px 24px;
+      transition: margin-left 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    body:has(#soft-sidebar:hover) .page-wrap { margin-left: 290px; }
+
+    .summary-grid,
+    .toolbar,
+    .analysis-grid,
+    .table-wrap {
+      max-width: 1500px;
+      margin: 0 auto 16px;
+    }
+
+    .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px;
+    }
+
+    .summary-card,
+    .field-block,
+    .analysis-card,
+    .table-wrap {
+      background: var(--glass);
+      border-radius: 16px;
+      box-shadow: var(--soft-shadow);
+      border: 1px solid rgba(255,255,255,0.4);
+    }
+
+    .summary-card {
+      padding: 18px;
+    }
+
+    .summary-label {
+      font-size: 12px;
+      font-weight: 700;
+      color: #8392ab;
+      text-transform: uppercase;
+      margin-bottom: 10px;
+    }
+
+    .summary-value {
+      font-size: 28px;
+      font-weight: 700;
+      color: var(--text-main);
+    }
+
+    .toolbar {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr 1fr auto;
+      gap: 12px;
+      align-items: end;
+    }
+
+    .field-block {
+      padding: 14px 16px;
+    }
+
+    .field-block label {
+      display: block;
+      font-size: 12px;
+      font-weight: 700;
+      color: #8392ab;
+      margin-bottom: 8px;
+      text-transform: uppercase;
+    }
+
+    .field-block input,
+    .field-block select {
+      width: 100%;
+      border: 1px solid #d2d6da;
+      border-radius: 10px;
+      padding: 10px 12px;
+      font-size: 14px;
+      outline: none;
+      background: white;
+      font-family: inherit;
+    }
+
+    .btn {
+      border: none;
+      border-radius: 12px;
+      color: white;
+      font-weight: 700;
+      cursor: pointer;
+      padding: 10px 16px;
+      font-size: 14px;
+      text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      min-height: 48px;
+    }
+
+    .btn.primary { background: var(--primary); }
+    .btn.gray { background: var(--gray); }
+
+    .analysis-grid {
+      display: grid;
+      grid-template-columns: 1.1fr 0.9fr;
+      gap: 16px;
+    }
+
+    .analysis-card {
+      padding: 18px;
+    }
+
+    .card-title {
+      margin: 0 0 10px;
+      font-size: 18px;
+      font-weight: 700;
+      color: var(--text-main);
+    }
+
+    .card-note {
+      font-size: 13px;
+      line-height: 1.7;
+      color: #64748b;
+      margin-bottom: 14px;
+      background: #f8fafc;
+      border: 1px solid #e2e8f0;
+      border-radius: 12px;
+      padding: 12px 14px;
+    }
+
+    .mini-table {
+      width: 100%;
+      border-collapse: collapse;
+      background: white;
+      border-radius: 12px;
+      overflow: hidden;
+    }
+
+    .mini-table th,
+    .mini-table td {
+      border-bottom: 1px solid var(--line);
+      padding: 12px 10px;
+      text-align: left;
+      font-size: 14px;
+      vertical-align: top;
+    }
+
+    .mini-table th {
+      background: #eef3ff;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    .table-wrap {
+      overflow: hidden;
+      padding: 0;
+    }
+
+    .table-header {
+      padding: 18px 18px 8px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+
+    .table-title {
+      margin: 0;
+      font-size: 20px;
+      font-weight: 700;
+    }
+
+    .small-text {
+      font-size: 12px;
+      line-height: 1.6;
+      color: #64748b;
+    }
+
+    table.records-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 14px;
+      background: white;
+    }
+
+    .records-table th,
+    .records-table td {
+      border-bottom: 1px solid #e5e7eb;
+      padding: 12px 10px;
+      text-align: left;
+      vertical-align: top;
+    }
+
+    .records-table th {
+      background: #eef3ff;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    .status-pill {
+      display: inline-block;
+      padding: 5px 10px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    .status-success {
+      background: #dcfce7;
+      color: #166534;
+    }
+
+    .status-danger {
+      background: #fee2e2;
+      color: #991b1b;
+    }
+
+    .status-warning {
+      background: #fef3c7;
+      color: #92400e;
+    }
+
+    .status-neutral {
+      background: #e0f2fe;
+      color: #075985;
+    }
+
+    .thumbnail-btn {
+      border: none;
+      background: #eef3ff;
+      color: #1d4ed8;
+      border-radius: 10px;
+      padding: 8px 12px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    .stop-code-badge {
+      display: inline-flex;
+      margin-bottom: 5px;
+      padding: 3px 8px;
+      border-radius: 999px;
+      background: #eef3ff;
+      color: #315fd4;
+      font-size: 12px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    .empty-box {
+      padding: 30px;
+      text-align: center;
+      color: #8392ab;
+    }
+
+    .muted {
+      color: #8392ab;
+    }
+
+    .modal-mask {
+      position: fixed;
+      inset: 0;
+      background: rgba(15, 23, 42, 0.55);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 2000;
+      padding: 20px;
+    }
+
+    .modal-mask.show {
+      display: flex;
+    }
+
+    .modal-card {
+      width: min(1120px, 100%);
+      max-height: 90vh;
+      overflow: auto;
+      background: white;
+      border-radius: 18px;
+      box-shadow: var(--soft-shadow);
+      padding: 20px;
+    }
+
+    .modal-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+
+    .modal-title {
+      margin: 0;
+      font-size: 20px;
+      font-weight: 700;
+    }
+
+    .modal-close {
+      border: none;
+      background: #f3f4f6;
+      width: 40px;
+      height: 40px;
+      border-radius: 999px;
+      cursor: pointer;
+      font-size: 18px;
+    }
+
+    .modal-grid {
+      display: grid;
+      grid-template-columns: 1.1fr 0.9fr;
+      gap: 18px;
+    }
+
+    .modal-image-wrap {
+      background: #f8fafc;
+      border: 1px solid #e2e8f0;
+      border-radius: 14px;
+      padding: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 320px;
+    }
+
+    .modal-image-wrap img {
+      max-width: 100%;
+      max-height: 520px;
+      border-radius: 10px;
+    }
+
+    .detail-list {
+      display: grid;
+      gap: 10px;
+    }
+
+    .detail-item {
+      border: 1px solid #e5e7eb;
+      border-radius: 12px;
+      padding: 12px;
+      background: #fff;
+    }
+
+    .detail-label {
+      font-size: 12px;
+      font-weight: 700;
+      color: #8392ab;
+      text-transform: uppercase;
+      margin-bottom: 6px;
+    }
+
+    .detail-value {
+      font-size: 14px;
+      line-height: 1.7;
+      color: #334155;
+      word-break: break-word;
+    }
+
+    .location-compare {
+      margin-top: 18px;
+      border: 1px solid #e2e8f0;
+      border-radius: 14px;
+      overflow: hidden;
+      background: #fff;
+    }
+
+    .location-map-head {
+      padding: 12px 14px;
+      border-bottom: 1px solid #e2e8f0;
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .location-legend {
+      display: flex;
+      gap: 14px;
+      flex-wrap: wrap;
+      color: #64748b;
+      font-size: 13px;
+    }
+
+    .legend-dot {
+      width: 12px;
+      height: 12px;
+      display: inline-block;
+      border-radius: 50%;
+      vertical-align: -1px;
+      margin-right: 5px;
+    }
+
+    #photoCompareMap {
+      height: 300px;
+      width: 100%;
+      background: #f1f5f9;
+    }
+
+    .location-note {
+      padding: 10px 14px;
+      font-size: 13px;
+      color: #64748b;
+      line-height: 1.7;
+      border-top: 1px solid #e2e8f0;
+    }
+
+    .compare-pin {
+      width: 30px;
+      height: 30px;
+      border-radius: 50% 50% 50% 0;
+      transform: rotate(-45deg);
+      border: 2px solid #fff;
+      box-shadow: 0 2px 7px rgba(15, 23, 42, 0.3);
+    }
+
+    .compare-pin > span {
+      display: block;
+      color: #fff;
+      transform: rotate(45deg);
+      text-align: center;
+      font-size: 13px;
+      font-weight: 700;
+      line-height: 27px;
+    }
+
+
+
+    .mini-table-scroll {
+      max-height: 260px;
+      overflow-y: auto;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: white;
+    }
+
+    .mini-table-scroll .mini-table {
+      border-radius: 0;
+    }
+
+    .mini-table-scroll .mini-table thead th {
+      position: sticky;
+      top: 0;
+      z-index: 1;
+    }
+
+    .records-table-scroll {
+      max-height: 520px;
+      overflow: auto;
+      border-top: 1px solid #e5e7eb;
+      background: white;
+    }
+
+    .records-table-scroll .records-table thead th {
+      position: sticky;
+      top: 0;
+      z-index: 2;
+    }
+
+    .table-actions {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+
+    .delete-btn {
+      border: none;
+      background: #fee2e2;
+      color: #b91c1c;
+      border-radius: 10px;
+      padding: 8px 12px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    .delete-btn:hover {
+      background: #fecaca;
+    }
+
+    .delete-btn:disabled,
+    .thumbnail-btn:disabled {
+      cursor: not-allowed;
+      opacity: 0.55;
+    }
+
+    @media (max-width: 1350px) {
+      .summary-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+      .toolbar {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+      .analysis-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    @media (max-width: 900px) {
+      .toolbar {
+        grid-template-columns: 1fr;
+      }
+      .summary-grid {
+        grid-template-columns: 1fr;
+      }
+      .modal-grid {
+        grid-template-columns: 1fr;
+      }
+      .page-wrap {
+        padding-right: 12px;
+      }
+    }
+  </style>
+</head>
+<body data-can-manage-records="{% if user.is_staff or user.is_superuser %}true{% else %}false{% endif %}">
+  <aside id="soft-sidebar">
+    <div class="sidebar-header">
+      <div class="logo-box"><i data-lucide="layout-grid" size="18"></i></div>
+      <span>Dispatch Nav</span>
+    </div>
+    <div class="menu-list">
+      {% include "routing/_sidebar_items.html" %}
+      <a href="{% url 'home' %}" class="menu-item">
+        <div class="icon-box"><i data-lucide="home" size="18"></i></div>
+        <span>主要地圖</span>
+      </a>
+
+      <a href="{% url 'live_monitor_page' %}" class="menu-item">
+        <div class="icon-box"><i data-lucide="map-pinned" size="18"></i></div>
+        <span>即時監控</span>
+      </a>
+
+      <a href="{% url 'report_page' %}" class="menu-item">
+        <div class="icon-box"><i data-lucide="triangle-alert" size="18"></i></div>
+        <span>問題回報</span>
+      </a>
+
+      <a href="{% url 'driver_admin_page' %}" class="menu-item">
+        <div class="icon-box"><i data-lucide="users-round" size="18"></i></div>
+        <span>司機帳號</span>
+      </a>
+
+      {% if user.is_superuser %}
+      <a href="{% url 'account_management' %}" class="menu-item">
+        <div class="icon-box"><i data-lucide="shield-check" size="18"></i></div>
+        <span>管理者帳號</span>
+      </a>
+
+      <a href="{% url 'admin_action_logs' %}" class="menu-item">
+        <div class="icon-box"><i data-lucide="clipboard-list" size="18"></i></div>
+       <span>操作紀錄</span>
+      </a>
+      {% endif %}
+
+      <a href="{% url 'data_list' %}" class="menu-item">
+        <div class="icon-box"><i data-lucide="table" size="18"></i></div>
+        <span>資料管理</span>
+      </a>
+
+      <a href="{% url 'cleaning_records_page' %}" class="menu-item active">
+        <div class="icon-box"><i data-lucide="file-box" size="18"></i></div>
+        <span>清掃紀錄</span>
+      </a>
+
+      <a href="{% url 'login' %}" class="menu-item">
+        <div class="icon-box"><i data-lucide="log-out" size="14"></i></div>
+        <span>登出</span>
+      </a>
+    </div>
+  </aside>
+
+  <nav id="top-nav">
+    <div class="nav-brand"><i data-lucide="file-box"></i> 清掃紀錄與分析</div>
+    <div class="nav-right">
+      <span id="lastUpdateText">最後更新：--</span>
+    </div>
+  </nav>
+
+  <main class="page-wrap">
+    <section class="summary-grid">
+      <div class="summary-card">
+        <div class="summary-label">目前查詢筆數</div>
+        <div class="summary-value" id="summaryTotalRecords">0</div>
+      </div>
+      <div class="summary-card">
+        <div class="summary-label">清潔後合格率</div>
+        <div class="summary-value" id="summaryQualifiedRate">0%</div>
+      </div>
+    </section>
+
+    <section class="toolbar">
+      <div class="field-block">
+        <label for="driverCodeInput">司機編號</label>
+        <input id="driverCodeInput" type="text" placeholder="例如 P01" />
+      </div>
+
+      <div class="field-block">
+        <label for="statusSelect">狀態</label>
+        <select id="statusSelect">
+          <option value="">全部狀態</option>
+          <option value="合格">合格</option>
+          <option value="不合格">不合格</option>
+          <option value="高風險">高風險</option>
+        </select>
+      </div>
+
+      <div class="field-block">
+        <label for="photoTypeSelect">照片類型</label>
+        <select id="photoTypeSelect">
+          <option value="">全部類型</option>
+          <option value="before">清潔前</option>
+          <option value="after">清潔後</option>
+        </select>
+      </div>
+
+      <div class="field-block">
+        <label for="dateInput">日期</label>
+        <input id="dateInput" type="date" />
+      </div>
+
+      <button class="btn primary" type="button" onclick="loadRecords()">
+        <i data-lucide="search"></i> 搜尋
+      </button>
+    </section>
+
+    <section class="analysis-grid">
+      <div class="analysis-card">
+        <h3 class="card-title">可能需新增點位分析</h3>
+        <div class="card-note">
+          系統分析各點位最近三次清潔前紀錄，若連續三次皆判定為使用量偏高，則列入以下建議增設名單。
+        </div>
+        <div class="mini-table-scroll">
+          <table class="mini-table">
+            <thead>
+            <tr>
+              <th>點位</th>
+              <th>最近觀測時間</th>
+              <th>操作</th>
+            </tr>
+          </thead>
+            <tbody id="riskAreaBody">
+              <tr><td colspan="3" class="empty-box">載入中...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="analysis-card">
+        <h3 class="card-title">司機清掃後合格率</h3>
+        <div class="card-note">
+          統計清潔後照片，快速看出每位司機清掃完成後的整體合格表現。
+        </div>
+        <div class="mini-table-scroll">
+          <table class="mini-table">
+            <thead>
+              <tr>
+                <th>司機</th>
+                <th>清潔後筆數</th>
+                <th>合格筆數</th>
+                <th>合格率</th>
+              </tr>
+            </thead>
+            <tbody id="driverRateBody">
+              <tr><td colspan="4" class="empty-box">載入中...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <section class="table-wrap">
+      <div class="table-header">
+        <div>
+          <h3 class="table-title">清掃紀錄清單</h3>
+          <div class="small-text">
+          </div>
+        </div>
+        <button class="btn gray" type="button" onclick="window.location.href='/cleaning-report/'">
+          <i data-lucide="bar-chart-3"></i> 分析 / 報表
+        </button>
+      </div>
+
+      <div class="records-table-scroll">
+        <table class="records-table">
+          <thead>
+            <tr>
+              <th>司機</th>
+              <th>日期時間</th>
+              <th>點位</th>
+              <th>清潔前狀況</th>
+              <th>清潔後判定</th>
+              <th>詳細</th>
+              <th>操作</th>
+            </tr>
+          </thead>
+          <tbody id="tableBody">
+            <tr><td colspan="7" class="empty-box">載入中...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <div id="imageModal" class="modal-mask">
+    <div class="modal-card">
+      <div class="modal-top">
+        <h3 class="modal-title">清掃紀錄詳情</h3>
+        <button class="modal-close" type="button" onclick="closeModal()">×</button>
+      </div>
+
+      <div class="modal-grid">
+        <div class="modal-image-wrap" id="modalImageWrap">
+          <span class="muted">無照片</span>
+        </div>
+
+        <div class="detail-list">
+          <div class="detail-item">
+            <div class="detail-label">司機</div>
+            <div class="detail-value" id="modalDriver">-</div>
+          </div>
+
+          <div class="detail-item">
+            <div class="detail-label">清潔前拍照時間（台灣）</div>
+            <div class="detail-value" id="modalBeforeTime">-</div>
+          </div>
+
+          <div class="detail-item">
+            <div class="detail-label">清潔後拍照時間（台灣）</div>
+            <div class="detail-value" id="modalAfterTime">-</div>
+          </div>
+
+          <div class="detail-item">
+            <div class="detail-label">點位</div>
+            <div class="detail-value" id="modalAddress">-</div>
+          </div>
+
+          <div class="detail-item">
+            <div class="detail-label">照片類型</div>
+            <div class="detail-value" id="modalPhotoType">-</div>
+          </div>
+
+          <div class="detail-item">
+            <div class="detail-label">狀態</div>
+            <div class="detail-value" id="modalStatus">-</div>
+          </div>
+
+        </div>
+      </div>
+
+      <div class="location-compare">
+        <div class="location-map-head">
+          <strong>位置比對</strong>
+          <div class="location-legend">
+            <span><i class="legend-dot" style="background:#2563eb;"></i>清理點位</span>
+            <span><i class="legend-dot" style="background:#f97316;"></i>清潔前拍照位置</span>
+            <span><i class="legend-dot" style="background:#16a34a;"></i>清潔後拍照位置</span>
+          </div>
+        </div>
+        <div id="photoCompareMap"></div>
+        <div class="location-note" id="locationCompareNote">載入位置資料中...</div>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script>
+    lucide.createIcons();
+
+    const CAN_MANAGE_RECORDS = document.body.dataset.canManageRecords === 'true';
+    let allRecords = [];
+    let renderedRecordGroups = [];
+    let photoCompareMap = null;
+    let photoCompareLayer = null;
+
+    const taipeiDateFormatter = new Intl.DateTimeFormat('sv-SE', {
+      timeZone: 'Asia/Taipei',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false
+    });
+
+    function updateLastUpdateTime() {
+      const now = new Date();
+      const text = taipeiDateFormatter.format(now).replace(',', '');
+      document.getElementById('lastUpdateText').textContent = `最後更新：${text}`;
+    }
+
+    function escapeHtml(text) {
+      return String(text ?? '')
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&#039;');
+    }
+
+    function getRecordTime(record) {
+      return record.created_at || record.uploaded_at || record.time || '-';
+    }
+
+    function formatRecordDateTime(value) {
+      if (!value || value === '-') return '-';
+      const text = String(value);
+      if (/^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}/.test(text) && !/[zZ]|[+-]\d{2}:?\d{2}$/.test(text)) {
+        return text.replace('T', ' ').slice(0, 19);
+      }
+      const date = new Date(value);
+      return Number.isNaN(date.getTime()) ? text : taipeiDateFormatter.format(date).replace(',', '');
+    }
+
+    function getRecordAddress(record) {
+      return record.stop_address || record.address || record.point_key || '-';
+    }
+
+    function getRecordStatus(record) {
+      return record.status || record.review_status || (record.is_qualified === true ? '合格' : record.is_qualified === false ? '不合格' : '-');
+    }
+
+    function getRecordPhotoType(record) {
+      if (!record.photo_type) return '-';
+      if (record.photo_type === 'before') return '清潔前';
+      if (record.photo_type === 'after') return '清潔後';
+      return record.photo_type;
+    }
+
+    function getRecordRiskScore(record) {
+      const value = record.risk_score ?? record.score;
+      if (value === null || value === undefined || value === '') return '-';
+      return value;
+    }
+
+    function isRecordRisk(record) {
+      if (record.is_risk === true) return true;
+      if (record.status === '高風險') return true;
+      if (record.review_status === '高風險') return true;
+      return false;
+    }
+
+    function getImageUrl(record) {
+      return record.public_url || record.image_url || record.photo_url || '';
+    }
+
+    function normalizeRecord(raw) {
+      return {
+        id: raw.id ?? raw.photo_id ?? raw.record_id ?? '',
+        driver_code: raw.driver_code ?? '-',
+        created_at: getRecordTime(raw),
+        stop_address: getRecordAddress(raw),
+        photo_type: raw.photo_type ?? '',
+        status: getRecordStatus(raw),
+        is_risk: isRecordRisk(raw),
+        risk_score: getRecordRiskScore(raw),
+        image_url: getImageUrl(raw),
+        is_qualified: raw.is_qualified,
+        risk_reason: raw.risk_reason || raw.reason || '-',
+        point_key: raw.point_key || '-',
+        day: raw.day,
+        route_id: raw.route_id || '',
+        stop_seq: raw.stop_seq,
+        point_lat: raw.point_lat,
+        point_lon: raw.point_lon,
+        photo_lat: raw.photo_lat,
+        photo_lon: raw.photo_lon
+      };
+    }
+
+    function getStatusPillHtml(record) {
+      const status = record.status || '-';
+
+      if (status === '合格') {
+        return `<span class="status-pill status-success">${escapeHtml(status)}</span>`;
+      }
+      if (status === '不合格') {
+        return `<span class="status-pill status-danger">${escapeHtml(status)}</span>`;
+      }
+      if (status === '高風險') {
+        return `<span class="status-pill status-warning">${escapeHtml(status)}</span>`;
+      }
+      return `<span class="status-pill status-neutral">${escapeHtml(status)}</span>`;
+    }
+
+    function getRiskPillHtml(record) {
+      if (record.is_risk) {
+        return `<span class="status-pill status-warning">是</span>`;
+      }
+      return `<span class="status-pill status-neutral">否</span>`;
+    }
+
+    function renderSummary(records) {
+      const total = records.length;
+      const riskRecords = records.filter(r => r.is_risk);
+      const afterRecords = records.filter(r => r.photo_type === 'after');
+      const qualifiedAfter = afterRecords.filter(r => r.status === '合格' || r.is_qualified === true);
+      const qualifiedRate = afterRecords.length ? ((qualifiedAfter.length / afterRecords.length) * 100).toFixed(1) : '0.0';
+
+
+
+      document.getElementById('summaryTotalRecords').textContent = total;
+      document.getElementById('summaryQualifiedRate').textContent = `${qualifiedRate}%`;
+    }
+
+    async function loadToiletDemandAnalysis() {
+
+      const tbody = document.getElementById('riskAreaBody');
+
+      tbody.innerHTML = `
+        <tr>
+          <td colspan="3" class="empty-box">
+            載入中...
+          </td>
+        </tr>
+      `;
+
+      try {
+
+        const res = await fetch('/api/toilet-demand-analysis/');
+        const data = await res.json();
+
+        if (!res.ok || !data.ok) {
+          tbody.innerHTML = `
+            <tr>
+              <td colspan="3" class="empty-box">
+                讀取失敗
+              </td>
+            </tr>
+          `;
+          return;
+        }
+
+        const records = data.records || [];
+
+        if (!records.length) {
+          tbody.innerHTML = `
+            <tr>
+              <td colspan="3" class="empty-box">
+                目前沒有需新增點位的區域
+              </td>
+            </tr>
+          `;
+          return;
+        }
+
+        tbody.innerHTML = records.map(item => {
+          const ids = Array.isArray(item.ids) ? item.ids.join(',') : '';
+          return `
+            <tr>
+              <td>${escapeHtml(item.address)}</td>
+              <td>${escapeHtml(formatRecordDateTime(item.latest_time))}</td>
+              <td>
+                ${CAN_MANAGE_RECORDS ? `
+                  <button
+                    type="button"
+                    class="delete-btn"
+                    data-delete-risk="1"
+                    data-risk-address="${escapeHtml(item.address)}"
+                    data-risk-ids="${escapeHtml(ids)}"
+                  >刪除</button>
+                ` : '<span class="small-text">只讀</span>'}
+              </td>
+            </tr>
+          `;
+        }).join('');
+
+      } catch (err) {
+
+        tbody.innerHTML = `
+          <tr>
+            <td colspan="3" class="empty-box">
+              連線失敗
+            </td>
+          </tr>
+        `;
+      }
+    }
+    
+
+    function renderDriverQualifiedRate(records) {
+      const tbody = document.getElementById('driverRateBody');
+      const afterRecords = records.filter(r => r.photo_type === 'after');
+
+      if (!afterRecords.length) {
+        tbody.innerHTML = `<tr><td colspan="4" class="empty-box">目前沒有清潔後照片資料</td></tr>`;
+        return;
+      }
+
+      const map = {};
+
+      afterRecords.forEach(record => {
+        const driver = record.driver_code || '-';
+        if (!map[driver]) {
+          map[driver] = {
+            driver,
+            total: 0,
+            qualified: 0
+          };
+        }
+
+        map[driver].total += 1;
+        if (record.status === '合格' || record.is_qualified === true) {
+          map[driver].qualified += 1;
+        }
+      });
+
+      const sorted = Object.values(map).sort((a, b) => {
+        const rateA = a.total ? a.qualified / a.total : 0;
+        const rateB = b.total ? b.qualified / b.total : 0;
+        return rateB - rateA;
+      });
+
+      tbody.innerHTML = sorted.map(item => {
+        const rate = item.total ? ((item.qualified / item.total) * 100).toFixed(1) : '0.0';
+        return `
+          <tr>
+            <td>${escapeHtml(item.driver)}</td>
+            <td>${item.total}</td>
+            <td>${item.qualified}</td>
+            <td>${rate}%</td>
+          </tr>
+        `;
+      }).join('');
+    }
+
+    function isUnqualified(record) {
+  return (
+    record &&
+    (
+      record.status === '不合格' ||
+      record.is_qualified === false ||
+      record.is_risk === true
+    )
+  );
+}
+
+function isQualified(record) {
+  return (
+    record &&
+    (
+      record.status === '合格' ||
+      record.is_qualified === true
+    )
+  );
+}
+
+function getBeforeHtml(before) {
+  if (!before) {
+    return '<span class="small-text">未上傳</span>';
+  }
+
+  if (isUnqualified(before)) {
+    return '<span class="status-pill status-warning">使用量偏高</span>';
+  }
+
+  if (isQualified(before)) {
+    return '<span class="status-pill status-neutral">狀況正常</span>';
+  }
+
+  return '<span class="status-pill status-neutral">未判定</span>';
+}
+
+function getAfterHtml(after) {
+  if (!after) {
+    return '<span class="small-text">未上傳</span>';
+  }
+
+  if (isQualified(after)) {
+    return '<span class="status-pill status-success">合格</span>';
+  }
+
+  if (isUnqualified(after)) {
+    return '<span class="status-pill status-danger">不合格</span>';
+  }
+
+  return '<span class="status-pill status-neutral">未判定</span>';
+}
+
+function getCleaningResultHtml(before, after) {
+  if (!before || !after) {
+    return '<span class="status-pill status-warning">未完成</span>';
+  }
+
+  const beforeBad = isUnqualified(before);
+  const beforeGood = isQualified(before);
+  const afterBad = isUnqualified(after);
+  const afterGood = isQualified(after);
+
+  if (beforeBad && afterGood) {
+    return '<span class="status-pill status-success">已改善</span>';
+  }
+
+  if (beforeBad && afterBad) {
+    return '<span class="status-pill status-danger">需重清</span>';
+  }
+
+  if (beforeGood && afterGood) {
+    return '<span class="status-pill status-success">正常完成</span>';
+  }
+
+  if (beforeGood && afterBad) {
+    return '<span class="status-pill status-danger">清掃異常</span>';
+  }
+
+  return '<span class="status-pill status-neutral">未判定</span>';
+}
+
+function getCleaningResultText(before, after) {
+
+  if (!before || !after) {
+    return '未完成';
+  }
+
+  const beforeBad = isUnqualified(before);
+  const beforeGood = isQualified(before);
+
+  const afterBad = isUnqualified(after);
+  const afterGood = isQualified(after);
+
+  if (beforeBad && afterGood) {
+    return '已改善';
+  }
+
+  if (beforeBad && afterBad) {
+    return '需重清';
+  }
+
+  if (beforeGood && afterGood) {
+    return '正常完成';
+  }
+
+  if (beforeGood && afterBad) {
+    return '清掃異常';
+  }
+
+  return '未判定';
+}
+
+function renderTable(records) {
+  const tbody = document.getElementById('tableBody');
+
+  if (!records.length) {
+    tbody.innerHTML = `<tr><td colspan="7" class="empty-box">載入中...</td></tr>`;
+    return;
+  }
+
+  const grouped = {};
+
+  records.forEach(record => {
+    const dateOnly = String(record.created_at || '').split(' ')[0];
+    const hasStopIdentity = record.route_id && Number(record.stop_seq) > 0;
+    const hasPointIdentity = record.point_key && record.point_key !== '-';
+    const key = hasStopIdentity
+      ? `${record.route_id}__stop_${record.stop_seq}__${dateOnly}`
+      : hasPointIdentity
+        ? `${record.driver_code}__${record.point_key}__${dateOnly}`
+        : `${record.driver_code}__${record.stop_address}__${dateOnly}`;
+
+    if (!grouped[key]) {
+      grouped[key] = {
+        group_key: key,
+        driver_code: record.driver_code || '-',
+        route_id: record.route_id || '',
+        stop_seq: Number(record.stop_seq) || 0,
+        date: dateOnly || '-',
+        display_time: formatRecordDateTime(record.created_at),
+        stop_address: record.stop_address || '-',
+        before: null,
+        after: null,
+        record_ids: [],
+      };
+    }
+
+    if (record.id) {
+      grouped[key].record_ids.push(record.id);
+    }
+
+    if (formatRecordDateTime(record.created_at) > grouped[key].display_time) {
+      grouped[key].display_time = formatRecordDateTime(record.created_at);
+    }
+
+    if (record.photo_type === 'before' || record.photo_type === '前') {
+      grouped[key].before = record;
+    } else if (record.photo_type === 'after' || record.photo_type === '後') {
+      grouped[key].after = record;
+    }
+  });
+
+  const rows = Object.values(grouped);
+  renderedRecordGroups = rows;
+
+  if (!rows.length) {
+    tbody.innerHTML = `<tr><td colspan="7" class="empty-box">載入中...</td></tr>`;
+    return;
+  }
+
+  tbody.innerHTML = rows.map((row, rowIndex) => {
+    const before = row.before;
+    const after = row.after;
+    const stopLabel = row.stop_seq > 0
+      ? `${row.driver_code} 第 ${row.stop_seq} 站`
+      : row.driver_code;
+
+    return `
+      <tr>
+        <td>${escapeHtml(row.driver_code)}</td>
+        <td>${escapeHtml(row.display_time)}</td>
+        <td><span class="stop-code-badge">${escapeHtml(stopLabel)}</span><br>${escapeHtml(row.stop_address)}</td>
+        <td>${getBeforeHtml(before)}</td>
+        <td>${getAfterHtml(after)}</td>
+        <td>
+          <button
+            type="button"
+            class="thumbnail-btn"
+            onclick="showFlowModal(${rowIndex})"
+          >
+            查看
+          </button>
+        </td>
+        <td>
+          ${CAN_MANAGE_RECORDS ? `
+            <button
+              type="button"
+              class="delete-btn"
+              data-delete-records="1"
+              data-record-ids="${escapeHtml(row.record_ids.join(','))}"
+            >
+              刪除
+            </button>
+          ` : '<span class="small-text">只讀</span>'}
+        </td>
+      </tr>
+    `;
+  }).join('');
+}
+
+    function showFlowModal(rowIndex) {
+      const group = renderedRecordGroups[rowIndex];
+      if (!group) return;
+      const driverCode = group.driver_code;
+      const address = group.stop_address;
+      const matchedRecords = [group.before, group.after].filter(Boolean);
+
+      const before = matchedRecords.find(r => r.photo_type === 'before') || null;
+      const after = matchedRecords.find(r => r.photo_type === 'after') || null;
+
+      const modal = document.getElementById('imageModal');
+      const imageWrap = document.getElementById('modalImageWrap');
+
+      let html = '<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;width:100%;">';
+
+      html += `
+        <div>
+          <div class="detail-label" style="margin-bottom:8px;">清潔前照片 · ${before ? escapeHtml(formatRecordDateTime(before.created_at)) : '-'}</div>
+          <div class="modal-image-wrap" style="min-height:220px;">
+            ${before && before.image_url ? `<img src="${before.image_url}" alt="清潔前照片">` : '<span class="muted">無照片</span>'}
+          </div>
+        </div>
+      `;
+
+      html += `
+        <div>
+          <div class="detail-label" style="margin-bottom:8px;">清潔後照片 · ${after ? escapeHtml(formatRecordDateTime(after.created_at)) : '-'}</div>
+          <div class="modal-image-wrap" style="min-height:220px;">
+            ${after && after.image_url ? `<img src="${after.image_url}" alt="清潔後照片">` : '<span class="muted">無照片</span>'}
+          </div>
+        </div>
+      `;
+
+      html += '</div>';
+
+      imageWrap.innerHTML = html;
+
+      document.getElementById('modalDriver').textContent = group.stop_seq > 0
+        ? `${driverCode} 第 ${group.stop_seq} 站`
+        : (driverCode || '-');
+      document.getElementById('modalBeforeTime').textContent = before ? formatRecordDateTime(before.created_at) : '-';
+      document.getElementById('modalAfterTime').textContent = after ? formatRecordDateTime(after.created_at) : '-';
+      document.getElementById('modalAddress').textContent = address || '-';
+      document.getElementById('modalPhotoType').textContent = '清潔前 / 清潔後';
+
+      const beforeStatus = before
+      ? (isUnqualified(before) ? '不合格' : isQualified(before) ? '合格' : '未判定')
+      : '未上傳';
+
+    const afterStatus = after
+      ? (isUnqualified(after) ? '不合格' : isQualified(after) ? '合格' : '未判定')
+      : '未上傳';
+
+      document.getElementById('modalStatus').textContent = getCleaningResultText(before, after);
+
+      modal.classList.add('show');
+      renderPhotoCompareMap(before, after);
+    }
+
+    function closeModal() {
+      document.getElementById('imageModal').classList.remove('show');
+    }
+
+    function validCoordinate(lat, lon) {
+      return lat !== null && lat !== undefined && lat !== '' &&
+        lon !== null && lon !== undefined && lon !== '' &&
+        Number.isFinite(Number(lat)) && Number.isFinite(Number(lon));
+    }
+
+    function makeComparePin(color, text) {
+      return L.divIcon({
+        className: '',
+        html: `<div class="compare-pin" style="background:${color};"><span>${text}</span></div>`,
+        iconSize: [30, 30],
+        iconAnchor: [15, 30]
+      });
+    }
+
+    function distanceMeters(lat1, lon1, lat2, lon2) {
+      const radius = 6371000;
+      const dLat = (Number(lat2) - Number(lat1)) * Math.PI / 180;
+      const dLon = (Number(lon2) - Number(lon1)) * Math.PI / 180;
+      const a = Math.sin(dLat / 2) ** 2 +
+        Math.cos(Number(lat1) * Math.PI / 180) * Math.cos(Number(lat2) * Math.PI / 180) *
+        Math.sin(dLon / 2) ** 2;
+      return Math.round(radius * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)));
+    }
+
+    function renderPhotoCompareMap(before, after) {
+      const pointSource = [before, after].find(record =>
+        record && validCoordinate(record.point_lat, record.point_lon)
+      ) || {};
+      const hasPoint = validCoordinate(pointSource.point_lat, pointSource.point_lon);
+      const hasBeforeLocation = before && validCoordinate(before.photo_lat, before.photo_lon);
+      const hasAfterLocation = after && validCoordinate(after.photo_lat, after.photo_lon);
+      const mapNode = document.getElementById('photoCompareMap');
+      const noteNode = document.getElementById('locationCompareNote');
+
+      if (photoCompareMap) {
+        photoCompareMap.remove();
+      }
+
+      photoCompareMap = L.map(mapNode, { zoomControl: true }).setView([25.04, 121.5], 12);
+      L.tileLayer('https://{s}.google.com/vt/lyrs=m&x={x}&y={y}&z={z}', {
+        maxZoom: 20,
+        subdomains: ['mt0', 'mt1', 'mt2', 'mt3']
+      }).addTo(photoCompareMap);
+      photoCompareLayer = L.layerGroup().addTo(photoCompareMap);
+
+      const markers = [];
+      const messages = [];
+      if (hasPoint) {
+        const point = [Number(pointSource.point_lat), Number(pointSource.point_lon)];
+        markers.push(point);
+        L.marker(point, { icon: makeComparePin('#2563eb', '點') })
+          .addTo(photoCompareLayer)
+          .bindPopup('清理點位');
+      } else {
+        messages.push('查不到此清理點位的座標');
+      }
+
+      if (hasBeforeLocation) {
+        const position = [Number(before.photo_lat), Number(before.photo_lon)];
+        markers.push(position);
+        L.marker(position, { icon: makeComparePin('#f97316', '前') })
+          .addTo(photoCompareLayer)
+          .bindPopup(`清潔前拍照位置<br>${escapeHtml(formatRecordDateTime(before.created_at))}`);
+        if (hasPoint) {
+          L.polyline([[Number(pointSource.point_lat), Number(pointSource.point_lon)], position], {
+            color: '#f97316', dashArray: '5 6', weight: 2
+          }).addTo(photoCompareLayer);
+          messages.push(`清潔前距點位約 ${distanceMeters(pointSource.point_lat, pointSource.point_lon, before.photo_lat, before.photo_lon)} 公尺`);
+        }
+      } else {
+        messages.push('清潔前照片未留存拍攝位置');
+      }
+
+      if (hasAfterLocation) {
+        const position = [Number(after.photo_lat), Number(after.photo_lon)];
+        markers.push(position);
+        L.marker(position, { icon: makeComparePin('#16a34a', '後') })
+          .addTo(photoCompareLayer)
+          .bindPopup(`清潔後拍照位置<br>${escapeHtml(formatRecordDateTime(after.created_at))}`);
+        if (hasPoint) {
+          L.polyline([[Number(pointSource.point_lat), Number(pointSource.point_lon)], position], {
+            color: '#16a34a', dashArray: '5 6', weight: 2
+          }).addTo(photoCompareLayer);
+          messages.push(`清潔後距點位約 ${distanceMeters(pointSource.point_lat, pointSource.point_lon, after.photo_lat, after.photo_lon)} 公尺`);
+        }
+      } else {
+        messages.push('清潔後照片未留存拍攝位置');
+      }
+
+      noteNode.textContent = messages.join('；') || '目前無可比較的位置資料。';
+      if (markers.length > 1) {
+        photoCompareMap.fitBounds(L.latLngBounds(markers).pad(0.3), { maxZoom: 19 });
+      } else if (markers.length === 1) {
+        photoCompareMap.setView(markers[0], 18);
+      }
+      setTimeout(() => photoCompareMap.invalidateSize(), 0);
+    }
+
+    async function loadRecords() {
+      const driverCode = document.getElementById('driverCodeInput').value.trim();
+      const status = document.getElementById('statusSelect').value;
+      const photoType = document.getElementById('photoTypeSelect').value;
+      const date = document.getElementById('dateInput').value;
+
+      const params = new URLSearchParams();
+
+      if (driverCode) params.append('driver_code', driverCode);
+      if (status) params.append('status', status);
+      if (photoType) params.append('photo_type', photoType);
+      if (date) params.append('date', date);
+
+      const url = params.toString()
+        ? `/api/admin/cleaning-records/?${params.toString()}`
+        : `/api/admin/cleaning-records/`;
+
+      const tbody = document.getElementById('tableBody');
+      const riskAreaBody = document.getElementById('riskAreaBody');
+      const driverRateBody = document.getElementById('driverRateBody');
+
+      tbody.innerHTML = `<tr><td colspan="7" class="empty-box">載入中...</td></tr>`;
+      riskAreaBody.innerHTML = `<tr><td colspan="3" class="empty-box">載入中...</td></tr>`;
+      driverRateBody.innerHTML = `<tr><td colspan="4" class="empty-box">載入中...</td></tr>`;
+
+      try {
+        const res = await fetch(url);
+        const data = await res.json();
+
+        if (!res.ok || !data.ok) {
+          tbody.innerHTML = `<tr><td colspan="7" class="empty-box">載入中...</td></tr>`;
+          riskAreaBody.innerHTML = `<tr><td colspan="3" class="empty-box">讀取失敗</td></tr>`;
+          driverRateBody.innerHTML = `<tr><td colspan="4" class="empty-box">讀取失敗</td></tr>`;
+          return;
+        }
+
+        const records = Array.isArray(data.records) ? data.records.map(normalizeRecord) : [];
+        allRecords = records;
+
+        renderSummary(records);
+        loadToiletDemandAnalysis();
+        renderDriverQualifiedRate(records);
+        renderTable(records);
+        updateLastUpdateTime();
+      } catch (err) {
+        tbody.innerHTML = `<tr><td colspan="7" class="empty-box">載入中...</td></tr>`;
+        riskAreaBody.innerHTML = `<tr><td colspan="3" class="empty-box">連線失敗</td></tr>`;
+        driverRateBody.innerHTML = `<tr><td colspan="4" class="empty-box">連線失敗</td></tr>`;
+      }
+    }
+
+
+
+    async function postJson(url, payload) {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(payload || {})
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data.ok === false) {
+        throw new Error(data.message || '刪除失敗');
+      }
+      return data;
+    }
+
+    async function deleteCleaningRecords(idsText) {
+      const ids = String(idsText || '')
+        .split(',')
+        .map(v => v.trim())
+        .filter(Boolean);
+
+      if (!ids.length) {
+        alert('這筆資料缺少紀錄 ID，無法刪除。');
+        return;
+      }
+
+      if (!confirm(`確定要刪除這組清掃紀錄嗎？共 ${ids.length} 筆照片紀錄。`)) {
+        return;
+      }
+
+      try {
+        await postJson('/api/admin/cleaning-record/delete/', { ids });
+        await loadRecords();
+      } catch (err) {
+        alert(err.message || err);
+      }
+    }
+
+    async function deleteRiskArea(address, idsText) {
+      const ids = String(idsText || '')
+        .split(',')
+        .map(v => v.trim())
+        .filter(Boolean);
+
+      if (!address && !ids.length) {
+        alert('這筆分析資料缺少點位資訊，無法刪除。');
+        return;
+      }
+
+      const label = address || ids.join(', ');
+      if (!confirm(`確定要刪除「${label}」的新增點位分析紀錄嗎？\n系統會移除造成此分析結果的清潔前觀測紀錄。`)) {
+        return;
+      }
+
+      try {
+        await postJson('/api/toilet-demand-analysis/delete/', { address, ids });
+        await loadRecords();
+      } catch (err) {
+        alert(err.message || err);
+      }
+    }
+
+    document.addEventListener('click', function(event) {
+      const riskButton = event.target.closest('[data-delete-risk]');
+      if (riskButton) {
+        if (!CAN_MANAGE_RECORDS) { alert('權限不足：只讀人員不能刪除清掃分析紀錄。'); return; }
+        deleteRiskArea(riskButton.dataset.riskAddress || '', riskButton.dataset.riskIds || '');
+        return;
+      }
+
+      const recordButton = event.target.closest('[data-delete-records]');
+      if (recordButton) {
+        if (!CAN_MANAGE_RECORDS) { alert('權限不足：只讀人員不能刪除清掃紀錄。'); return; }
+        deleteCleaningRecords(recordButton.dataset.recordIds || '');
+      }
+    });
+
+    document.getElementById('driverCodeInput').addEventListener('keydown', function(event) {
+      if (event.key === 'Enter') {
+        loadRecords();
+      }
+    });
+
+    document.getElementById('imageModal').addEventListener('click', function(event) {
+      if (event.target.id === 'imageModal') {
+        closeModal();
+      }
+    });
+
+    loadRecords();
+  </script>
+</body>
+</html>
