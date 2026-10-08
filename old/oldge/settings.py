@@ -10,6 +10,7 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/5.2/ref/settings/
 """
 
+import os
 from pathlib import Path
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
@@ -20,12 +21,25 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # See https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-7w#+x@h&fyo2%x-7#u66hg0*4c%i)a%6k8_fyj2^-3@^11s+=7'
+SECRET_KEY = os.environ.get('DJANGO_SECRET_KEY', 'django-insecure-7w#+x@h&fyo2%x-7#u66hg0*4c%i)a%6k8_fyj2^-3@^11s+=7')
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = os.environ.get('DJANGO_DEBUG', 'true').strip().lower() in {'1', 'true', 'yes', 'on'}
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = [
+    'immigration-dated-almost-located.trycloudflare.com',
+    'localhost',
+    '192.168.0.32',
+    '172.16.39.70',
+    '192.168.0.29',
+    '127.0.0.1',
+    'testserver',
+]
+ALLOWED_HOSTS += [host.strip() for host in os.environ.get('DJANGO_ALLOWED_HOSTS', '').split(',') if host.strip()]
+CSRF_TRUSTED_ORIGINS = [
+    'https://immigration-dated-almost-located.trycloudflare.com',
+]
+CSRF_TRUSTED_ORIGINS += [origin.strip() for origin in os.environ.get('DJANGO_CSRF_TRUSTED_ORIGINS', '').split(',') if origin.strip()]
 
 
 # Application definition
@@ -38,19 +52,23 @@ INSTALLED_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
     'routing',
+    'corsheaders',
 ]
 
 MIDDLEWARE = [
+    'corsheaders.middleware.CorsMiddleware',
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
+    'routing.middleware.RequireAuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
 
 ROOT_URLCONF = 'route_system.urls'
+LOGIN_URL = '/'
 
 TEMPLATES = [
     {
@@ -78,11 +96,21 @@ WSGI_APPLICATION = 'route_system.wsgi.application'
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.postgresql',
-        'NAME': 'postgres',
-        'USER': 'postgres.evwzonunmjvulzitxjmn',
-        'PASSWORD': 'RoutePlan2026',
-        'HOST': 'aws-1-ap-northeast-1.pooler.supabase.com',
-        'PORT': '5432',
+        # Local PostgreSQL is the development default. Supabase remains
+        # supported by setting DB_NAME/DB_USER/DB_PASSWORD/DB_HOST explicitly.
+        'NAME': os.environ.get('DB_NAME', 'route_system_db'),
+        'USER': os.environ.get('DB_USER', 'postgres'),
+        'PASSWORD': os.environ.get('DB_PASSWORD', ''),
+        'HOST': os.environ.get('DB_HOST', 'localhost'),
+        'PORT': os.environ.get('DB_PORT', '5432'),
+        # Supabase session pooler has a small connection limit. Keep Django from
+        # holding idle connections between requests unless explicitly overridden.
+        'CONN_MAX_AGE': int(os.environ.get('DB_CONN_MAX_AGE', '0')),
+        'CONN_HEALTH_CHECKS': os.environ.get('DB_CONN_HEALTH_CHECKS', 'false').strip().lower() in {'1', 'true', 'yes', 'on'},
+        'OPTIONS': {
+            'connect_timeout': 10,
+            'options': os.environ.get('DB_OPTIONS', '-c statement_timeout=30000 -c idle_in_transaction_session_timeout=30000'),
+        },
     }
 }
 
@@ -111,7 +139,7 @@ AUTH_PASSWORD_VALIDATORS = [
 
 LANGUAGE_CODE = 'en-us'
 
-TIME_ZONE = 'UTC'
+TIME_ZONE = 'Asia/Taipei'
 
 USE_I18N = True
 
@@ -129,3 +157,25 @@ STATIC_URL = 'static/'
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 X_FRAME_OPTIONS = "SAMEORIGIN"
+
+CORS_ALLOW_ALL_ORIGINS = os.environ.get('CORS_ALLOW_ALL_ORIGINS', 'false').strip().lower() in {'1', 'true', 'yes', 'on'}
+CORS_ALLOWED_ORIGINS = [
+    origin.strip()
+    for origin in os.environ.get(
+        'CORS_ALLOWED_ORIGINS',
+        'https://tourist-provide-pro-libs.trycloudflare.com,http://localhost:8000,http://127.0.0.1:8000,http://172.16.33.9:8000',
+    ).split(',')
+    if origin.strip()
+]
+
+SESSION_COOKIE_HTTPONLY = True
+CSRF_COOKIE_HTTPONLY = False
+SESSION_COOKIE_SECURE = os.environ.get('DJANGO_COOKIE_SECURE', 'false').strip().lower() in {'1', 'true', 'yes', 'on'}
+CSRF_COOKIE_SECURE = SESSION_COOKIE_SECURE
+# 0 means no Django-side image size limit. Supabase Storage or the web server
+# may still enforce their own upload limits.
+APP_IMAGE_MAX_UPLOAD_BYTES = int(os.environ.get('APP_IMAGE_MAX_UPLOAD_BYTES', 0))
+DRIVER_TOKEN_MAX_AGE = int(os.environ.get('DRIVER_TOKEN_MAX_AGE', 60 * 60 * 24 * 30))
+
+MEDIA_URL = "/media/"
+MEDIA_ROOT = BASE_DIR / "media"
