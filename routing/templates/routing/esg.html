@@ -99,7 +99,7 @@
       to { transform: translateY(0) scale(var(--tree-scale)); opacity: 1; }
     }
     .tree-note { text-align: center; color: var(--muted); font-weight: 700; margin-top: 12px; }
-    .equiv-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+    .equiv-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
     .equiv-card { border: 1px solid var(--border); border-radius: 8px; padding: 16px; background: #fff; min-height: 118px; }
     .equiv-card .icon { color: var(--green); margin-bottom: 10px; }
     .equiv-card .label { color: var(--muted); font-size: 12px; font-weight: 800; }
@@ -162,12 +162,10 @@
   <div class="toolbar">
     <div>
       <h1>路線最佳化減碳成果</h1>
-      <div class="muted">依目前登入公司的路線輸出與 ESG 設定即時換算。</div>
     </div>
     <div class="variant-tabs">
       <button class="variant-btn active" data-variant="normal" type="button">不跨縣市</button>
       <button class="variant-btn" data-variant="cross" type="button">可跨縣市</button>
-      <button class="variant-btn" data-variant="compact" type="button">跨縣市精簡版</button>
     </div>
   </div>
 
@@ -183,7 +181,7 @@
         <div class="hero-kpi">
           <div class="kpi"><div class="label">減少 CO2e</div><div class="value" id="savedCo2">-</div></div>
           <div class="kpi"><div class="label">相當於種植</div><div class="value" id="treeCount">-</div></div>
-          <div class="kpi"><div class="label">減少里程</div><div class="value" id="savedDistance">-</div></div>
+          <div class="kpi"><div class="label">實際減少路線里程</div><div class="value" id="savedDistance">-</div></div>
         </div>
         <div class="forest-wrap">
           <div class="forest" id="forest"></div>
@@ -195,14 +193,14 @@
 
     <section class="panel">
       <div class="panel-head">
-        <div class="panel-title"><i data-lucide="scale"></i> 生活化換算</div>
+        <div class="panel-title"><i data-lucide="scale"></i> 碳排生活化換算</div>
       </div>
       <div class="panel-body">
+        <p class="muted" style="margin:0 0 14px;">以下換算僅為估算值，實際情況可能因使用方式而有所不同</p>
         <div class="equiv-grid">
-          <div class="equiv-card"><i class="icon" data-lucide="car"></i><div class="label">約少開汽車距離</div><div class="value" id="carKm">-</div></div>
-          <div class="equiv-card"><i class="icon" data-lucide="fuel"></i><div class="label">約少消耗汽油</div><div class="value" id="gasolineLiter">-</div></div>
-          <div class="equiv-card"><i class="icon" data-lucide="package"></i><div class="label">約等於 500ml PET 瓶碳排</div><div class="value" id="petBottle">-</div></div>
-          <div class="equiv-card"><i class="icon" data-lucide="smartphone-charging"></i><div class="label">約等於手機充電碳排</div><div class="value" id="phoneCharge">-</div></div>
+          <div class="equiv-card"><i class="icon" data-lucide="fuel"></i><div class="label">約當減少汽油使用量</div><div class="value" id="gasolineLiter">-</div></div>
+          <div class="equiv-card"><i class="icon" data-lucide="package"></i><div class="label">相當於減少 500 mL 寶特瓶的碳排放</div><div class="value" id="petBottle">-</div></div>
+          <div class="equiv-card"><i class="icon" data-lucide="smartphone-charging"></i><div class="label">相當於減少手機充電的碳排放</div><div class="value" id="phoneCharge">-</div></div>
         </div>
       </div>
     </section>
@@ -222,6 +220,9 @@
         <div class="stat"><div class="label">基準里程</div><div class="value" id="baselineDistance">-</div></div>
         <div class="stat"><div class="label">基準碳排</div><div class="value" id="baselineCo2">-</div></div>
         <div class="stat"><div class="label">節省比例</div><div class="value" id="savedPct">-</div></div>
+        <div class="stat"><div class="label">本方案行駛時間（不含維護）</div><div class="value" id="totalDrive">-</div></div>
+        <div class="stat"><div class="label">人工行駛時間（OSRM 預估）</div><div class="value" id="baselineDrive">-</div></div>
+        <div class="stat"><div class="label">節省行駛時間（負值為增加）</div><div class="value" id="savedDrive">-</div></div>
         <div class="stat"><div class="label">排放係數</div><div class="value" id="factor">-</div></div>
       </div>
       <p class="muted" id="esgNote" style="margin:16px 0 0;">-</p>
@@ -236,6 +237,27 @@
       <ul class="source-list" id="sourceList"><li>載入中...</li></ul>
     </div>
   </section>
+  <section class="panel" style="margin-top:18px;">
+    <div class="panel-head"><div class="panel-title">每位司機的工作與清潔狀況</div></div>
+    <div class="panel-body">
+      <p class="muted">路線、點位與工時為目前選擇方案的排程值；清潔統計為本公司所有清潔後照片紀錄，照片筆數不代表已完成點位數。</p>
+      <p id="cleaningWarning" class="muted"></p>
+      <div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;white-space:nowrap">
+        <thead><tr><th>司機</th><th>路線數</th><th>點位數</th><th>維護時間（分）</th><th>行車時間（分）</th><th>總工時（分）</th><th>里程（km）</th><th>清潔後照片</th><th>合格</th><th>不合格</th><th>待判定</th><th>合格率</th></tr></thead>
+        <tbody id="driverStats"><tr><td colspan="12">載入中...</td></tr></tbody>
+      </table></div>
+    </div>
+  </section>
+  <section class="panel" style="margin-top:18px;">
+    <div class="panel-head"><div class="panel-title">計算公式</div></div>
+    <div class="panel-body">
+      <p>路線里程 = d（場站, 第 1 點）+ d（第 1 點, 第 2 點）+ … + d（第 n−1 點, 第 n 點）。回站方案另加 d（最後一點, 場站）。沿用原有設定：不跨縣市方案不回站，跨縣市方案回站。</p>
+      <p>依走訪順序加總相鄰點位的路段距離。d 優先採用 OSRM 道路分段距離（公尺 ÷ 1,000）；道路服務無法取得時採既有座標距離估算。</p>
+      <p>司機里程 = 該司機各路線里程總和；維護時間 = 各點維護時間總和；行車時間 = 各路段行車時間總和（OSRM 秒數 ÷ 60 換成分鐘，不含即時塞車、維護及停留）；總工時 = 維護時間 + 行車時間。</p>
+      <p>碳排 = 總里程 × 排放係數；節省里程 = max（基準里程 − 本方案里程, 0）；減碳量 = 節省里程 × 排放係數。基準資料仍依原有規則判斷是否可比較。</p>
+      <p>清潔合格率 = 合格照片數 ÷（合格照片數 + 不合格照片數）× 100%；尚未判定的照片不列入分母，沒有已判定照片時顯示「—」。</p>
+    </div>
+  </section>
 </main>
 
 <script>
@@ -243,8 +265,8 @@ lucide.createIcons();
 
 const els = Object.fromEntries([
   "warningBox", "variantLabel", "savedCo2", "treeCount", "savedDistance", "forest", "treeNote",
-  "carKm", "gasolineLiter", "petBottle", "phoneCharge", "fileUsed", "routeCount", "stopCount",
-  "totalDistance", "totalCo2", "baselineDistance", "baselineCo2", "savedPct", "factor", "esgNote", "sourceList"
+  "gasolineLiter", "petBottle", "phoneCharge", "fileUsed", "routeCount", "stopCount",
+  "totalDrive", "baselineDrive", "savedDrive", "totalDistance", "totalCo2", "baselineDistance", "baselineCo2", "savedPct", "factor", "esgNote", "sourceList"
 ].map(id => [id, document.getElementById(id)]));
 
 function fmt(value, digits = 1, suffix = "") {
@@ -259,7 +281,7 @@ function fmtInt(value, suffix = "") {
   return `${Math.round(num).toLocaleString("zh-TW")}${suffix}`;
 }
 
-function renderForest(count, multiplier) {
+function renderForest(count, multiplier, totalTreeCount = count) {
   els.forest.innerHTML = "";
   const safeCount = Math.max(0, Math.min(Number(count) || 0, 18));
   const visibleTrees = Math.ceil(safeCount);
@@ -274,9 +296,9 @@ function renderForest(count, multiplier) {
   if (!safeCount) {
     els.treeNote.textContent = "目前沒有可具象化的減碳量。";
   } else if ((Number(multiplier) || 1) > 1) {
-    els.treeNote.textContent = `畫面每棵樹約代表 ${fmtInt(multiplier)} 棵樹的一年吸收量。`;
+    els.treeNote.textContent = `本次減碳量約相當於 ${fmt(totalTreeCount, 1)} 棵樹一年的吸收量；圖中每棵樹代表約 ${fmtInt(multiplier)} 棵樹。`;
   } else {
-    els.treeNote.textContent = "每棵樹約代表 1 棵樹的一年吸收量。";
+    els.treeNote.textContent = `本次減碳量約相當於 ${fmt(totalTreeCount, 1)} 棵樹一年的吸收量。`;
   }
 }
 
@@ -291,25 +313,59 @@ async function loadEsg(variant = "normal") {
     }
     const esg = data.esg || {};
     const eq = data.equivalents || {};
+    document.getElementById("cleaningWarning").textContent = data.cleaning_warning || "";
+    const driverBody = document.getElementById("driverStats");
+    driverBody.replaceChildren();
+    for (const driver of data.drivers || []) {
+      const tr = document.createElement("tr");
+      const values = [driver.driver_label || driver.driver_code, driver.route_count, driver.stop_count,
+        fmt(driver.service_min), fmt(driver.drive_min), fmt(driver.work_min), fmt(driver.distance_km, 2),
+        driver.cleaning_count, driver.qualified_count, driver.failed_count, driver.pending_count,
+        driver.qualified_pct == null ? "—" : fmt(driver.qualified_pct, 1, "%")];
+      for (const value of values) {
+        const td = document.createElement("td");
+        td.textContent = value == null ? "—" : String(value);
+        td.style.cssText = "padding:12px;text-align:center;border-bottom:1px solid #e2e8f0";
+        tr.appendChild(td);
+      }
+      driverBody.appendChild(tr);
+    }
+    if (!driverBody.children.length) {
+      const tr = document.createElement("tr");
+      const td = document.createElement("td");
+      td.colSpan = 12; td.textContent = "目前沒有司機資料。";
+      tr.appendChild(td); driverBody.appendChild(tr);
+    }
     els.variantLabel.textContent = data.label || variant;
     els.fileUsed.textContent = data.file_used ? `資料來源：${data.file_used}` : "尚未產生路線檔";
     els.savedCo2.textContent = fmt(esg.saved_co2_kg, 1, " kg");
     els.treeCount.textContent = fmt(eq.tree_count_year, 1, " 棵");
     els.savedDistance.textContent = fmt(esg.saved_distance_km, 1, " km");
-    els.carKm.textContent = fmt(eq.car_km_equivalent, 1, " km");
     els.gasolineLiter.textContent = fmt(eq.gasoline_liter_equivalent, 1, " L");
     els.petBottle.textContent = fmtInt(eq.pet_bottle_500ml_equivalent, " 支");
     els.phoneCharge.textContent = fmtInt(eq.smartphone_charge_equivalent, " 次");
     els.routeCount.textContent = fmtInt(esg.route_count);
     els.stopCount.textContent = fmtInt(esg.stop_count);
+    els.totalDrive.textContent = fmt(Number(esg.total_drive_min) / 60, 2, " 小時");
+    els.baselineDrive.textContent = esg.baseline_drive_min == null ? "尚無時間基準" : fmt(esg.baseline_drive_min / 60, 2, " 小時");
+    els.savedDrive.textContent = esg.saved_drive_min == null ? "尚無時間基準" : fmt(esg.saved_drive_min / 60, 2, " 小時");
     els.totalDistance.textContent = fmt(esg.total_distance_km, 1, " km");
     els.totalCo2.textContent = fmt(esg.estimated_co2_kg, 1, " kg");
     els.baselineDistance.textContent = fmt(esg.baseline_distance_km, 1, " km");
     els.baselineCo2.textContent = fmt(esg.baseline_co2_kg, 1, " kg");
     els.savedPct.textContent = fmt(esg.saved_pct, 1, "%");
+    if (esg.comparison_available === false) {
+      [els.baselineDistance, els.baselineCo2, els.savedPct, els.savedDistance,
+       els.savedCo2, els.treeCount, els.gasolineLiter, els.petBottle, els.phoneCharge]
+        .forEach(el => { el.textContent = "尚無完整基準"; });
+    }
     els.factor.textContent = fmt(esg.emission_factor_kg_per_km, 3, " kg/km");
     els.esgNote.textContent = `${esg.note || ""} ${eq.note || ""}`.trim();
-    renderForest((Number(eq.tree_multiplier) || 1) > 1 ? eq.tree_display_count : eq.tree_count_year, eq.tree_multiplier);
+    renderForest(
+      (Number(eq.tree_multiplier) || 1) > 1 ? eq.tree_display_count : eq.tree_count_year,
+      eq.tree_multiplier,
+      eq.tree_count_year,
+    );
 
     const sources = eq.sources || {};
     els.sourceList.innerHTML = "";

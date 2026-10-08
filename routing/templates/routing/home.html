@@ -788,7 +788,7 @@
   <div class="controls">
     <div class="variant-group">
       <button type="button" class="variant-btn" data-variant="normal">不跨縣市</button>
-      <button type="button" class="variant-btn" data-variant="compact">可跨縣市</button>
+      <button type="button" class="variant-btn" data-variant="cross">可跨縣市</button>
     </div>
     <div class="status-container">
       <div style="color:#17ad37">● 系統正常</div>
@@ -829,7 +829,6 @@
         {% endif %}
       </div>
       <div class="mini-text" style="margin-top:8px;">
-        修改點位資料後，按這顆按鈕重新計算最新路線。
       </div>
       <div id="runProgressWrap" class="progress-wrap">
         <div class="progress-track"><div id="runProgressBar" class="progress-bar"></div></div>
@@ -889,7 +888,6 @@
           <div id="esgSavedCo2" class="esg-value">-</div>
         </div>
       </div>
-      <div id="esgNote" class="esg-note">載入路線後顯示整體永續效益估算。</div>
       <div class="btn-row" style="margin-top:10px;">
         <a href="{% url 'esg_page' %}" class="action-btn gray" style="text-decoration:none;">
           <i data-lucide="leaf"></i> 前往 ESG 永續分析
@@ -905,13 +903,14 @@
           <button id="btnEsgColumnHint" class="hint-btn" type="button" aria-label="欄位建議">!</button>
           <div id="esgColumnHint" class="hint-popover">
             <strong>舊路線 Excel 欄位建議</strong><br>
-            必要欄位：日程(Day)、員工代號、順序、地址、緯度、經度。<br>
-            建議欄位：工作區域、任務ID、維護時間(分)、預估車程(分)、累計工時(分)。<br>
-            系統會依「日程 + 員工代號」分組，依「順序」排列站點。
+            必要欄位：日程(Day)或維護日期、司機/員工代號、地址/服務地點、緯度、經度。<br>
+            可選欄位：倉庫別、站序（未提供時沿用 Excel 列順序）、任務ID/出租單號、維護時間、行車距離。<br>
+            系統會依「日期 + 司機 + 倉庫」分組，依站序排列後保存為原始路線基準。<br>
+            此上傳功能不會因 OSRM 無法連線而失敗；道路距離與車程由正式排程流程另外計算。
           </div>
         </div>
       </div>
-      <div id="esgUploadStatus" class="mini-text" style="margin-top:8px;">可上傳舊路線 Excel 作為減碳比較基準。</div>
+      <div id="esgUploadStatus" class="mini-text" style="margin-top:8px;"></div>
       {% endif %}
     </div>
 
@@ -944,12 +943,10 @@ const INITIAL_VARIANT = "{{ initial_variant|escapejs }}";
 const VARIANT_LABELS = {
   normal: "不跨縣市",
   cross: "可跨縣市",
-  compact: "跨縣市精簡版"
 };
 const VARIANT_COLORS = {
   normal: "#2563eb",
   cross: "#ef4444",
-  compact: "#8b5cf6"
 };
 const CURRENT_COMPANY_KEY = "{{ company.key|default:'toilet_demo'|escapejs }}";
 
@@ -974,7 +971,6 @@ const esgTotalDistanceEl = document.getElementById("esgTotalDistance");
 const esgTotalCo2El = document.getElementById("esgTotalCo2");
 const esgSavedDistanceEl = document.getElementById("esgSavedDistance");
 const esgSavedCo2El = document.getElementById("esgSavedCo2");
-const esgNoteEl = document.getElementById("esgNote");
 const esgBaselineFileEl = document.getElementById("esgBaselineFile");
 const btnUploadEsgBaselineEl = document.getElementById("btnUploadEsgBaseline");
 const esgUploadStatusEl = document.getElementById("esgUploadStatus");
@@ -1037,8 +1033,7 @@ function setNotice(message="", type="warn") {
 function shouldSuppressMessage(message) {
   const text = String(message || "");
   return (
-    (text.includes("routes_new.json") && text.includes("Dashboard grouped")) ||
-    text.includes("跨縣市精簡版，由 phase2_scheduler_cross_county_compact.py 直接輸出。")
+    (text.includes("routes_new.json") && text.includes("Dashboard grouped"))
   );
 }
 
@@ -1052,6 +1047,11 @@ function buildRunSummaryMessage(meta={}) {
 }
 
 function updateUnassignedUI(meta={}) {
+  if (meta.unassigned_db_points == null) {
+    if (unassignedInfoTextEl) unassignedInfoTextEl.textContent = "此排程尚未提供未排入統計，請重新排程，不能據此判定全部排入。";
+    if (btnDownloadUnassignedEl) btnDownloadUnassignedEl.disabled = true;
+    return;
+  }
   const total = Number(meta.total_db_points ?? 0);
   const unassigned = Number(meta.unassigned_db_points ?? 0);
   const scheduled = Number(meta.scheduled_db_points ?? Math.max(total - unassigned, 0));
@@ -1153,14 +1153,7 @@ function updateEsgSummary(esg=null) {
 
   document.getElementById("kpiEsgCo2").textContent = hasData ? fmtMetric(esg.estimated_co2_kg, 0) : "-";
 
-  if (!hasData) {
-    esgNoteEl.textContent = "載入路線後顯示整體永續效益估算。";
-    return;
-  }
-
-  const savedPct = Number(esg.saved_pct);
-  const pctText = Number.isFinite(savedPct) && savedPct > 0 ? `，約降低 ${fmtNum(savedPct, 1)}%` : "";
-  esgNoteEl.textContent = `${esg.note || "碳排為路線里程估算值"}${pctText}。`;
+  if (!hasData) return;
 }
 
 function validPoint(item) {
@@ -1661,8 +1654,9 @@ async function uploadEsgBaselineFile(file) {
     if (data.esg) {
       updateEsgSummary(data.esg);
     }
-    setEsgUploadStatus(data.message || "已更新舊路線基準。");
-    showToast(data.message || "已更新舊路線基準", 2500);
+    const uploadMessage = data.message || "已更新舊路線基準。";
+    setEsgUploadStatus(uploadMessage);
+    showToast(uploadMessage, 2500);
 
     await loadVariant(state.variant, driverSelEl.value, getCurrentDays()[state.currentDayIndex]);
   } catch (err) {

@@ -966,6 +966,7 @@
       } else {
         formulaEl.innerHTML = `
           <strong>計算公式：</strong>節省里程 = 舊路線總里程 - 新路線總里程。<br>
+          <strong>里程計算：</strong>場站 → 第 1 點 → 第 2 點 → … → 最後一點，依序加總相鄰點位的路段里程；回站方案另加最後一點 → 場站。道路距離以公尺 ÷ 1,000 換算公里，無道路資料時採既有座標估算。<br>
           <strong>預估減碳：</strong>${fmtMetric(esg.saved_distance_km, 1, ' km')} × ${fmtNum(esg.emission_factor_kg_per_km, 3)} kg CO₂/km = ${fmtMetric(esg.saved_co2_kg, 1, ' kg CO₂')}。<br>
           <strong>效益摘要：</strong>本次路線最佳化約降低 ${fmtNum(esg.saved_pct, 1)}%，預估油耗 ${fmtMetric(esg.estimated_fuel_liter, 1, ' L')}，可作為 ESG 與永續營運展示數據。
         `;

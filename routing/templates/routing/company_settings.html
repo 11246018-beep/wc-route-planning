@@ -122,7 +122,6 @@
         <div class="brand-icon"><i data-lucide="sliders-horizontal"></i></div>
         <div>
           <h1>公司營運設定</h1>
-          <p class="subtitle">{{ company.name }} 的排程限制、倉庫與碳排參數。只有公司高階管理者可以調整。</p>
         </div>
       </div>
       <div class="actions">
@@ -140,7 +139,7 @@
         <div class="card-head">
           <div>
             <h2 class="card-title">營運參數</h2>
-            <p class="hint">這些設定會在重新計算路線時帶入，調整後請回首頁按「重新計算最佳路徑」。</p>
+            <p class="hint">調整後請回首頁按「重新計算最佳路徑」。</p>
           </div>
         </div>
         <div class="card-body">
@@ -151,8 +150,7 @@
               <label>預設路線模式</label>
               <select name="default_route_variant">
                 <option value="normal" {% if settings.default_route_variant == "normal" %}selected{% endif %}>不跨縣市</option>
-                <option value="compact" {% if settings.default_route_variant == "compact" %}selected{% endif %}>可跨縣市</option>
-                <option value="cross" {% if settings.default_route_variant == "cross" %}selected{% endif %}>跨縣市完整模式</option>
+                <option value="cross" {% if settings.default_route_variant == "cross" %}selected{% endif %}>可跨縣市</option>
               </select>
             </div>
             <div class="field">
@@ -202,7 +200,6 @@
         <div class="card-head">
           <div>
             <h2 class="card-title">多場站出發點</h2>
-            <p class="hint">先建立各公司的出發場站資料。主要場站會和上方倉庫同步；其他場站可供下一階段多場站路線分派使用。</p>
           </div>
         </div>
         <div class="card-body depot-layout">

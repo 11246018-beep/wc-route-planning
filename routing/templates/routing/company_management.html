@@ -195,7 +195,6 @@
         <div class="brand-icon"><i data-lucide="building-2"></i></div>
         <div>
           <h1>公司管理</h1>
-          <p class="subtitle">平台層管理公司租戶與公司管理者帳號；各公司的司機與資料由公司端自行管理。</p>
         </div>
       </div>
       <div class="actions">
@@ -369,9 +368,7 @@
               <div class="manager-card-head">
                 <div>
                   <strong>{{ row.login_name }}</strong>
-                  <div class="sub">{{ row.role }}</div>
                 </div>
-                <div class="right">{{ selected_company.name }}</div>
               </div>
 
               <form method="post" action="{% url 'company_management_action' %}" class="user-form-grid">
